@@ -36,6 +36,16 @@ type GeminiChunk = {
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
+export function normalizeSystemInstruction(input?: unknown) {
+  if (!input || typeof input !== 'string' || !input.trim()) {
+    return undefined;
+  }
+
+  return {
+    parts: [{ text: input }],
+  };
+}
+
 function getApiKey(context: { env?: Record<string, unknown> }) {
   const apiKey = context.env?.GEMINI_API_KEY;
   if (!apiKey || typeof apiKey !== 'string') {
@@ -142,75 +152,19 @@ export async function streamGeminiToNdjson(
   model: string,
   body: Record<string, unknown>,
 ) {
-  const apiKey = getApiKey(context);
-  const upstream = await fetch(`${GEMINI_BASE_URL}/models/${model}:streamGenerateContent?alt=sse`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text();
-    throw new Error(text || `Gemini stream failed with status ${upstream.status}`);
-  }
-
-  const citationsSeen = new Set<string>();
-  const decoder = new TextDecoder();
+  const payload = (await geminiGenerateJson(context, model, body)) as GeminiChunk;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = upstream.body!.getReader();
-      let buffer = '';
-
-      const flushEvent = (eventText: string) => {
-        const dataLines = eventText
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trim())
-          .join('\n')
-          .trim();
-
-        if (!dataLines || dataLines === '[DONE]') return;
-
-        let parsed: GeminiChunk;
-        try {
-          parsed = JSON.parse(dataLines) as GeminiChunk;
-        } catch {
-          return;
-        }
-
-        const text = extractText(parsed);
-        if (text) {
-          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'text', text })}\n`));
-        }
-
-        const citations = extractCitations(parsed, citationsSeen);
-        if (citations.length > 0) {
-          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'metadata', citations })}\n`));
-        }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        let separatorIndex = buffer.indexOf('\n\n');
-        while (separatorIndex !== -1) {
-          const eventText = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          flushEvent(eventText);
-          separatorIndex = buffer.indexOf('\n\n');
-        }
+    start(controller) {
+      const text = extractText(payload);
+      if (text) {
+        controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'text', text })}\n`));
       }
 
-      if (buffer.trim()) {
-        flushEvent(buffer);
+      const citations = extractCitations(payload, new Set<string>());
+      if (citations.length > 0) {
+        controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'metadata', citations })}\n`));
       }
 
       controller.close();

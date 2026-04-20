@@ -1,4 +1,4 @@
-import { buildContents, geminiGenerateJson, streamGeminiToNdjson } from '../functions/_lib/gemini';
+import { buildContents, geminiGenerateJson, normalizeSystemInstruction, streamGeminiToNdjson } from '../functions/_lib/gemini';
 
 type Env = {
   ASSETS: {
@@ -36,7 +36,7 @@ async function handleApi(request: Request, env: Env) {
 
       return streamGeminiToNdjson({ env }, model, {
         contents,
-        systemInstruction,
+        systemInstruction: normalizeSystemInstruction(systemInstruction),
         generationConfig: {
           temperature: 0.7,
         },
