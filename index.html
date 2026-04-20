@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>物性论OS</title>
+    <script>
+      // Prevent "Cannot set property fetch of #<Window> which has only a getter" error
+      // encountered when third-party libraries try to polyfill fetch.
+      try {
+        const nativeFetch = window.fetch;
+        Object.defineProperty(window, 'fetch', {
+          get: () => nativeFetch,
+          set: () => {
+            // Ignore attempts to overwrite fetch
+          },
+          configurable: true,
+        });
+        
+        const nativeGlobalThisFetch = globalThis.fetch;
+        Object.defineProperty(globalThis, 'fetch', {
+          get: () => nativeGlobalThisFetch,
+          set: () => {
+            // Ignore attempts to overwrite fetch
+          },
+          configurable: true,
+        });
+      } catch (e) {
+        // Ignored
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

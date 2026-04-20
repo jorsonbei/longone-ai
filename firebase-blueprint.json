@@ -1,0 +1,104 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "createdAt": { "type": "number", "description": "Timestamp" },
+        "status": { "type": "string" }
+      },
+      "required": ["email", "createdAt", "status"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Organizational unit for users",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "planType": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["ownerId", "name", "planType", "createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Chat session",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "model": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["title", "model", "status", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a conversation",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string" },
+        "content": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "tokenIn": { "type": "number" },
+        "tokenOut": { "type": "number" }
+      },
+      "required": ["role", "content", "status", "createdAt"]
+    },
+    "Attachment": {
+      "title": "Attachment",
+      "description": "Uploaded file metadata",
+      "type": "object",
+      "properties": {
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "storageKey": { "type": "string" },
+        "size": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["fileName", "mimeType", "storageKey", "size", "createdAt"]
+    },
+    "KnowledgeDocument": {
+      "title": "Knowledge Document",
+      "description": "Document for RAG",
+      "type": "object",
+      "properties": {
+        "fileName": { "type": "string" },
+        "parseStatus": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["fileName", "parseStatus", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile information"
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/Workspace" },
+      "description": "A workspace belonging to a user"
+    },
+    "/workspaces/{workspaceId}/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Conversations within a workspace"
+    },
+    "/workspaces/{workspaceId}/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages inside a conversation"
+    },
+    "/workspaces/{workspaceId}/attachments/{attachmentId}": {
+      "schema": { "$ref": "#/entities/Attachment" },
+      "description": "Metadata for files uploaded in the workspace"
+    },
+    "/workspaces/{workspaceId}/knowledge_documents/{documentId}": {
+      "schema": { "$ref": "#/entities/KnowledgeDocument" },
+      "description": "Documents used for RAG within a workspace"
+    }
+  }
+}

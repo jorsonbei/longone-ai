@@ -1,0 +1,166 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} { 
+      allow read, write: if false; 
+    }
+
+    // Phase 3: Primitives
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isVerifiedUser() { 
+      return isSignedIn() && request.auth.token.email_verified == true; 
+    }
+    
+    // Schema Validators
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt', 'status'])
+        && data.keys().size() == 3
+        && data.email is string && data.email.size() <= 256
+        && data.createdAt is number
+        && data.status is string && data.status.size() <= 50;
+    }
+
+    function isValidWorkspace(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'planType', 'createdAt'])
+        && data.keys().size() == 4
+        && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() <= 100
+        && data.planType is string && data.planType.size() <= 50
+        && data.createdAt is number;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['title', 'model', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 5
+        && data.title is string && data.title.size() <= 200
+        && data.model is string && data.model.size() <= 100
+        && data.status is string && data.status.size() <= 20
+        && data.createdAt is number
+        && data.updatedAt is number;
+    }
+
+    function isValidMessageCreate(data) {
+      // Allow optional tokenOut, tokenIn, citations, and attachments
+      return data.keys().hasAll(['role', 'content', 'status', 'createdAt'])
+        && data.role is string && data.role.size() <= 50
+        && data.content is string && data.content.size() <= 100000
+        && data.status is string && data.status.size() <= 50
+        && data.createdAt is number
+        && (!('tokenIn' in data) || (data.tokenIn is number))
+        && (!('tokenOut' in data) || (data.tokenOut is number))
+        && (!('citations' in data) || (data.citations is list))
+        && (!('attachments' in data) || (data.attachments is list));
+    }
+
+    function isValidAttachment(data) {
+      return data.keys().hasAll(['fileName', 'mimeType', 'storageKey', 'size', 'createdAt'])
+        && data.keys().size() == 5
+        && data.fileName is string && data.fileName.size() <= 256
+        && data.mimeType is string && data.mimeType.size() <= 100
+        && data.storageKey is string && data.storageKey.size() <= 500
+        && data.size is number
+        && data.createdAt is number;
+    }
+
+    function isValidKnowledgeDoc(data) {
+      return data.keys().hasAll(['fileName', 'parseStatus', 'createdAt'])
+        && data.keys().size() == 3
+        && data.fileName is string && data.fileName.size() <= 256
+        && data.parseStatus is string && data.parseStatus.size() <= 50
+        && data.createdAt is number;
+    }
+
+    // Tiered Access Helpers
+    function isWorkspaceOwner(workspaceId) {
+      return isVerifiedUser() 
+        && isValidId(workspaceId)
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+    }
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && request.auth.uid == userId;
+      allow create: if isVerifiedUser() && request.auth.uid == userId && isValidId(userId) && isValidUser(incoming());
+      allow update, delete: if false;
+    }
+
+    // 2. Workspaces Collection
+    match /workspaces/{workspaceId} {
+      allow get: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+      allow list: if isVerifiedUser() && resource.data.ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(workspaceId) && isValidWorkspace(incoming());
+      
+      allow update: if isVerifiedUser() 
+        && existing().ownerId == request.auth.uid 
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'planType'])
+        && ('name' in incoming() ? (incoming().name is string && incoming().name.size() <= 100) : true)
+        && ('planType' in incoming() ? (incoming().planType is string && incoming().planType.size() <= 50) : true);
+
+      allow delete: if false;
+    }
+
+    // 3. Conversations
+    match /workspaces/{workspaceId}/conversations/{conversationId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create: if isWorkspaceOwner(workspaceId) && isValidId(conversationId) && isValidConversation(incoming());
+      
+      allow update: if isWorkspaceOwner(workspaceId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'status', 'updatedAt'])
+        && incoming().updatedAt is number
+        && ('title' in incoming() ? (incoming().title is string && incoming().title.size() <= 200) : true)
+        && ('status' in incoming() ? (incoming().status is string && incoming().status.size() <= 20) : true);
+
+      allow delete: if isWorkspaceOwner(workspaceId);
+    }
+
+    // 4. Messages
+    match /workspaces/{workspaceId}/conversations/{conversationId}/messages/{messageId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create: if isWorkspaceOwner(workspaceId) && isValidId(messageId) && isValidMessageCreate(incoming());
+        
+      allow update: if isWorkspaceOwner(workspaceId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'status', 'tokenIn', 'tokenOut', 'citations', 'attachments'])
+        && ('content' in incoming() ? (incoming().content is string && incoming().content.size() <= 100000) : true)
+        && ('status' in incoming() ? (incoming().status is string && incoming().status.size() <= 50) : true)
+        && ('tokenIn' in incoming() ? incoming().tokenIn is number : true)
+        && ('tokenOut' in incoming() ? incoming().tokenOut is number : true)
+        && ('citations' in incoming() ? incoming().citations is list : true)
+        && ('attachments' in incoming() ? incoming().attachments is list : true);
+
+      allow delete: if false;
+    }
+
+    // 5. Attachments
+    match /workspaces/{workspaceId}/attachments/{attachmentId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create: if isWorkspaceOwner(workspaceId) && isValidId(attachmentId) && isValidAttachment(incoming());
+      allow update: if false;
+      allow delete: if isWorkspaceOwner(workspaceId);
+    }
+
+    // 6. Knowledge Documents
+    match /workspaces/{workspaceId}/knowledge_documents/{documentId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create: if isWorkspaceOwner(workspaceId) && isValidId(documentId) && isValidKnowledgeDoc(incoming());
+      
+      allow update: if isWorkspaceOwner(workspaceId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['parseStatus'])
+        && incoming().parseStatus is string && incoming().parseStatus.size() <= 50;
+
+      allow delete: if isWorkspaceOwner(workspaceId);
+    }
+  }
+}
