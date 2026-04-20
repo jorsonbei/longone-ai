@@ -1,6 +1,11 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
 name = "wuxinglun-os"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-04-20"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
 
 [vars]
 NODE_ENV = "production"
