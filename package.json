@@ -8,8 +8,8 @@
     "start": "tsx server/index.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "cf:dev": "wrangler pages dev dist",
-    "cf:deploy": "wrangler pages deploy dist",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },

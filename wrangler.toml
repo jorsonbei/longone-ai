@@ -1,6 +1,6 @@
 "$schema" = "./node_modules/wrangler/config-schema.json"
 name = "longone-ai"
-pages_build_output_dir = "dist"
+main = "./worker/index.ts"
 compatibility_date = "2026-04-20"
 
 [assets]
