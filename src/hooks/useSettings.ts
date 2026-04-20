@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 
-const DEFAULT_PERSONA = `作为用户，你可以在这里添加自定义扩展指令。
-请注意：物性论OS 的核心《物性论》绝对世界观及参数表 (如 Σ⁺, η, φ, Π, Bσ, Ω 等) 已经是系统的底层内核，会在每次对话中被自动注入到 AI，你无需在此重复定义。
+const DEFAULT_PERSONA = `默认偏好：
+- 简单问候、测试消息或确认句先自然短答，不要过度解读。
+- 真正进入分析时，先给结论，再展开结构。
+- 除非我明确要求，否则避免过长、过重的理论铺垫。
 
-你可以在这里补充个性化要求：
-- 比如：“回复时尽量使用金字塔原理，第一句先说结论。”
-- 比如：“不要输出过长的代码，尽量只说伪代码结构。”`;
+你也可以在这里补充自己的表达偏好。`;
 
 export function useSettings() {
   const [systemInstruction, setSystemInstruction] = useState<string>(() => {
