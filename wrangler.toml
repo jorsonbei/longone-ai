@@ -1,5 +1,5 @@
 "$schema" = "./node_modules/wrangler/config-schema.json"
-name = "wuxinglun-os"
+name = "longone-ai"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-04-20"
 
