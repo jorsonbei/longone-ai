@@ -6,6 +6,8 @@ import { ChatSession, Message } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { MODELS } from '../services/geminiService';
 
+const INLINE_ATTACHMENT_PERSIST_LIMIT = 850_000;
+
 export function useChats() {
   const { workspaceId, user } = useAuth();
   
@@ -130,10 +132,11 @@ export function useChats() {
     };
     if (msg.attachments) {
       payload.attachments = msg.attachments.map(att => {
-        // Firestore document size limit is exactly 1MB. 
-        // We drop inline `data` if it's over 700,000 characters to prevent crashes.
+        // Firestore document size limit is exactly 1MB.
+        // Keep moderately sized inline data so attachments still work even when
+        // background storage upload is unavailable. Only drop very large payloads.
         // The data will be re-fetched from Firebase storage (`url`) if needed next time.
-        if (att.data && att.data.length > 700000) {
+        if (att.data && att.data.length > INLINE_ATTACHMENT_PERSIST_LIMIT) {
            const { data, ...rest } = att;
            return rest;
         }

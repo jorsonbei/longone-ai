@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -13,13 +13,14 @@ interface SidebarProps {
   activeChatId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
+  onOpenOfficialSite: () => void;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string, newTitle: string) => void;
   onOpenSettings: () => void;
   onLogOut: () => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, onRenameChat, onOpenSettings, onLogOut }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onDeleteChat, onRenameChat, onOpenSettings, onLogOut }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -58,6 +59,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onDelete
       </div>
 
       <div className="px-4 pt-4 pb-3 shrink-0">
+        <button onClick={onOpenOfficialSite} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(82,219,169,0.12),rgba(82,219,169,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(82,219,169,0.18),rgba(82,219,169,0.08))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#52DBA9]/15 text-[#7ef8d2] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Globe className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">物性论官网</span>
+            <span className="text-[11px] text-slate-500">理解理论、产业与社会价值</span>
+          </div>
+        </button>
         <button onClick={onNewChat} className="w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3 text-left transition-colors hover:bg-white/[0.07]">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#52DBA9]/15 text-[#7ef8d2] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
              <Plus className="w-3.5 h-3.5" />

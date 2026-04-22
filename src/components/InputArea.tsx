@@ -25,7 +25,32 @@ type UploadStatus = {
 };
 
 const MAX_FILE_SIZE_MB = 50;
-const SUPPORTED_FILE_TYPES = 'image/*,application/pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
+const SUPPORTED_FILE_TYPES = 'image/*,application/pdf,.txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.java,.c,.cpp,.h,.hpp,.rs,.go,.sh,.yaml,.yml,.toml,.ini,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
+const INLINE_ATTACHMENT_DATA_LIMIT = 850_000;
+const BACKGROUND_UPLOAD_TIMEOUT_MS = 20_000;
+const TEXT_FILE_EXTENSIONS = [
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.py',
+  '.js',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.java',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.rs',
+  '.go',
+  '.sh',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+];
 
 const OMEGA_SCALES = [
   { id: 'short', label: '短期 Ω', icon: Search, desc: '解决当下问题，直接给答案', prompt: '【系统指令：请使用「短期 Ω 刻度」，忽略宏大叙事，只解决用户当前亟待解决的局部问题，直接给出高信息密度（Id）的答案。】' },
@@ -48,6 +73,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
   const recognitionRef = useRef<any>(null);
   const uploadTaskRef = useRef<Record<string, UploadTask>>({});
   const fileReaderRef = useRef<Record<string, FileReader>>({});
+  const uploadTimeoutRef = useRef<Record<string, number>>({});
 
   const formatFileSize = (size?: number) => {
     if (!size) return '';
@@ -78,6 +104,20 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
     }, delay);
   };
 
+  const clearUploadTimeout = (id: string) => {
+    const timeoutId = uploadTimeoutRef.current[id];
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      delete uploadTimeoutRef.current[id];
+    }
+  };
+
+  const clearUploadResources = (id: string) => {
+    clearUploadTimeout(id);
+    delete uploadTaskRef.current[id];
+    delete fileReaderRef.current[id];
+  };
+
   const getUploadStatus = (id?: string) => {
     if (!id) return null;
     return uploadProgress.find((item) => item.id === id) || null;
@@ -89,6 +129,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
 
     uploadTaskRef.current[id]?.cancel();
     delete uploadTaskRef.current[id];
+    clearUploadTimeout(id);
 
     setUploadProgress((prev) => prev.filter((item) => item.id !== id));
     setAttachments((prev) => prev.filter((item) => item.localId !== id));
@@ -175,11 +216,14 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
           return null;
         }
 
-        const isTextFile = file.type.startsWith('text/') || file.name.endsWith('.md') || file.name.endsWith('.txt');
+        const lowerName = file.name.toLowerCase();
+        const isTextFile =
+          file.type.startsWith('text/') ||
+          TEXT_FILE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
         const uploadId = uuidv4();
         upsertUploadStatus({ id: uploadId, name: file.name, progress: 0, stage: 'reading' });
 
-        return new Promise<{ attachment: Attachment; file: File; uploadId: string } | null>((resolve) => {
+        return new Promise<{ attachment: Attachment; file: File; uploadId: string; shouldUpload: boolean } | null>((resolve) => {
           const reader = new FileReader();
           fileReaderRef.current[uploadId] = reader;
 
@@ -213,18 +257,35 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                 // If read as Data URL, result is "data:image/png;base64,....."
                 base64Data = result.split(',')[1];
               }
-              upsertUploadStatus({ id: uploadId, name: file.name, progress: workspaceId && storage ? 42 : 100, stage: workspaceId && storage ? 'uploading' : 'complete' });
+              const shouldUpload = Boolean(workspaceId && storage && base64Data.length > INLINE_ATTACHMENT_DATA_LIMIT);
+              upsertUploadStatus({
+                id: uploadId,
+                name: file.name,
+                progress: shouldUpload ? 42 : 100,
+                stage: shouldUpload ? 'uploading' : 'complete',
+              });
 
               resolve({
                 attachment: {
                   name: file.name,
-                  mimeType: file.type || (isTextFile ? 'text/plain' : 'application/octet-stream'),
+                  mimeType:
+                    file.type ||
+                    (lowerName.endsWith('.py')
+                      ? 'text/x-python'
+                      : lowerName.endsWith('.js')
+                        ? 'text/javascript'
+                        : lowerName.endsWith('.ts') || lowerName.endsWith('.tsx')
+                          ? 'text/typescript'
+                          : isTextFile
+                            ? 'text/plain'
+                            : 'application/octet-stream'),
                   data: base64Data, 
                   size: file.size,
                   localId: uploadId,
                 },
                 file,
                 uploadId,
+                shouldUpload,
               });
               delete fileReaderRef.current[uploadId];
             } catch(e) {
@@ -251,12 +312,17 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
         });
       }));
 
-      const readyFiles = preparedAttachments.filter(Boolean) as Array<{ attachment: Attachment; file: File; uploadId: string }>;
+      const readyFiles = preparedAttachments.filter(Boolean) as Array<{ attachment: Attachment; file: File; uploadId: string; shouldUpload: boolean }>;
       const newAttachments = readyFiles.map((item) => item.attachment);
       setAttachments(prev => [...prev, ...newAttachments]);
 
       // Upload to Firebase in the background so the UI becomes usable immediately.
-      readyFiles.forEach(({ attachment, file, uploadId }) => {
+      readyFiles.forEach(({ attachment, file, uploadId, shouldUpload }) => {
+        if (!shouldUpload) {
+          removeUploadStatus(uploadId);
+          return;
+        }
+
         if (!file || !uploadId || !workspaceId || !storage) {
           if (uploadId) {
             upsertUploadStatus({ id: uploadId, name: attachment.name, progress: 100, stage: 'complete' });
@@ -268,26 +334,44 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
         const storageRef = ref(storage, `workspaces/${workspaceId}/attachments/${uploadId}_${file.name}`);
         const uploadTask = uploadBytesResumable(storageRef, file);
         uploadTaskRef.current[uploadId] = uploadTask;
+        uploadTimeoutRef.current[uploadId] = window.setTimeout(() => {
+          console.warn('Background attachment upload timed out. Falling back to local-only attachment.', attachment.name);
+          uploadTask.cancel();
+          clearUploadResources(uploadId);
+          removeUploadStatus(uploadId, 0);
+        }, BACKGROUND_UPLOAD_TIMEOUT_MS);
         uploadTask.on(
           'state_changed',
           (snapshot) => {
             const progress = snapshot.totalBytes > 0 ? Math.max(42, Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)) : 42;
             upsertUploadStatus({ id: uploadId, name: attachment.name, progress, stage: 'uploading' });
+            clearUploadTimeout(uploadId);
+            uploadTimeoutRef.current[uploadId] = window.setTimeout(() => {
+              console.warn('Background attachment upload stalled. Falling back to local-only attachment.', attachment.name);
+              uploadTask.cancel();
+              clearUploadResources(uploadId);
+              removeUploadStatus(uploadId, 0);
+            }, BACKGROUND_UPLOAD_TIMEOUT_MS);
           },
           (storageError) => {
-            console.warn('Background attachment upload failed.', storageError);
-            upsertUploadStatus({ id: uploadId, name: attachment.name, progress: 100, stage: 'failed' });
-            removeUploadStatus(uploadId, 2000);
-            delete uploadTaskRef.current[uploadId];
+            console.warn('Background attachment upload failed. Falling back to local-only attachment.', storageError);
+            clearUploadResources(uploadId);
+            removeUploadStatus(uploadId, 0);
           },
           async () => {
-            const downloadURL = await getDownloadURL(storageRef);
-            setAttachments((prev) =>
-              prev.map((item) => (item.localId === attachment.localId ? { ...item, url: downloadURL } : item))
-            );
-            upsertUploadStatus({ id: uploadId, name: attachment.name, progress: 100, stage: 'complete' });
-            removeUploadStatus(uploadId);
-            delete uploadTaskRef.current[uploadId];
+            try {
+              const downloadURL = await getDownloadURL(storageRef);
+              setAttachments((prev) =>
+                prev.map((item) => (item.localId === attachment.localId ? { ...item, url: downloadURL } : item))
+              );
+              upsertUploadStatus({ id: uploadId, name: attachment.name, progress: 100, stage: 'complete' });
+              removeUploadStatus(uploadId);
+            } catch (downloadError) {
+              console.warn('Attachment uploaded but download URL fetch failed. Falling back to local-only attachment.', downloadError);
+              removeUploadStatus(uploadId, 0);
+            } finally {
+              clearUploadResources(uploadId);
+            }
           },
         );
       });
@@ -389,39 +473,6 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                   </div>
                 </div>
               ))}
-
-              {uploadProgress.length > 0 && (
-                <div className="w-full rounded-[24px] border border-white/10 bg-[#252833] p-3">
-                  <div className="mb-2.5 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                    <span>上传中</span>
-                    <span>{Math.max(...uploadProgress.map((item) => item.progress))}%</span>
-                  </div>
-                  <div className="space-y-2">
-                    {uploadProgress.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.03] px-3 py-2 text-xs text-slate-400">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#181b24]">
-                            <div className="h-5 w-5 rounded-full border-2 border-white/12 border-t-white animate-spin" style={{ animationDuration: '0.9s' }} />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate pr-3">{item.name}</div>
-                            <div className="mt-1 text-[11px] text-slate-500">
-                              {item.stage === 'reading' ? '读取中' : item.stage === 'uploading' ? '上传中' : item.stage === 'failed' ? '上传失败' : '完成'}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => cancelUpload(item.id)}
-                          className="shrink-0 rounded-full border border-white/10 bg-[#171922] p-2 text-slate-300 transition-colors hover:bg-black/80 hover:text-white"
-                          title="取消上传"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
           
