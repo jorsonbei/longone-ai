@@ -188,7 +188,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
   }, [content]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && e.metaKey) {
       e.preventDefault();
       handleSend();
     }
@@ -478,7 +478,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
           
           <Textarea
             ref={textareaRef}
-            placeholder={isGenerating ? "正在生成回答..." : "向物性论发送消息..."}
+            placeholder={isGenerating ? "正在生成回答..." : "向物性论发送消息...（⌘+Enter 发送）"}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
