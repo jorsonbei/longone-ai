@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../lib/firebase';
-import { collection, doc, query, orderBy, onSnapshot, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, query, orderBy, onSnapshot, setDoc, deleteDoc, updateDoc, getCountFromServer, getDocs, writeBatch } from 'firebase/firestore';
 import { ChatSession, Message } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { MODELS } from '../services/geminiService';
@@ -28,24 +28,33 @@ export function useChats() {
 
     const convRef = collection(db, 'workspaces', workspaceId, 'conversations');
     const q = query(convRef, orderBy('updatedAt', 'desc'));
+    let cancelled = false;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetched: ChatSession[] = snapshot.docs.map(d => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const fetched = await Promise.all(snapshot.docs.map(async (d) => {
         const data = d.data();
+        const messagesRef = collection(db, 'workspaces', workspaceId, 'conversations', d.id, 'messages');
+        const countSnapshot = await getCountFromServer(messagesRef);
+
         return {
           id: d.id,
           title: data.title,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
-          messages: [] 
-        };
-      });
-      
+          messages: [],
+          messageCount: countSnapshot.data().count,
+        } satisfies ChatSession;
+      }));
+
+      if (cancelled) return;
       setChats(fetched);
       setIsLoaded(true);
     });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [workspaceId]);
 
   // Load messages for active chat
@@ -96,6 +105,7 @@ export function useChats() {
       title: 'New Chat',
       model: MODELS.FLASH,
       status: 'active',
+      messageCount: 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
@@ -104,6 +114,17 @@ export function useChats() {
 
   const deleteChat = async (id: string) => {
     if (!workspaceId) return;
+    const messagesRef = collection(db, 'workspaces', workspaceId, 'conversations', id, 'messages');
+    const snapshot = await getDocs(messagesRef);
+
+    if (!snapshot.empty) {
+      const batch = writeBatch(db);
+      snapshot.docs.forEach((messageDoc) => {
+        batch.delete(messageDoc.ref);
+      });
+      await batch.commit();
+    }
+
     await deleteDoc(doc(db, 'workspaces', workspaceId, 'conversations', id));
     if (activeChatId === id) {
        setActiveChatId(null);

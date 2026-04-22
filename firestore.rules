@@ -162,5 +162,28 @@ service cloud.firestore {
 
       allow delete: if isWorkspaceOwner(workspaceId);
     }
+
+    // 7. Admin Content Drafts
+    match /workspaces/{workspaceId}/admin_content/{documentId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create, update: if isWorkspaceOwner(workspaceId)
+        && isValidId(documentId)
+        && incoming().keys().hasAll(['draft', 'updatedAt'])
+        && incoming().draft is map
+        && incoming().updatedAt is number;
+      allow delete: if isWorkspaceOwner(workspaceId);
+    }
+
+    // 8. Admin Settings
+    match /workspaces/{workspaceId}/admin_settings/{documentId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create, update: if isWorkspaceOwner(workspaceId)
+        && isValidId(documentId)
+        && incoming().keys().hasAll(['systemInstruction', 'updatedAt'])
+        && incoming().systemInstruction is string
+        && incoming().systemInstruction.size() <= 20000
+        && incoming().updatedAt is number;
+      allow delete: if isWorkspaceOwner(workspaceId);
+    }
   }
 }

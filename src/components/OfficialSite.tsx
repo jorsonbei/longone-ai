@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowRight, BookOpen, Cpu, Microscope, Orbit, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 import { ThingNatureBrand } from './ThingNatureBrand';
-import { officialSiteContent } from '../content/officialSiteContent';
+import { officialSiteContent, OfficialSiteContent } from '../content/officialSiteContent';
 
 const industryIcons = {
   chips: Cpu,
@@ -17,6 +17,7 @@ const industryIcons = {
 
 interface OfficialSiteProps {
   onBackToChat: () => void;
+  content?: OfficialSiteContent;
 }
 
 function SectionTitle({ eyebrow, title, description }: { eyebrow: string; title: string; description?: string }) {
@@ -29,8 +30,8 @@ function SectionTitle({ eyebrow, title, description }: { eyebrow: string; title:
   );
 }
 
-export function OfficialSite({ onBackToChat }: OfficialSiteProps) {
-  const { hero, definition, whyNow, evidence, industries, experiment, book, faq } = officialSiteContent;
+export function OfficialSite({ onBackToChat, content = officialSiteContent }: OfficialSiteProps) {
+  const { hero, definition, whyNow, evidence, industries, experiment, book, faq } = content;
 
   return (
     <div className="h-full overflow-y-auto bg-[#0f1117] text-slate-100">

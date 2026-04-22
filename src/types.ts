@@ -43,6 +43,7 @@ export interface ChatSession {
   id: string;
   title: string;
   messages: Message[];
+  messageCount?: number;
   createdAt: number;
   updatedAt: number;
 }

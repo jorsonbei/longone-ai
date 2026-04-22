@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -14,13 +14,15 @@ interface SidebarProps {
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
   onOpenOfficialSite: () => void;
+  onOpenAdmin: () => void;
+  canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string, newTitle: string) => void;
   onOpenSettings: () => void;
   onLogOut: () => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onDeleteChat, onRenameChat, onOpenSettings, onLogOut }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -68,6 +70,17 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <span className="text-[11px] text-slate-500">理解理论、产业与社会价值</span>
           </div>
         </button>
+        {canAccessAdmin ? (
+          <button onClick={onOpenAdmin} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(99,125,255,0.12),rgba(99,125,255,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(99,125,255,0.18),rgba(99,125,255,0.08))]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#637dff]/15 text-[#a8b5ff] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              <Shield className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-100">管理后台</span>
+              <span className="text-[11px] text-slate-500">内容、会话与系统控制台</span>
+            </div>
+          </button>
+        ) : null}
         <button onClick={onNewChat} className="w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3 text-left transition-colors hover:bg-white/[0.07]">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#52DBA9]/15 text-[#7ef8d2] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
              <Plus className="w-3.5 h-3.5" />

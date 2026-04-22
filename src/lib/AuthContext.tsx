@@ -2,12 +2,15 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import { ensureUserAndWorkspace } from './workspaceSetup';
+import { AppRole, resolveAppRole } from './adminAccess';
 
 interface AuthContextType {
   user: User | null;
   workspaceId: string | null;
   loading: boolean;
   authError: string | null;
+  appRole: AppRole;
+  isAdmin: boolean;
   signIn: () => Promise<void>;
   logOut: () => Promise<void>;
 }
@@ -17,6 +20,8 @@ const AuthContext = createContext<AuthContextType>({
   workspaceId: null,
   loading: true,
   authError: null,
+  appRole: 'user',
+  isAdmin: false,
   signIn: async () => {},
   logOut: async () => {},
 });
@@ -26,6 +31,7 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [appRole, setAppRole] = useState<AppRole>('user');
 
   useEffect(() => {
     let mounted = true;
@@ -45,6 +51,7 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
       if (!mounted) return;
       setUser(u);
       setAuthError(null);
+      setAppRole(resolveAppRole(u?.email));
 
       if (u) {
         const wid = await ensureUserAndWorkspace(u);
@@ -101,7 +108,7 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
   };
 
   return (
-    <AuthContext.Provider value={{ user, workspaceId, loading, authError, signIn, logOut }}>
+    <AuthContext.Provider value={{ user, workspaceId, loading, authError, appRole, isAdmin: appRole === 'admin', signIn, logOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -22,7 +22,10 @@ export function MarkdownRenderer({ content }: { content: string }) {
 
           if (isInline) {
             return (
-              <code className="bg-muted px-[0.3rem] py-[0.2rem] rounded font-mono text-sm" {...props}>
+              <code
+                className="rounded border border-white/10 px-[0.28rem] py-[0.12rem] font-mono text-[0.92em] text-slate-200"
+                {...props}
+              >
                 {children}
               </code>
             );

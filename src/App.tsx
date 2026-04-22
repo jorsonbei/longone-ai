@@ -17,7 +17,8 @@ import { useAuth } from './lib/AuthContext';
 import { ThingNatureBrand } from './components/ThingNatureBrand';
 import { X as CloseIcon, Sparkles } from 'lucide-react';
 import { OfficialSite } from './components/OfficialSite';
-import { officialSiteContent } from './content/officialSiteContent';
+import { useAdminContent } from './hooks/useAdminContent';
+import { AdminDashboard } from './components/AdminDashboard';
 
 const LIGHTWEIGHT_MESSAGE_RE =
   /^(hi|hello|hey|yo|sup|test|ping|ok|okay|在吗|在？|在么|你好|您好|嗨|哈喽|测试|1)\s*[!.?。！，、~～]*$/i;
@@ -36,7 +37,7 @@ function isLightweightMessage(content: string, attachments: Attachment[]) {
 }
 
 export default function App() {
-  const { user, loading: authLoading, authError, signIn, logOut } = useAuth();
+  const { user, loading: authLoading, authError, signIn, logOut, isAdmin } = useAuth();
   
   const {
     chats,
@@ -52,7 +53,7 @@ export default function App() {
   } = useChats();
 
   const [model, setModel] = useState<string>(MODELS.FLASH);
-  const [activeView, setActiveView] = useState<'chat' | 'official-site'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin'>('chat');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -63,7 +64,28 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const initialChatIdRef = useRef<string | null>(null);
 
-  const { systemInstruction, setSystemInstruction } = useSettings();
+  const { systemInstruction, setSystemInstruction, settingsSyncState } = useSettings();
+  const {
+    content: managedOfficialSiteContent,
+    draft: adminDraft,
+    updateField,
+    updateListField,
+    addListFieldItem,
+    removeListFieldItem,
+    updateEvidenceHighlight,
+    addEvidenceHighlight,
+    removeEvidenceHighlight,
+    updateEvidenceMetric,
+    addEvidenceMetric,
+    removeEvidenceMetric,
+    updateFaq,
+    addFaq,
+    removeFaq,
+    updateIndustry,
+    resetDraft,
+    syncState: adminContentSyncState,
+    syncError: adminContentSyncError,
+  } = useAdminContent();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -86,14 +108,14 @@ export default function App() {
     };
 
     if (activeView === 'official-site') {
-      document.title = officialSiteContent.seo.title;
-      setMeta('description', officialSiteContent.seo.description);
-      setMeta('og:title', officialSiteContent.seo.title, 'property');
-      setMeta('og:description', officialSiteContent.seo.description, 'property');
-      setMeta('og:image', officialSiteContent.seo.image, 'property');
-      setMeta('twitter:title', officialSiteContent.seo.title);
-      setMeta('twitter:description', officialSiteContent.seo.description);
-      setMeta('twitter:image', officialSiteContent.seo.image);
+      document.title = managedOfficialSiteContent.seo.title;
+      setMeta('description', managedOfficialSiteContent.seo.description);
+      setMeta('og:title', managedOfficialSiteContent.seo.title, 'property');
+      setMeta('og:description', managedOfficialSiteContent.seo.description, 'property');
+      setMeta('og:image', managedOfficialSiteContent.seo.image, 'property');
+      setMeta('twitter:title', managedOfficialSiteContent.seo.title);
+      setMeta('twitter:description', managedOfficialSiteContent.seo.description);
+      setMeta('twitter:image', managedOfficialSiteContent.seo.image);
       return;
     }
 
@@ -103,7 +125,7 @@ export default function App() {
     setMeta('og:description', '物性论OS：以结构化方式与物性论系统对话。', 'property');
     setMeta('twitter:title', '物性论OS');
     setMeta('twitter:description', '物性论OS：以结构化方式与物性论系统对话。');
-  }, [activeView]);
+  }, [activeView, managedOfficialSiteContent]);
 
   useEffect(() => {
     const targetChatId = initialChatIdRef.current;
@@ -343,6 +365,8 @@ ${omegaPrompt || '（用户未指定特定刻度，请自动调用系统默认�
             createNewChat();
           }}
           onOpenOfficialSite={() => setActiveView('official-site')}
+          onOpenAdmin={() => setActiveView('admin')}
+          canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
           onRenameChat={renameChat}
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -375,6 +399,13 @@ ${omegaPrompt || '（用户未指定特定刻度，请自动调用系统默认�
             
             <div className="flex items-center gap-2 w-auto justify-end">
               {activeView === 'official-site' ? (
+                <button
+                  onClick={() => setActiveView('chat')}
+                  className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] hover:text-white"
+                >
+                  返回对话
+                </button>
+              ) : activeView === 'admin' ? (
                 <button
                   onClick={() => setActiveView('chat')}
                   className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] hover:text-white"
@@ -585,7 +616,37 @@ ${omegaPrompt || '（用户未指定特定刻度，请自动调用系统默认�
             </Dialog>
 
           {activeView === 'official-site' ? (
-            <OfficialSite onBackToChat={() => setActiveView('chat')} />
+            <OfficialSite onBackToChat={() => setActiveView('chat')} content={managedOfficialSiteContent} />
+          ) : activeView === 'admin' && isAdmin ? (
+            <AdminDashboard
+              userEmail={user?.email}
+              content={managedOfficialSiteContent}
+              draft={adminDraft}
+              chats={chats}
+              activeChat={activeChat}
+              onSelectChat={setActiveChatId}
+              onDeleteChat={deleteChat}
+              updateField={updateField}
+              updateListField={updateListField}
+              addListFieldItem={addListFieldItem}
+              removeListFieldItem={removeListFieldItem}
+              updateEvidenceHighlight={updateEvidenceHighlight}
+              addEvidenceHighlight={addEvidenceHighlight}
+              removeEvidenceHighlight={removeEvidenceHighlight}
+              updateEvidenceMetric={updateEvidenceMetric}
+              addEvidenceMetric={addEvidenceMetric}
+              removeEvidenceMetric={removeEvidenceMetric}
+              updateFaq={updateFaq}
+              addFaq={addFaq}
+              removeFaq={removeFaq}
+              updateIndustry={updateIndustry}
+              resetDraft={resetDraft}
+              contentSyncState={adminContentSyncState}
+              contentSyncError={adminContentSyncError}
+              systemInstruction={systemInstruction}
+              setSystemInstruction={setSystemInstruction}
+              settingsSyncState={settingsSyncState}
+            />
           ) : (
             <>
               {/* Chat scrolling area */}
