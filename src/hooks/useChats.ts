@@ -8,6 +8,26 @@ import { MODELS } from '../services/geminiService';
 
 const INLINE_ATTACHMENT_PERSIST_LIMIT = 850_000;
 
+function normalizeWuxingDiagnosis(input: any) {
+  if (!input || typeof input !== 'object') return undefined;
+
+  return {
+    responseMode: input.responseMode || 'fusion',
+    engines: Array.isArray(input.engines) ? input.engines : ['HFCD', 'Genesis'],
+    lockDragon: {
+      state: input.lockDragon?.state || 'not_applicable',
+      signals: Array.isArray(input.lockDragon?.signals) ? input.lockDragon.signals : [],
+      summary: input.lockDragon?.summary || '当前输入没有明显进入景龙锁语义区，默认按常规物性论问答处理。',
+    },
+    names: Array.isArray(input.names) ? input.names : [],
+    canonHits: Array.isArray(input.canonHits) ? input.canonHits : [],
+    canonRelations: Array.isArray(input.canonRelations) ? input.canonRelations : [],
+    recordRecommended: Boolean(input.recordRecommended),
+    protocolNote: input.protocolNote || '本轮回答可先完成问答，不强制落盘。',
+    disableWebSearch: Boolean(input.disableWebSearch),
+  };
+}
+
 export function useChats() {
   const { workspaceId, user } = useAuth();
   
@@ -78,6 +98,7 @@ export function useChats() {
           createdAt: data.createdAt,
           citations: data.citations,
           attachments: data.attachments,
+          wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
         };
       });
       setActiveMessages(msgs);
@@ -165,6 +186,7 @@ export function useChats() {
       });
     }
     if (msg.citations) payload.citations = msg.citations;
+    if (msg.wuxingDiagnosis) payload.wuxingDiagnosis = msg.wuxingDiagnosis;
 
     await setDoc(msgRef, payload);
 

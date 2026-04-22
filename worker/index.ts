@@ -1,4 +1,5 @@
 import { buildContents, geminiGenerateJson, normalizeSystemInstruction, streamGeminiToNdjson } from '../functions/_lib/gemini';
+import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 
 type Env = {
   ASSETS: {
@@ -67,6 +68,19 @@ async function handleApi(request: Request, env: Env) {
       const text =
         response?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text || '').join('') || '';
       return json({ text: text || '未提取到明显的光性变化。' });
+    }
+
+    if (url.pathname === '/api/wuxing/instruction') {
+      const { baseInstruction, systemInstruction, omegaPrompt, content, diagnosis } = await request.json();
+      return json({
+        instruction: buildInternalizedOperatingInstruction({
+          baseInstruction,
+          systemInstruction,
+          omegaPrompt,
+          content,
+          diagnosis,
+        }),
+      });
     }
 
     return json({ error: 'Not found.' }, { status: 404 });

@@ -38,12 +38,13 @@ service cloud.firestore {
 
     function isValidConversation(data) {
       return data.keys().hasAll(['title', 'model', 'status', 'createdAt', 'updatedAt'])
-        && data.keys().size() == 5
+        && data.keys().size() <= 6
         && data.title is string && data.title.size() <= 200
         && data.model is string && data.model.size() <= 100
         && data.status is string && data.status.size() <= 20
         && data.createdAt is number
-        && data.updatedAt is number;
+        && data.updatedAt is number
+        && (!('messageCount' in data) || data.messageCount is number);
     }
 
     function isValidMessageCreate(data) {
@@ -56,7 +57,8 @@ service cloud.firestore {
         && (!('tokenIn' in data) || (data.tokenIn is number))
         && (!('tokenOut' in data) || (data.tokenOut is number))
         && (!('citations' in data) || (data.citations is list))
-        && (!('attachments' in data) || (data.attachments is list));
+        && (!('attachments' in data) || (data.attachments is list))
+        && (!('wuxingDiagnosis' in data) || (data.wuxingDiagnosis is map));
     }
 
     function isValidAttachment(data) {
@@ -131,13 +133,14 @@ service cloud.firestore {
         
       allow update: if isWorkspaceOwner(workspaceId)
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'status', 'tokenIn', 'tokenOut', 'citations', 'attachments'])
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'status', 'tokenIn', 'tokenOut', 'citations', 'attachments', 'wuxingDiagnosis'])
         && ('content' in incoming() ? (incoming().content is string && incoming().content.size() <= 100000) : true)
         && ('status' in incoming() ? (incoming().status is string && incoming().status.size() <= 50) : true)
         && ('tokenIn' in incoming() ? incoming().tokenIn is number : true)
         && ('tokenOut' in incoming() ? incoming().tokenOut is number : true)
         && ('citations' in incoming() ? incoming().citations is list : true)
-        && ('attachments' in incoming() ? incoming().attachments is list : true);
+        && ('attachments' in incoming() ? incoming().attachments is list : true)
+        && ('wuxingDiagnosis' in incoming() ? incoming().wuxingDiagnosis is map : true);
 
       allow delete: if false;
     }
@@ -179,11 +182,37 @@ service cloud.firestore {
       allow get, list: if isWorkspaceOwner(workspaceId);
       allow create, update: if isWorkspaceOwner(workspaceId)
         && isValidId(documentId)
-        && incoming().keys().hasAll(['systemInstruction', 'updatedAt'])
+        && incoming().keys().hasAll(['systemInstruction', 'responseMode', 'enableNameParser', 'enableLockDragonDiagnosis', 'enableRecordProtocol', 'showDiagnosticsSummary', 'namesGlossaryText', 'updatedAt'])
         && incoming().systemInstruction is string
         && incoming().systemInstruction.size() <= 20000
+        && incoming().responseMode is string
+        && incoming().responseMode.size() <= 32
+        && incoming().enableNameParser is bool
+        && incoming().enableLockDragonDiagnosis is bool
+        && incoming().enableRecordProtocol is bool
+        && incoming().showDiagnosticsSummary is bool
+        && incoming().namesGlossaryText is string
+        && incoming().namesGlossaryText.size() <= 4000
         && incoming().updatedAt is number;
       allow delete: if isWorkspaceOwner(workspaceId);
+    }
+
+    // 9. Wuxing Records
+    match /workspaces/{workspaceId}/records/{recordId} {
+      allow get, list: if isWorkspaceOwner(workspaceId);
+      allow create: if isWorkspaceOwner(workspaceId)
+        && isValidId(recordId)
+        && incoming().keys().hasAll(['chatId', 'sourceMessageId', 'title', 'category', 'excerpt', 'createdAt'])
+        && incoming().chatId is string
+        && incoming().sourceMessageId is string
+        && incoming().title is string
+        && incoming().title.size() <= 120
+        && incoming().category is string
+        && incoming().category.size() <= 40
+        && incoming().excerpt is string
+        && incoming().excerpt.size() <= 400
+        && incoming().createdAt is number;
+      allow update, delete: if isWorkspaceOwner(workspaceId);
     }
   }
 }

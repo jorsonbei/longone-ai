@@ -1,9 +1,14 @@
-import { Message, Citation } from "../types";
+import { Message, Citation, WuxingDiagnosisSummary } from "../types";
 import { THING_NATURE_MANIFESTO } from "../lib/thingNatureManifesto";
 
 export const MODELS = {
   FLASH: "gemini-3-flash-preview",
   PRO: "gemini-3.1-pro-preview",
+};
+
+const FALLBACK_MODELS: Record<string, string | undefined> = {
+  [MODELS.FLASH]: 'gemini-2.5-flash',
+  [MODELS.PRO]: 'gemini-2.5-pro',
 };
 
 export type StreamEvent = {
@@ -16,6 +21,17 @@ export type StreamEvent = {
   type: 'error';
   message: string;
 };
+
+export async function buildInternalizedSystemInstruction(input: {
+  baseInstruction: string;
+  systemInstruction: string;
+  omegaPrompt: string;
+  content: string;
+  diagnosis: WuxingDiagnosisSummary;
+}) {
+  const response = await postJson<{ instruction: string }>('/api/wuxing/instruction', input);
+  return response.instruction;
+}
 
 async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
@@ -35,6 +51,78 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   return response.json();
 }
 
+const STREAM_TIMEOUT_MS = 45_000;
+
+function createTimeoutSignal(timeoutMs: number, parentSignal?: AbortSignal) {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const onAbort = () => {
+    controller.abort(parentSignal?.reason || new DOMException('Request aborted.', 'AbortError'));
+  };
+
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      onAbort();
+    } else {
+      parentSignal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
+
+  if (!controller.signal.aborted) {
+    timeoutId = setTimeout(() => {
+      controller.abort(new Error(`Gemini request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+  }
+
+  const cleanup = () => {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', onAbort);
+    }
+  };
+
+  return {
+    signal: controller.signal,
+    cleanup,
+  };
+}
+
+async function requestStream(
+  messages: Message[],
+  model: string,
+  systemInstruction?: string,
+  signal?: AbortSignal,
+  webSearchEnabled: boolean = true,
+) {
+  const { signal: requestSignal, cleanup } = createTimeoutSignal(STREAM_TIMEOUT_MS, signal);
+
+  try {
+    const response = await fetch('/api/gemini/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages,
+        model,
+        systemInstruction,
+        webSearchEnabled,
+      }),
+      signal: requestSignal,
+    });
+
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || `Stream request failed with status ${response.status}`);
+    }
+
+    return response;
+  } finally {
+    cleanup();
+  }
+}
+
 export async function* streamChat(
   messages: Message[],
   model: string = MODELS.FLASH,
@@ -42,23 +130,18 @@ export async function* streamChat(
   signal?: AbortSignal,
   webSearchEnabled: boolean = true
 ): AsyncGenerator<StreamEvent, void, unknown> {
-  const response = await fetch('/api/gemini/chat/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messages,
-      model,
-      systemInstruction,
-      webSearchEnabled,
-    }),
-    signal,
-  });
+  let response: Response;
 
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error || `Stream request failed with status ${response.status}`);
+  try {
+    response = await requestStream(messages, model, systemInstruction, signal, webSearchEnabled);
+  } catch (error) {
+    const fallbackModel = FALLBACK_MODELS[model];
+    if (fallbackModel) {
+      console.warn(`Primary model ${model} failed, retrying with ${fallbackModel}.`, error);
+      response = await requestStream(messages, fallbackModel, systemInstruction, signal, webSearchEnabled);
+    } else {
+      throw error;
+    }
   }
 
   const reader = response.body.getReader();

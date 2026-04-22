@@ -1,14 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { BarChart3, FileText, MessagesSquare, Plus, Settings2, Shield, Trash2 } from 'lucide-react';
-import { ChatSession } from '../types';
+import { ChatSession, WuxingRecord } from '../types';
 import { OfficialSiteContent } from '../content/officialSiteContent';
 import { AdminContentDraft } from '../hooks/useAdminContent';
+import { WuxingConfig } from '../lib/wuxingKernel';
 
 interface AdminDashboardProps {
   userEmail?: string | null;
   content: OfficialSiteContent;
   draft: AdminContentDraft;
   chats: ChatSession[];
+  records: WuxingRecord[];
   activeChat: ChatSession | null;
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
@@ -31,6 +33,8 @@ interface AdminDashboardProps {
   contentSyncError: string | null;
   systemInstruction: string;
   setSystemInstruction: (value: string) => void;
+  wuxingConfig: WuxingConfig;
+  updateWuxingConfigField: <K extends keyof WuxingConfig>(field: K, value: WuxingConfig[K]) => void;
   settingsSyncState: 'idle' | 'loading' | 'saving' | 'synced' | 'fallback-local';
 }
 
@@ -116,11 +120,39 @@ function ItemToolbar({
   );
 }
 
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start justify-between gap-4 rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
+      <div>
+        <div className="text-sm font-semibold text-slate-100">{label}</div>
+        <div className="mt-1 text-xs leading-6 text-slate-500">{hint}</div>
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-1 h-4 w-4 accent-[#52DBA9]"
+      />
+    </label>
+  );
+}
+
 export function AdminDashboard({
   userEmail,
   content,
   draft,
   chats,
+  records,
   activeChat,
   onSelectChat,
   onDeleteChat,
@@ -143,6 +175,8 @@ export function AdminDashboard({
   contentSyncError,
   systemInstruction,
   setSystemInstruction,
+  wuxingConfig,
+  updateWuxingConfigField,
   settingsSyncState,
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -244,6 +278,7 @@ export function AdminDashboard({
                 { label: '官网行业卡片', value: metrics.industryCount, note: '当前已覆盖的行业模块' },
                 { label: 'FAQ 数量', value: metrics.faqCount, note: '后台现已可编辑 FAQ' },
                 { label: '证据模块条目', value: metrics.evidenceCount, note: '实验亮点与证据项' },
+                { label: '记录协议条目', value: records.length, note: '贝记胜协议近期落盘条目' },
               ].map((item) => (
                 <div key={item.label} className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-5">
                   <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">{item.label}</div>
@@ -578,14 +613,90 @@ export function AdminDashboard({
                   onChange={setSystemInstruction}
                   multiline
                 />
+                <div className="mt-6 rounded-[24px] border border-white/8 bg-black/10 p-4">
+                  <div className="text-sm font-semibold text-white">回答模式切换</div>
+                  <div className="mt-2 text-xs leading-6 text-slate-500">工程模偏硬，创世模偏象征，融合模先结构后点火。</div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {[
+                      ['engineering', '工程模'],
+                      ['creation', '创世模'],
+                      ['fusion', '融合模'],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => updateWuxingConfigField('responseMode', value as WuxingConfig['responseMode'])}
+                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${
+                          wuxingConfig.responseMode === value
+                            ? 'border-[#52DBA9]/30 bg-[#52DBA9]/14 text-[#9df4d7]'
+                            : 'border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.07]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  <ToggleRow
+                    label="启用名字解析器"
+                    hint="保留贝记胜、景龙锁、阮氏兰惠等命名神经，把名字当作结构入口。"
+                    checked={wuxingConfig.enableNameParser}
+                    onChange={(value) => updateWuxingConfigField('enableNameParser', value)}
+                  />
+                  <ToggleRow
+                    label="启用锁-龙诊断"
+                    hint="遇到卡住、想哭、压抑、被困时，优先区分景龙锁而不是简单归因执行力。"
+                    checked={wuxingConfig.enableLockDragonDiagnosis}
+                    onChange={(value) => updateWuxingConfigField('enableLockDragonDiagnosis', value)}
+                  />
+                  <ToggleRow
+                    label="启用贝记胜记录协议"
+                    hint="为高价值新光、锁裂时刻和名字洞见自动落盘，避免重要光只停留在会话里。"
+                    checked={wuxingConfig.enableRecordProtocol}
+                    onChange={(value) => updateWuxingConfigField('enableRecordProtocol', value)}
+                  />
+                  <ToggleRow
+                    label="显示双核诊断摘要"
+                    hint="在回答卡片上展示模式、锁龙状态和名字解析摘要，便于调参。"
+                    checked={wuxingConfig.showDiagnosticsSummary}
+                    onChange={(value) => updateWuxingConfigField('showDiagnosticsSummary', value)}
+                  />
+                </div>
+
+                <div className="mt-6">
+                  <FieldBlock
+                    label="名字解析词库"
+                    hint="每行一个名字与解释，格式如：阮氏兰惠：兰为展开，惠为柔光泽被。"
+                    value={wuxingConfig.namesGlossaryText}
+                    onChange={(value) => updateWuxingConfigField('namesGlossaryText', value)}
+                    multiline
+                  />
+                </div>
               </div>
               <div className="rounded-[28px] border border-[#52DBA9]/14 bg-[linear-gradient(180deg,rgba(82,219,169,0.08),rgba(255,255,255,0.02))] p-5">
                 <div className="text-sm font-semibold text-white">这一页当前能管什么</div>
                 <ul className="mt-4 space-y-2 text-sm leading-7 text-slate-200">
                   <li>1. 默认短答 / 长答风格。</li>
-                  <li>2. 轻量消息时是否过度解读。</li>
-                  <li>3. 未来可扩展成分享模板、官网 SEO、模型默认策略。</li>
+                  <li>2. HFCD 与创世宝典的双核权重。</li>
+                  <li>3. 锁龙诊断、名字解析与记录协议开关。</li>
                 </ul>
+                <div className="mt-6 rounded-2xl border border-white/8 bg-black/10 p-4">
+                  <div className="text-sm font-semibold text-white">近期贝记胜记录</div>
+                  <div className="mt-3 space-y-3">
+                    {records.length > 0 ? (
+                      records.slice(0, 5).map((record) => (
+                        <div key={record.id} className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+                          <div className="text-xs font-bold uppercase tracking-[0.2em] text-[#9df4d7]">{record.category}</div>
+                          <div className="mt-2 text-sm font-semibold text-white">{record.title}</div>
+                          <div className="mt-2 text-xs leading-6 text-slate-400">{record.excerpt}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-slate-500">还没有落盘记录。启用记录协议后，重要新光会自动进入这里。</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </section>

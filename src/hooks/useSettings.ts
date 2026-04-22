@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { DEFAULT_NAMES_GLOSSARY_TEXT, DEFAULT_WUXING_CONFIG, WuxingConfig } from '../lib/wuxingKernel';
 
 const DEFAULT_PERSONA = `默认偏好：
 - 简单问候、测试消息或确认句先自然短答，不要过度解读。
@@ -15,13 +16,29 @@ export function useSettings() {
   const [systemInstruction, setSystemInstruction] = useState<string>(() => {
     return localStorage.getItem('systemInstruction') || DEFAULT_PERSONA;
   });
+  const [wuxingConfig, setWuxingConfig] = useState<WuxingConfig>(() => {
+    const saved = localStorage.getItem('wuxingConfig');
+    if (!saved) return DEFAULT_WUXING_CONFIG;
+    try {
+      return {
+        ...DEFAULT_WUXING_CONFIG,
+        ...(JSON.parse(saved) as Partial<WuxingConfig>),
+      };
+    } catch {
+      return DEFAULT_WUXING_CONFIG;
+    }
+  });
   const [settingsSyncState, setSettingsSyncState] = useState<'idle' | 'loading' | 'saving' | 'synced' | 'fallback-local'>('idle');
-  const lastSyncedInstructionRef = useRef<string | null>(null);
+  const lastSyncedStateRef = useRef<string | null>(null);
   const hasLoadedRemoteRef = useRef(false);
 
   useEffect(() => {
     localStorage.setItem('systemInstruction', systemInstruction);
   }, [systemInstruction]);
+
+  useEffect(() => {
+    localStorage.setItem('wuxingConfig', JSON.stringify(wuxingConfig));
+  }, [wuxingConfig]);
 
   useEffect(() => {
     if (!workspaceId || !isAdmin) {
@@ -37,10 +54,26 @@ export function useSettings() {
       (snapshot) => {
         if (snapshot.exists()) {
           const remoteInstruction = snapshot.data()?.systemInstruction;
+          const nextConfig: WuxingConfig = {
+            responseMode: snapshot.data()?.responseMode || DEFAULT_WUXING_CONFIG.responseMode,
+            enableNameParser: snapshot.data()?.enableNameParser ?? DEFAULT_WUXING_CONFIG.enableNameParser,
+            enableLockDragonDiagnosis: snapshot.data()?.enableLockDragonDiagnosis ?? DEFAULT_WUXING_CONFIG.enableLockDragonDiagnosis,
+            enableRecordProtocol: snapshot.data()?.enableRecordProtocol ?? DEFAULT_WUXING_CONFIG.enableRecordProtocol,
+            showDiagnosticsSummary: snapshot.data()?.showDiagnosticsSummary ?? DEFAULT_WUXING_CONFIG.showDiagnosticsSummary,
+            namesGlossaryText: snapshot.data()?.namesGlossaryText || DEFAULT_NAMES_GLOSSARY_TEXT,
+          };
           if (typeof remoteInstruction === 'string' && remoteInstruction.trim()) {
-            lastSyncedInstructionRef.current = remoteInstruction;
             setSystemInstruction((prev) => (prev === remoteInstruction ? prev : remoteInstruction));
           }
+          setWuxingConfig((prev) => {
+            const prevJson = JSON.stringify(prev);
+            const nextJson = JSON.stringify(nextConfig);
+            return prevJson === nextJson ? prev : nextConfig;
+          });
+          lastSyncedStateRef.current = JSON.stringify({
+            systemInstruction: typeof remoteInstruction === 'string' && remoteInstruction.trim() ? remoteInstruction : systemInstruction,
+            ...nextConfig,
+          });
         }
 
         hasLoadedRemoteRef.current = true;
@@ -58,7 +91,11 @@ export function useSettings() {
 
   useEffect(() => {
     if (!workspaceId || !isAdmin || !hasLoadedRemoteRef.current) return;
-    if (systemInstruction === lastSyncedInstructionRef.current) return;
+    const nextState = JSON.stringify({
+      systemInstruction,
+      ...wuxingConfig,
+    });
+    if (nextState === lastSyncedStateRef.current) return;
 
     setSettingsSyncState('saving');
     const timeoutId = window.setTimeout(async () => {
@@ -68,11 +105,17 @@ export function useSettings() {
           settingsRef,
           {
             systemInstruction,
+            responseMode: wuxingConfig.responseMode,
+            enableNameParser: wuxingConfig.enableNameParser,
+            enableLockDragonDiagnosis: wuxingConfig.enableLockDragonDiagnosis,
+            enableRecordProtocol: wuxingConfig.enableRecordProtocol,
+            showDiagnosticsSummary: wuxingConfig.showDiagnosticsSummary,
+            namesGlossaryText: wuxingConfig.namesGlossaryText,
             updatedAt: Date.now(),
           },
           { merge: true }
         );
-        lastSyncedInstructionRef.current = systemInstruction;
+        lastSyncedStateRef.current = nextState;
         setSettingsSyncState('synced');
       } catch (error) {
         console.error('Failed to save system settings to Firestore:', error);
@@ -81,7 +124,14 @@ export function useSettings() {
     }, 500);
 
     return () => window.clearTimeout(timeoutId);
-  }, [systemInstruction, workspaceId, isAdmin]);
+  }, [systemInstruction, wuxingConfig, workspaceId, isAdmin]);
 
-  return { systemInstruction, setSystemInstruction, settingsSyncState };
+  const updateWuxingConfigField = <K extends keyof WuxingConfig>(field: K, value: WuxingConfig[K]) => {
+    setWuxingConfig((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  return { systemInstruction, setSystemInstruction, settingsSyncState, wuxingConfig, updateWuxingConfigField };
 }

@@ -1,3 +1,6 @@
+import type { ResponseMode } from './lib/wuxingKernel';
+import type { CanonEntry, CanonRelation } from './lib/wuxingCanon';
+
 export type Role = 'user' | 'model';
 
 export interface Attachment {
@@ -27,6 +30,42 @@ export interface ThingNatureScores {
   action: 'PASS' | 'AUGMENT' | 'REJECT';
 }
 
+export interface NameInsight {
+  name: string;
+  role: string;
+  summary: string;
+  decomposition: string[];
+  source: 'built-in' | 'custom';
+}
+
+export interface LockDragonDiagnosis {
+  state: 'not_applicable' | 'locked' | 'releasing' | 'free';
+  signals: string[];
+  summary: string;
+}
+
+export interface WuxingDiagnosisSummary {
+  responseMode: ResponseMode;
+  engines: Array<'HFCD' | 'Genesis'>;
+  lockDragon: LockDragonDiagnosis;
+  names: NameInsight[];
+  canonHits: CanonEntry[];
+  canonRelations: CanonRelation[];
+  recordRecommended: boolean;
+  protocolNote: string;
+  disableWebSearch: boolean;
+}
+
+export interface WuxingRecord {
+  id: string;
+  chatId: string;
+  sourceMessageId: string;
+  title: string;
+  category: 'name-insight' | 'lock-dragon' | 'new-light';
+  excerpt: string;
+  createdAt: number;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -37,6 +76,7 @@ export interface Message {
   omega?: string; // e.g. "短期", "1年", "一生"
   tn_scores?: ThingNatureScores;
   isAugmented?: boolean; // PRA gate state
+  wuxingDiagnosis?: WuxingDiagnosisSummary;
 }
 
 export interface ChatSession {

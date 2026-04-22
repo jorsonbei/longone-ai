@@ -4,14 +4,23 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "npm run build:wuxing-corpus",
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "prestart": "npm run build:wuxing-corpus",
     "start": "tsx server/index.ts",
+    "prebuild": "npm run build:wuxing-corpus",
     "build": "vite build",
     "preview": "vite preview",
+    "precf:dev": "npm run build:wuxing-corpus",
     "cf:dev": "wrangler dev",
+    "precf:deploy": "npm run build:wuxing-corpus",
     "cf:deploy": "wrangler deploy",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "build:wuxing-corpus": "tsx scripts/build-wuxing-corpus.ts",
+    "prelint": "npm run build:wuxing-corpus",
+    "lint": "tsc --noEmit",
+    "preself-test": "npm run build:wuxing-corpus",
+    "self-test": "tsx scripts/self-test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

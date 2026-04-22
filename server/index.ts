@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, GenerateContentResponse, Part } from '@google/genai';
+import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 
 type Attachment = {
   name: string;
@@ -246,6 +247,31 @@ app.post('/api/gemini/light-log', async (req, res) => {
   } catch (error) {
     console.error('Gemini light-log proxy failed:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'Light-log proxy failed.' });
+  }
+});
+
+app.post('/api/wuxing/instruction', async (req, res) => {
+  try {
+    const { baseInstruction, systemInstruction, omegaPrompt, content, diagnosis } = req.body as {
+      baseInstruction: string;
+      systemInstruction: string;
+      omegaPrompt: string;
+      content: string;
+      diagnosis: Parameters<typeof buildInternalizedOperatingInstruction>[0]['diagnosis'];
+    };
+
+    const instruction = buildInternalizedOperatingInstruction({
+      baseInstruction,
+      systemInstruction,
+      omegaPrompt,
+      content,
+      diagnosis,
+    });
+
+    res.json({ instruction });
+  } catch (error) {
+    console.error('Wuxing instruction build failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Instruction build failed.' });
   }
 });
 
