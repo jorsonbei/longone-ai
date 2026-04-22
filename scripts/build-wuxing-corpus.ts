@@ -22,6 +22,8 @@ const SOURCE_FILES = [
   },
 ];
 
+const OUTPUT_PATH = path.join(process.cwd(), 'src/lib/generated/wuxingCorpus.ts');
+
 const INTERNALIZATION_CORE = `
 你不是在“查询一本叫《物性论》的资料”，而是在“以内化后的《物性论》世界模型思考并回答”。
 
@@ -180,11 +182,31 @@ export const WUXING_CORPUS_CHUNKS = ${JSON.stringify(chunks, null, 2)} as const;
 }
 
 function main() {
+  const missingSources = SOURCE_FILES.filter((source) => !fs.existsSync(source.path));
+
+  if (missingSources.length > 0) {
+    if (fs.existsSync(OUTPUT_PATH)) {
+      console.log(
+        `[build-wuxing-corpus] source files not available in this environment, reusing checked-in corpus at ${OUTPUT_PATH}`,
+      );
+      for (const source of missingSources) {
+        console.log(`[build-wuxing-corpus] missing source: ${source.label} -> ${source.path}`);
+      }
+      return;
+    }
+
+    throw new Error(
+      [
+        '[build-wuxing-corpus] source files are missing and no checked-in corpus is available.',
+        ...missingSources.map((source) => `- ${source.label}: ${source.path}`),
+      ].join('\n'),
+    );
+  }
+
   const chunks = buildCorpus();
-  const outputPath = path.join(process.cwd(), 'src/lib/generated/wuxingCorpus.ts');
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, renderModule(chunks), 'utf8');
-  console.log(`[build-wuxing-corpus] wrote ${chunks.length} chunks to ${outputPath}`);
+  fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
+  fs.writeFileSync(OUTPUT_PATH, renderModule(chunks), 'utf8');
+  console.log(`[build-wuxing-corpus] wrote ${chunks.length} chunks to ${OUTPUT_PATH}`);
 }
 
 main();
