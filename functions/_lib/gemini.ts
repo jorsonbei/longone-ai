@@ -49,7 +49,7 @@ export function normalizeSystemInstruction(input?: unknown) {
 function getApiKey(context: { env?: Record<string, unknown> }) {
   const apiKey = context.env?.GEMINI_API_KEY;
   if (!apiKey || typeof apiKey !== 'string') {
-    throw new Error('Missing GEMINI_API_KEY in Cloudflare Pages environment variables.');
+    throw new Error('Missing GEMINI_API_KEY in Cloudflare Worker environment variables.');
   }
   return apiKey;
 }

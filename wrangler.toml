@@ -5,6 +5,7 @@ compatibility_date = "2026-04-20"
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
 
 [vars]

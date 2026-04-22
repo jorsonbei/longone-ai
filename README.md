@@ -31,16 +31,16 @@ The app will be available on `http://localhost:4173`.
 
 When using the Vite dev server, `/api/*` requests are proxied to `http://127.0.0.1:4173`.
 
-## Deploy To Cloudflare Pages
+## Deploy To Cloudflare Workers
 
-This project is prepared for **GitHub -> Cloudflare Pages** deployment.
+This project is prepared for **GitHub -> Cloudflare Workers** deployment using static assets plus a Worker entrypoint.
 
-Cloudflare build settings:
+Cloudflare deployment settings:
 
-- Framework preset: `Vite`
-- Build command: `npm run build`
-- Build output directory: `dist`
+- Worker name: `longone-ai`
 - Root directory: `物性论os` (if the repo root is `/Users/beijisheng/Desktop/420`)
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy`
 
 Cloudflare environment variables:
 
@@ -48,14 +48,29 @@ Cloudflare environment variables:
 
 Cloudflare runtime notes:
 
-- API routes live in [`functions/api`](./functions/api)
-- SPA fallback is handled by [`functions/[[path]].ts`](./functions/[[path]].ts)
-- Wrangler config lives in [`wrangler.toml`](./wrangler.toml)
+- Primary runtime entrypoint is [`worker/index.ts`](./worker/index.ts)
+- Static assets are served from `dist` via [`wrangler.toml`](./wrangler.toml)
+- Legacy `functions/api` files are old Pages-era artifacts and are not the active deployment path
 
-After the first successful Pages deploy:
+Recommended Cloudflare setup:
 
-1. Add `longone.ai` in Cloudflare Pages custom domains.
+1. In Cloudflare, go to `Workers & Pages`.
+2. Create or open the Worker named `longone-ai`.
+3. In `Settings -> Builds`, connect the GitHub repository.
+4. Set the build root to `物性论os`.
+5. Ensure the Worker name in Cloudflare matches `name = "longone-ai"` in `wrangler.toml`.
+6. Add `GEMINI_API_KEY` as a production secret/environment variable.
+7. Push to `main` to trigger automatic production deploys.
+
+After the first successful deploy:
+
+1. Add `longone.ai` in Cloudflare custom domains/routes.
 2. In Firebase Auth authorized domains, add:
    - `longone.ai`
    - `www.longone.ai` if you use it
-   - your `*.pages.dev` preview/production domain if login needs to work there too
+   - your Cloudflare preview/production `workers.dev` domain if login needs to work there too
+
+Firebase Auth local development note:
+
+- For local login, add `localhost` under `Authentication -> Settings -> Authorized domains`.
+- Do not enter `localhost:4173` or `http://localhost:4173`; Firebase expects the host only.
