@@ -38,6 +38,20 @@ function isLightweightMessage(content: string, attachments: Attachment[]) {
   return attachments.length === 0 && normalized.length > 0 && normalized.length <= 24 && LIGHTWEIGHT_MESSAGE_RE.test(normalized);
 }
 
+function buildLightweightReply(content: string) {
+  const normalized = content.trim().toLowerCase();
+
+  if (/^(test|ping|1)\s*[!.?。！，、~～]*$/.test(normalized)) {
+    return '我在，链路正常。你可以直接说你的问题。';
+  }
+
+  if (/^(hi|hello|hey|yo|sup)\s*[!.?。！，、~～]*$/.test(normalized)) {
+    return 'Hi，我在。你可以直接说重点。';
+  }
+
+  return '你好，我在。你可以直接说你的问题。';
+}
+
 function expectsChineseResponse(content: string) {
   return /[\u4e00-\u9fff]/.test(content) && !/(用英文|英文回答|English|in English)/i.test(content);
 }
@@ -346,6 +360,19 @@ ${scores ? JSON.stringify(scores, null, 2) : '无'}
     // The currentMessages currently might not have dynamically pulled the user message yet since onSnapshot is async.
     const updatedMessagesForPrompt = [...(activeChat?.messages || []), userMessage];
 
+    if (lightweightMessage) {
+      const localReply: Message = {
+        id: uuidv4(),
+        role: 'model',
+        content: buildLightweightReply(content),
+        createdAt: Date.now(),
+        omega: userMessage.omega,
+      };
+
+      await saveMessageToDb(activeChatId, localReply);
+      return;
+    }
+
     // Setup for model response
     setIsGenerating(true);
     abortControllerRef.current = new AbortController();
@@ -355,26 +382,15 @@ ${scores ? JSON.stringify(scores, null, 2) : '无'}
     let accumulatedText = "";
 
     const preflight = analyzeWuxingInput(content, attachments, wuxingConfig);
-    const effectiveWebSearchEnabled =
-      lightweightMessage ? webSearchEnabled : webSearchEnabled && !preflight.diagnosis.disableWebSearch;
+    const effectiveWebSearchEnabled = webSearchEnabled && !preflight.diagnosis.disableWebSearch;
 
-    const combinedSystemInstruction = lightweightMessage
-      ? `
-${CORE_SYSTEM_STYLE}
-
-【轻量消息模式】
-当前输入属于寒暄或探测信号。请用 1 到 2 句自然中文直接回应，可以简短邀请用户继续说重点，但不要展开理论框架。
-
-【用户自定义扩展要求】
-${systemInstruction}
-`.trim()
-      : await buildInternalizedSystemInstruction({
-          baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${THING_NATURE_MANIFESTO}`,
-          systemInstruction,
-          omegaPrompt,
-          content,
-          diagnosis: preflight.diagnosis,
-        });
+    const combinedSystemInstruction = await buildInternalizedSystemInstruction({
+      baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${THING_NATURE_MANIFESTO}`,
+      systemInstruction,
+      omegaPrompt,
+      content,
+      diagnosis: preflight.diagnosis,
+    });
 
     try {
       // Add empty bot message locally to stream overlay
@@ -389,7 +405,7 @@ ${systemInstruction}
 
       const stream = streamChat(
         updatedMessagesForPrompt, 
-        lightweightMessage ? MODELS.FLASH : model,
+        model,
         combinedSystemInstruction, 
         abortControllerRef.current.signal,
         effectiveWebSearchEnabled
@@ -402,14 +418,8 @@ ${systemInstruction}
           throw new Error(chunk.message);
         } else if (chunk.type === 'metadata') {
           finalCitations = chunk.citations;
-          if (lightweightMessage) {
-            updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
-          }
         } else if (chunk.type === 'text') {
           accumulatedText += chunk.text;
-          if (lightweightMessage) {
-            updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
-          }
         }
       }
       let finalMessage: Message = {
@@ -422,7 +432,7 @@ ${systemInstruction}
         wuxingDiagnosis: preflight.diagnosis,
       };
 
-      if (!lightweightMessage && accumulatedText && !abortControllerRef.current?.signal.aborted) {
+      if (accumulatedText && !abortControllerRef.current?.signal.aborted) {
         const scores = await evaluateThingNature(content, accumulatedText, MODELS.PRO);
         if (scores) {
           console.log('Thing-Nature Evaluation:', scores);
@@ -475,15 +485,20 @@ ${systemInstruction}
     } catch (error: any) {
       if (error.name !== 'AbortError') {
         console.error('Chat error:', error);
-        
-        let errorMsg = "\n\n*(Error generating response...)*";
-        
-        // Handle specific API errors like quota exceeded
-        if (error.message?.includes('quota') || error.status === 429) {
-             errorMsg = "\n\n[物性论OS 警报] 节点能量耗尽（API Quota Exceeded）。请稍后再试或检查您的配额。";
-        }
-        
-        await saveMessageToDb(activeChatId, { id: botMessageId, role: 'model', content: accumulatedText + errorMsg, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis });
+
+        const fallbackContent =
+          accumulatedText.trim() ||
+          (error.message?.includes('quota') || error.status === 429
+            ? '当前模型额度暂时耗尽。我先用稳妥模式接住你：请稍后重试，或者直接把你的问题拆成更小的一步，我可以先帮你梳理结构。'
+            : buildConstructiveFallback(content));
+
+        await saveMessageToDb(activeChatId, {
+          id: botMessageId,
+          role: 'model',
+          content: fallbackContent,
+          createdAt: botCreatedAt,
+          wuxingDiagnosis: preflight.diagnosis
+        });
       } else {
         // If aborted, save the partial response to DB
         await saveMessageToDb(activeChatId, { id: botMessageId, role: 'model', content: accumulatedText, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis });
@@ -508,9 +523,9 @@ ${systemInstruction}
             setActiveView('chat');
             setActiveChatId(id);
           }}
-          onNewChat={() => {
+          onNewChat={async () => {
             setActiveView('chat');
-            createNewChat();
+            await createNewChat();
           }}
           onOpenOfficialSite={() => setActiveView('official-site')}
           onOpenAdmin={() => setActiveView('admin')}

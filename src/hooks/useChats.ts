@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../lib/firebase';
 import { collection, doc, query, orderBy, onSnapshot, setDoc, deleteDoc, updateDoc, getCountFromServer, getDocs, writeBatch } from 'firebase/firestore';
@@ -38,6 +38,7 @@ export function useChats() {
 
   // Local state overlay for streaming messages to avoid Firestore writes on every token
   const [streamingMessages, setStreamingMessages] = useState<Message[]>([]);
+  const createInFlightRef = useRef<Promise<string | null> | null>(null);
 
   // Load conversations
   useEffect(() => {
@@ -81,8 +82,14 @@ export function useChats() {
   useEffect(() => {
     if (!workspaceId || !activeChatId) {
       setActiveMessages([]);
+      setStreamingMessages([]);
       return;
     }
+
+    // Clear prior chat content immediately so switching/new-chat does not
+    // briefly reuse the previous session's messages while Firestore catches up.
+    setActiveMessages([]);
+    setStreamingMessages([]);
 
     const messagesRef = collection(db, 'workspaces', workspaceId, 'conversations', activeChatId, 'messages');
     const q = query(messagesRef, orderBy('createdAt', 'asc'));
@@ -119,18 +126,38 @@ export function useChats() {
   }, [isLoaded, chats.length]);
 
   const createNewChat = async () => {
-    if (!workspaceId) return;
-    const newId = uuidv4();
-    const newChatRef = doc(db, 'workspaces', workspaceId, 'conversations', newId);
-    await setDoc(newChatRef, {
-      title: 'New Chat',
-      model: MODELS.FLASH,
-      status: 'active',
-      messageCount: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    });
-    setActiveChatId(newId);
+    if (!workspaceId) return null;
+    if (createInFlightRef.current) {
+      return createInFlightRef.current;
+    }
+
+    const task = (async () => {
+      const newId = uuidv4();
+      const timestamp = Date.now();
+      const newChatRef = doc(db, 'workspaces', workspaceId, 'conversations', newId);
+
+      setStreamingMessages([]);
+      setActiveMessages([]);
+
+      await setDoc(newChatRef, {
+        title: 'New Chat',
+        model: MODELS.FLASH,
+        status: 'active',
+        messageCount: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+
+      setActiveChatId(newId);
+      return newId;
+    })();
+
+    createInFlightRef.current = task;
+    try {
+      return await task;
+    } finally {
+      createInFlightRef.current = null;
+    }
   };
 
   const deleteChat = async (id: string) => {
