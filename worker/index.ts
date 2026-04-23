@@ -1,4 +1,10 @@
-import { buildContents, geminiGenerateJson, normalizeSystemInstruction, streamGeminiToNdjson } from '../functions/_lib/gemini';
+import {
+  buildContents,
+  geminiGenerateJson,
+  normalizeSystemInstruction,
+  streamGeminiToNdjson,
+  streamVertexToNdjson,
+} from '../functions/_lib/gemini';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 
 type Env = {
@@ -6,6 +12,9 @@ type Env = {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
   GEMINI_API_KEY?: string;
+  VERTEX_TUNED_MODEL?: string;
+  VERTEX_SERVICE_ACCOUNT_JSON?: string;
+  VERTEX_SERVICE_ACCOUNT_JSON_BASE64?: string;
   NODE_ENV?: string;
 };
 
@@ -34,13 +43,24 @@ async function handleApi(request: Request, env: Env) {
     if (url.pathname === '/api/gemini/chat/stream') {
       const { messages, model, systemInstruction, webSearchEnabled = true } = await request.json();
       const contents = await buildContents(messages || []);
-
-      return streamGeminiToNdjson({ env }, model, {
+      const vertexEnabled = Boolean(
+        env.VERTEX_TUNED_MODEL && (env.VERTEX_SERVICE_ACCOUNT_JSON_BASE64 || env.VERTEX_SERVICE_ACCOUNT_JSON),
+      );
+      const body = {
         contents,
         systemInstruction: normalizeSystemInstruction(systemInstruction),
         generationConfig: {
           temperature: 0.7,
         },
+        ...(!vertexEnabled && webSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+      };
+
+      if (vertexEnabled) {
+        return streamVertexToNdjson({ env }, env.VERTEX_TUNED_MODEL!, body);
+      }
+
+      return streamGeminiToNdjson({ env }, model, {
+        ...body,
         ...(webSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
       });
     }

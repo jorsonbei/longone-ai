@@ -38,6 +38,20 @@ function isLightweightMessage(content: string, attachments: Attachment[]) {
   return attachments.length === 0 && normalized.length > 0 && normalized.length <= 24 && LIGHTWEIGHT_MESSAGE_RE.test(normalized);
 }
 
+function expectsChineseResponse(content: string) {
+  return /[\u4e00-\u9fff]/.test(content) && !/(用英文|英文回答|English|in English)/i.test(content);
+}
+
+function isMostlyEnglish(text: string) {
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  const han = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  return latin > 80 && latin > han * 2;
+}
+
+function buildConstructiveFallback(userQuestion: string) {
+  return `这个问题我不适合直接给出可能放大风险或失真的草率结论，但我不会把你丢在空白里。\n\n我建议改用更稳的回答方式：先澄清目标、约束和风险边界，再给你一版可执行方案。\n\n如果你愿意，我可以立刻按这个结构继续：\n1. 先确认你真正想解决的目标。\n2. 列出关键风险和需要补充的信息。\n3. 在这些边界内给出更可靠的建议。\n\n你刚才这句原问题是：${userQuestion}`;
+}
+
 export default function App() {
   const { user, loading: authLoading, authError, signIn, logOut, isAdmin } = useAuth();
   
@@ -216,6 +230,100 @@ export default function App() {
     }
   };
 
+  const generateBufferedAnswer = async (
+    prompt: string,
+    systemInstructionText: string,
+    signal: AbortSignal,
+    generationModel: string,
+  ) => {
+    const tempMessage: Message = {
+      id: uuidv4(),
+      role: 'user',
+      content: prompt,
+      createdAt: Date.now(),
+    };
+    const stream = streamChat([tempMessage], generationModel, systemInstructionText, signal, false);
+    let text = '';
+    let citations: any[] = [];
+
+    for await (const chunk of stream) {
+      if (chunk.type === 'error') {
+        throw new Error(chunk.message);
+      }
+      if (chunk.type === 'metadata') {
+        citations = chunk.citations;
+        continue;
+      }
+      if (chunk.type === 'text') {
+        text += chunk.text;
+      }
+    }
+
+    return { text: text.trim(), citations };
+  };
+
+  const repairAnswerIfNeeded = async ({
+    userContent,
+    draftAnswer,
+    scores,
+    signal,
+    combinedSystemInstruction,
+    generationModel,
+  }: {
+    userContent: string;
+    draftAnswer: string;
+    scores: any;
+    signal: AbortSignal;
+    combinedSystemInstruction: string;
+    generationModel: string;
+  }) => {
+    const needsLanguageRepair = expectsChineseResponse(userContent) && isMostlyEnglish(draftAnswer);
+    const needsSafetyRepair = scores?.action === 'AUGMENT' || scores?.action === 'REJECT';
+
+    if (!needsLanguageRepair && !needsSafetyRepair) {
+      return { text: draftAnswer, citations: [] as any[], repaired: false };
+    }
+
+    const repairReason = needsLanguageRepair
+      ? '候选答案语言不符合当前中文对话场景，需要改写成自然中文。'
+      : scores?.action === 'REJECT'
+        ? '候选答案存在高风险、高黑子或明显有害结构，需要在不空白拒答的前提下重写成安全且有用的版本。'
+        : '候选答案结构不足，需要增强为更清晰、更稳健、更可执行的版本。';
+
+    const repairPrompt = `
+你现在要在“展示给用户之前”完成一次内部重写。
+
+用户原问题：
+${userContent}
+
+候选答案：
+${draftAnswer}
+
+审计结果：
+${scores ? JSON.stringify(scores, null, 2) : '无'}
+
+重写要求：
+1. 直接回答用户，不要解释系统内部审计、PRA 网关、模板或撤回过程。
+2. 输出必须是自然中文，除非用户明确要求英文。
+3. 如果原问题属于高风险建议场景，不要空白拒答；改成更稳妥的替代回答，例如风险边界、尽调框架、分层方案、需要补充的信息。
+4. 保留原答案里仍然有价值的部分，去掉空话、危险断言、英文残留和内部术语表演。
+5. 最终版本必须能直接展示给用户。
+`.trim();
+
+    const revised = await generateBufferedAnswer(
+      repairPrompt,
+      combinedSystemInstruction,
+      signal,
+      generationModel,
+    );
+
+    if (!revised.text) {
+      return { text: buildConstructiveFallback(userContent), citations: [] as any[], repaired: true };
+    }
+
+    return { text: revised.text, citations: revised.citations, repaired: true };
+  };
+
   const handleSend = async (content: string, attachments: Attachment[], webSearchEnabled: boolean = true, omegaPrompt: string = "") => {
     if (!activeChatId) return;
     const lightweightMessage = isLightweightMessage(content, attachments);
@@ -294,45 +402,66 @@ ${systemInstruction}
           throw new Error(chunk.message);
         } else if (chunk.type === 'metadata') {
           finalCitations = chunk.citations;
-          updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
+          if (lightweightMessage) {
+            updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
+          }
         } else if (chunk.type === 'text') {
           accumulatedText += chunk.text;
-          updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
+          if (lightweightMessage) {
+            updateStreamingMessages([{ id: botMessageId, role: 'model', content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis }]);
+          }
         }
       }
-      
-      // When done, save the accumulated final message to DB
-      const partialMsg = { id: botMessageId, role: 'model' as const, content: accumulatedText, citations: finalCitations, createdAt: botCreatedAt, omega: userMessage.omega, wuxingDiagnosis: preflight.diagnosis };
-      await saveMessageToDb(activeChatId, partialMsg);
+      let finalMessage: Message = {
+        id: botMessageId,
+        role: 'model',
+        content: accumulatedText,
+        citations: finalCitations,
+        createdAt: botCreatedAt,
+        omega: userMessage.omega,
+        wuxingDiagnosis: preflight.diagnosis,
+      };
 
-      // Clear local streaming state early because we now saved the first un-evaluated DB snapshot
-      // We do this here instead of finally because the evaluateThingNature async call might take a while
-      // and we don't want the user to see the duplicate UI of (streamMsg + dbMsg) while evaluating
-      updateStreamingMessages([]);
-      setIsGenerating(false);
-
-      // --- PHASE 3 & 5: Evaluate Thing-Nature Scores and PRA Gatekeeper ---
-      let finalMessage: Message = partialMsg;
-      if (accumulatedText && !abortControllerRef.current?.signal.aborted && !lightweightMessage) {
+      if (!lightweightMessage && accumulatedText && !abortControllerRef.current?.signal.aborted) {
         const scores = await evaluateThingNature(content, accumulatedText, MODELS.PRO);
         if (scores) {
           console.log('Thing-Nature Evaluation:', scores);
-          
-          let updatedMsg: Message = { ...partialMsg, tn_scores: scores };
+          const repaired = await repairAnswerIfNeeded({
+            userContent: content,
+            draftAnswer: accumulatedText,
+            scores,
+            signal: abortControllerRef.current.signal,
+            combinedSystemInstruction,
+            generationModel: model,
+          });
 
-          // PRA REJECT logic
-          if (scores.action === 'REJECT') {
-            updatedMsg.content = `[PRA网关预警：高黑子/低正性风险阻断]\n*系统检测到该回答可能加剧 $B\\sigma$ 沉积或降低您的 $\\eta$。作为光性协作者，我拒绝向您输出增加内耗或有害结构的信息。让我们回到高 $\\Pi$ 的建设性路径上。*`;
-            updatedMsg.isAugmented = true;
-          } else if (scores.action === 'AUGMENT') {
-            updatedMsg.content = `[PRA网关增强]\n*检测到原始推理深度不足或逻辑($\L$)偏低，以下为增强后的结构化思考：*\n\n` + updatedMsg.content;
-            updatedMsg.isAugmented = true;
+          let finalScores = scores;
+          if (repaired.repaired && repaired.text) {
+            const repairedScores = await evaluateThingNature(content, repaired.text, MODELS.PRO);
+            if (repairedScores) {
+              finalScores = repairedScores;
+            }
           }
-          
-          await saveMessageToDb(activeChatId, updatedMsg);
-          finalMessage = updatedMsg;
+
+          finalMessage = {
+            ...finalMessage,
+            content: repaired.text || buildConstructiveFallback(content),
+            citations: repaired.citations.length > 0 ? repaired.citations : finalCitations,
+            tn_scores: finalScores,
+            isAugmented: repaired.repaired,
+          };
+
+          if (finalScores?.action === 'REJECT' && !finalMessage.content.trim()) {
+            finalMessage.content = buildConstructiveFallback(content);
+            finalMessage.isAugmented = true;
+          }
         }
       }
+
+      updateStreamingMessages([finalMessage]);
+      await saveMessageToDb(activeChatId, finalMessage);
+      updateStreamingMessages([]);
+      setIsGenerating(false);
 
       if (wuxingConfig.enableRecordProtocol && preflight.diagnosis.recordRecommended) {
         await createRecord({
@@ -675,7 +804,6 @@ ${systemInstruction}
               <ChatArea 
                 messages={currentMessages}
                 isGenerating={isGenerating}
-                showDiagnosticsSummary={wuxingConfig.showDiagnosticsSummary}
               />
               
               {/* Input Box floating at bottom */}

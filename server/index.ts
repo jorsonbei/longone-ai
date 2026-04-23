@@ -29,6 +29,7 @@ const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
 
 dotenv.config({ path: path.join(projectRoot, '.env.local') });
 dotenv.config({ path: path.join(projectRoot, '.env') });
+dotenv.config({ path: path.join(projectRoot, 'training', 'vertex-ai', 'config', 'vertex.env') });
 
 const app = express();
 
@@ -40,6 +41,38 @@ function getAiClient() {
     throw new Error('Missing GEMINI_API_KEY on the server.');
   }
   return new GoogleGenAI({ apiKey });
+}
+
+function getVertexAiClient() {
+  const project = process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+  const location = process.env.VERTEX_REGION || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+  if (!project) {
+    throw new Error('Missing VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT for Vertex AI.');
+  }
+
+  return new GoogleGenAI({
+    vertexai: true,
+    project,
+    location,
+    apiVersion: 'v1',
+  });
+}
+
+function resolveChatClientAndModel(requestedModel: string) {
+  const tunedModel = process.env.VERTEX_TUNED_MODEL;
+  if (tunedModel) {
+    return {
+      ai: getVertexAiClient(),
+      model: tunedModel,
+      provider: 'vertex',
+    };
+  }
+
+  return {
+    ai: getAiClient(),
+    model: requestedModel,
+    provider: 'gemini-api',
+  };
 }
 
 async function urlToBase64(url: string): Promise<string | undefined> {
@@ -153,16 +186,16 @@ app.post('/api/gemini/chat/stream', async (req, res) => {
       webSearchEnabled?: boolean;
     };
 
-    const ai = getAiClient();
+    const { ai, model: resolvedModel, provider } = resolveChatClientAndModel(model);
     const contents = await buildContents(messages);
-    const tools = webSearchEnabled ? [{ googleSearch: {} }] : undefined;
+    const tools = provider === 'vertex' ? undefined : webSearchEnabled ? [{ googleSearch: {} }] : undefined;
 
     res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
 
     const stream = await ai.models.generateContentStream({
-      model,
+      model: resolvedModel,
       contents,
       config: {
         tools,

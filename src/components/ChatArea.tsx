@@ -10,10 +10,9 @@ import { useAuth } from '../lib/AuthContext';
 interface ChatAreaProps {
   messages: Message[];
   isGenerating: boolean;
-  showDiagnosticsSummary: boolean;
 }
 
-export function ChatArea({ messages, isGenerating, showDiagnosticsSummary }: ChatAreaProps) {
+export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
   const { user } = useAuth();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const prevMessageCountRef = React.useRef(messages.length);
@@ -224,44 +223,6 @@ export function ChatArea({ messages, isGenerating, showDiagnosticsSummary }: Cha
                       </div>
                     )}
 
-                    {showDiagnosticsSummary && m.wuxingDiagnosis && (
-                      <div className="mt-4 rounded-xl border border-white/8 bg-[#171a22] p-4">
-                        {(() => {
-                          const diagnosis = {
-                            ...m.wuxingDiagnosis,
-                            names: Array.isArray(m.wuxingDiagnosis.names) ? m.wuxingDiagnosis.names : [],
-                            canonHits: Array.isArray(m.wuxingDiagnosis.canonHits) ? m.wuxingDiagnosis.canonHits : [],
-                            canonRelations: Array.isArray(m.wuxingDiagnosis.canonRelations) ? m.wuxingDiagnosis.canonRelations : [],
-                          };
-                          return (
-                            <>
-                        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#9df4d7]">双核诊断摘要</div>
-                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
-                          <span className="rounded-full border border-white/10 px-2.5 py-1">模式：{diagnosis.responseMode}</span>
-                          <span className="rounded-full border border-white/10 px-2.5 py-1">锁龙：{diagnosis.lockDragon.state}</span>
-                          <span className="rounded-full border border-white/10 px-2.5 py-1">记录建议：{diagnosis.recordRecommended ? '是' : '否'}</span>
-                        </div>
-                        {diagnosis.names.length > 0 ? (
-                          <div className="mt-3 text-xs leading-6 text-slate-400">
-                            名字解析：{diagnosis.names.map((item) => `${item.name}（${item.role}）`).join('、')}
-                          </div>
-                        ) : null}
-                        {diagnosis.canonHits.length > 0 ? (
-                          <div className="mt-2 text-xs leading-6 text-slate-400">
-                            Canon 命中：{diagnosis.canonHits.map((item) => item.title).join('、')}
-                          </div>
-                        ) : null}
-                        {diagnosis.canonRelations.length > 0 ? (
-                          <div className="mt-2 text-xs leading-6 text-slate-400">
-                            关系图：{diagnosis.canonRelations.map((item) => `${item.from}→${item.to}（${item.relation}）`).join('、')}
-                          </div>
-                        ) : null}
-                        <div className="mt-2 text-xs leading-6 text-slate-500">{diagnosis.lockDragon.summary}</div>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    )}
                   </div>
                 </>
               )}

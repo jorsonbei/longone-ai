@@ -59,7 +59,7 @@ export function useSettings() {
             enableNameParser: snapshot.data()?.enableNameParser ?? DEFAULT_WUXING_CONFIG.enableNameParser,
             enableLockDragonDiagnosis: snapshot.data()?.enableLockDragonDiagnosis ?? DEFAULT_WUXING_CONFIG.enableLockDragonDiagnosis,
             enableRecordProtocol: snapshot.data()?.enableRecordProtocol ?? DEFAULT_WUXING_CONFIG.enableRecordProtocol,
-            showDiagnosticsSummary: snapshot.data()?.showDiagnosticsSummary ?? DEFAULT_WUXING_CONFIG.showDiagnosticsSummary,
+            showDiagnosticsSummary: false,
             namesGlossaryText: snapshot.data()?.namesGlossaryText || DEFAULT_NAMES_GLOSSARY_TEXT,
           };
           if (typeof remoteInstruction === 'string' && remoteInstruction.trim()) {
@@ -109,7 +109,7 @@ export function useSettings() {
             enableNameParser: wuxingConfig.enableNameParser,
             enableLockDragonDiagnosis: wuxingConfig.enableLockDragonDiagnosis,
             enableRecordProtocol: wuxingConfig.enableRecordProtocol,
-            showDiagnosticsSummary: wuxingConfig.showDiagnosticsSummary,
+            showDiagnosticsSummary: false,
             namesGlossaryText: wuxingConfig.namesGlossaryText,
             updatedAt: Date.now(),
           },

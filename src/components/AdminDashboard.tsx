@@ -656,12 +656,6 @@ export function AdminDashboard({
                     checked={wuxingConfig.enableRecordProtocol}
                     onChange={(value) => updateWuxingConfigField('enableRecordProtocol', value)}
                   />
-                  <ToggleRow
-                    label="显示双核诊断摘要"
-                    hint="在回答卡片上展示模式、锁龙状态和名字解析摘要，便于调参。"
-                    checked={wuxingConfig.showDiagnosticsSummary}
-                    onChange={(value) => updateWuxingConfigField('showDiagnosticsSummary', value)}
-                  />
                 </div>
 
                 <div className="mt-6">

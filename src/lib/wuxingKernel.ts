@@ -54,7 +54,7 @@ export const DEFAULT_WUXING_CONFIG: WuxingConfig = {
   enableNameParser: true,
   enableLockDragonDiagnosis: true,
   enableRecordProtocol: true,
-  showDiagnosticsSummary: true,
+  showDiagnosticsSummary: false,
   namesGlossaryText: DEFAULT_NAMES_GLOSSARY_TEXT,
 };
 

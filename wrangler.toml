@@ -10,3 +10,4 @@ not_found_handling = "single-page-application"
 
 [vars]
 NODE_ENV = "production"
+VERTEX_TUNED_MODEL = "projects/1012420023845/locations/us-central1/endpoints/573558591361908736"
