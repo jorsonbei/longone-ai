@@ -62,6 +62,30 @@ function isMostlyEnglish(text: string) {
   return latin > 80 && latin > han * 2;
 }
 
+function isMetaIdentityQuestion(content: string) {
+  return /^(你是谁|你现在是什么|你是干什么的|你到底是谁)[？?！!。,\s]*$/i.test(content.trim());
+}
+
+function isCapabilityQuestion(content: string) {
+  return /^(你可以做什么|你能做什么|你会做什么|你能帮我做什么|你可以帮我做什么)[？?！!。,\s]*$/i.test(content.trim());
+}
+
+function shouldBypassThingNatureAudit(content: string, attachments: Attachment[]) {
+  return attachments.length === 0 && (isMetaIdentityQuestion(content) || isCapabilityQuestion(content));
+}
+
+function buildMetaQuestionFallback(content: string) {
+  if (isMetaIdentityQuestion(content)) {
+    return '我是这个产品里以《物性论》为默认运行协议的回答核心。你可以把我理解成“物性论OS在当前对话里的发声接口”：我不是先站在物性论外面再临时引用它，而是默认从这套世界模型、变量语言和成长逻辑里回答你的问题。';
+  }
+
+  if (isCapabilityQuestion(content)) {
+    return '我可以做两类事。第一类是直接回答：用物性论的世界模型、HFCD、人物关系和文明尺度来解释问题。第二类是协作执行：帮你做诊断、写方案、改代码、整理材料、推进产品、联调部署，以及把高价值输入沉淀成系统可继续成长的结构。';
+  }
+
+  return buildConstructiveFallback(content);
+}
+
 function buildConstructiveFallback(userQuestion: string) {
   return `这个问题我不适合直接给出可能放大风险或失真的草率结论，但我不会把你丢在空白里。\n\n我建议改用更稳的回答方式：先澄清目标、约束和风险边界，再给你一版可执行方案。\n\n如果你愿意，我可以立刻按这个结构继续：\n1. 先确认你真正想解决的目标。\n2. 列出关键风险和需要补充的信息。\n3. 在这些边界内给出更可靠的建议。\n\n你刚才这句原问题是：${userQuestion}`;
 }
@@ -341,6 +365,7 @@ ${scores ? JSON.stringify(scores, null, 2) : '无'}
   const handleSend = async (content: string, attachments: Attachment[], webSearchEnabled: boolean = true, omegaPrompt: string = "") => {
     if (!activeChatId) return;
     const lightweightMessage = isLightweightMessage(content, attachments);
+    const bypassThingNatureAudit = shouldBypassThingNatureAudit(content, attachments);
 
     // Build user message
     const userMessage: Message = {
@@ -432,7 +457,7 @@ ${scores ? JSON.stringify(scores, null, 2) : '无'}
         wuxingDiagnosis: preflight.diagnosis,
       };
 
-      if (accumulatedText && !abortControllerRef.current?.signal.aborted) {
+      if (accumulatedText && !abortControllerRef.current?.signal.aborted && !bypassThingNatureAudit) {
         const scores = await evaluateThingNature(content, accumulatedText, MODELS.PRO);
         if (scores) {
           console.log('Thing-Nature Evaluation:', scores);
@@ -490,7 +515,7 @@ ${scores ? JSON.stringify(scores, null, 2) : '无'}
           accumulatedText.trim() ||
           (error.message?.includes('quota') || error.status === 429
             ? '当前模型额度暂时耗尽。我先用稳妥模式接住你：请稍后重试，或者直接把你的问题拆成更小的一步，我可以先帮你梳理结构。'
-            : buildConstructiveFallback(content));
+            : buildMetaQuestionFallback(content));
 
         await saveMessageToDb(activeChatId, {
           id: botMessageId,
