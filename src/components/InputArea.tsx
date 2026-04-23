@@ -55,7 +55,7 @@ const TEXT_FILE_EXTENSIONS = [
 const OMEGA_SCALES = [
   { id: 'short', label: '短期 Ω', icon: Search, desc: '解决当下问题，直接给答案', prompt: '【系统指令：请使用「短期 Ω 刻度」，忽略宏大叙事，只解决用户当前亟待解决的局部问题，直接给出高信息密度（Id）的答案。】' },
   { id: 'medium', label: '三年 Ω', icon: Eye, desc: '看系统发展，给中期策略', prompt: '【系统指令：请使用「中期 Ω 刻度（1-3年）」，不仅解决当前问题，更要评估这个动作对用户物性向量 φ（能力/性格/结构）的长期影响，提出系统性建议。】' },
-  { id: 'long', label: '一生 Ω', icon: Telescope, desc: '对齐宇宙母体，看文明路线', prompt: '【系统指令：请使用「长期 Ω 刻度（一生/文明尺度）」，跳出日常繁琐，过滤掉暂时情绪噪音，直接逼问这个动作是否能带来绝对的净正性（Σ⁺），是否符合用户的跨时间文明路线。如果用户深陷黑子（Bσ）情绪，请启动 PRA 拒答或重构引导。】' }
+  { id: 'long', label: '一生 Ω', icon: Telescope, desc: '对齐宇宙母体，看文明路线', prompt: '【系统指令：请使用「长期 Ω 刻度（一生/文明尺度）」，跳出日常繁琐，过滤掉暂时情绪噪音，直接逼问这个动作是否能带来绝对的净正性（Σ⁺），是否符合用户的跨时间文明路线。】' }
 ];
 
 export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaProps) {
