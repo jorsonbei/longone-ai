@@ -1,5 +1,5 @@
 import type { CanonEntry, CanonRelation } from './wuxingCanon';
-import { WUXING_BOOTSTRAP_PACK, WUXING_CORPUS_CHUNKS, WUXING_INTERNALIZATION_CORE, WUXING_SOURCE_MANIFEST } from './generated/wuxingCorpus';
+import { WUXING_CORPUS_CHUNKS, WUXING_INTERNALIZATION_CORE, WUXING_SOURCE_MANIFEST } from './generated/wuxingCorpus';
 import { WUXING_MODEL_CONSTITUTION_V1, buildQuestionModeInstruction, classifyWuxingQuestion } from './wuxingConstitution';
 import { getAntiPatternsForMode, getExemplarsForMode } from './wuxingExemplars';
 import { WUXING_RUNTIME_REMINDERS, WUXING_RUNTIME_STATE_V1 } from './wuxingRuntimeState';
@@ -135,11 +135,6 @@ export function buildInternalizedOperatingInstruction({
     antiPatterns.length > 0
       ? antiPatterns.map((item) => `- 反模式：${item.bad}\n  修正：${item.fix}`).join('\n')
       : '无额外反模式提醒。';
-  const bootstrapBlock = WUXING_BOOTSTRAP_PACK.map(
-    (entry, index) =>
-      `【全附件启动材料 ${index + 1}｜${entry.kind}｜${entry.source}】\n${entry.digest}`,
-  ).join('\n\n');
-
   return `
 ${baseInstruction}
 
@@ -155,9 +150,8 @@ ${WUXING_INTERNALIZATION_CORE}
 【来源清单】
 ${WUXING_SOURCE_MANIFEST.map((item) => `- ${item.label}`).join('\n')}
 
-【全附件启动注入】
-以下内容是从全部《物性论》附件中提炼出来的启动材料。你要把它们视为本轮会话的默认吸收前提，而不是只在命中时才偶然参考。
-${bootstrapBlock}
+【母会话继承说明】
+本轮对话默认继承母会话中的长期内化状态。全部《物性论》附件的全量启动材料应主要由母会话承载，这里不再重复展开整包内容，只补本轮动态所需的协议、样本与命中语料。
 
 【常驻提醒】
 ${WUXING_RUNTIME_REMINDERS.map((item) => `- ${item}`).join('\n')}

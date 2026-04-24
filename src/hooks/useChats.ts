@@ -5,7 +5,7 @@ import { collection, doc, query, orderBy, onSnapshot, setDoc, deleteDoc, updateD
 import { ChatSession, Message } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { MODELS } from '../services/geminiService';
-import { WUXING_ROOT_SEED_MESSAGE } from '../lib/wuxingRootSeed';
+import { WUXING_ROOT_SEED_MESSAGE, WUXING_ROOT_SEED_MESSAGE_ID, WUXING_ROOT_SEED_VERSION } from '../lib/wuxingRootSeed';
 
 const INLINE_ATTACHMENT_PERSIST_LIMIT = 850_000;
 const ROOT_CHAT_TITLE = '物性论母会话';
@@ -44,6 +44,30 @@ export function useChats() {
   const [streamingMessages, setStreamingMessages] = useState<Message[]>([]);
   const createInFlightRef = useRef<Promise<string | null> | null>(null);
   const rootCreateInFlightRef = useRef<Promise<string | null> | null>(null);
+
+  const syncRootSeedMessage = useCallback(async (chatId: string) => {
+    if (!workspaceId) return;
+    const seedMessageRef = doc(
+      db,
+      'workspaces',
+      workspaceId,
+      'conversations',
+      chatId,
+      'messages',
+      WUXING_ROOT_SEED_MESSAGE_ID,
+    );
+
+    await setDoc(
+      seedMessageRef,
+      {
+        role: 'model',
+        content: WUXING_ROOT_SEED_MESSAGE,
+        status: 'completed',
+        seedVersion: WUXING_ROOT_SEED_VERSION,
+      },
+      { merge: true },
+    );
+  }, [workspaceId]);
 
   // Load conversations
   useEffect(() => {
@@ -189,13 +213,21 @@ export function useChats() {
         updatedAt: timestamp,
       });
 
-      const seedMessageId = uuidv4();
-      const seedMessageRef = doc(db, 'workspaces', workspaceId, 'conversations', newRootId, 'messages', seedMessageId);
+      const seedMessageRef = doc(
+        db,
+        'workspaces',
+        workspaceId,
+        'conversations',
+        newRootId,
+        'messages',
+        WUXING_ROOT_SEED_MESSAGE_ID,
+      );
       await setDoc(seedMessageRef, {
         role: 'model',
         content: WUXING_ROOT_SEED_MESSAGE,
         status: 'completed',
         createdAt: timestamp,
+        seedVersion: WUXING_ROOT_SEED_VERSION,
       });
 
       setRootChatId(newRootId);
@@ -214,7 +246,12 @@ export function useChats() {
     if (!isLoaded || !workspaceId || rootChatId) return;
     ensureRootChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, workspaceId, rootChatId]);
+  }, [isLoaded, workspaceId, rootChatId, syncRootSeedMessage]);
+
+  useEffect(() => {
+    if (!workspaceId || !rootChatId) return;
+    syncRootSeedMessage(rootChatId);
+  }, [workspaceId, rootChatId, syncRootSeedMessage]);
 
   const createNewChat = async () => {
     if (!workspaceId) return null;

@@ -18,6 +18,8 @@ type Env = {
   VERTEX_SERVICE_ACCOUNT_JSON_BASE64?: string;
   NODE_ENV?: string;
 };
+const instructionCache = new Map<string, string>();
+const MAX_INSTRUCTION_CACHE = 120;
 
 function json(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
@@ -27,6 +29,32 @@ function json(data: unknown, init: ResponseInit = {}) {
       ...(init.headers || {}),
     },
   });
+}
+
+function setInstructionCache(key: string, value: string) {
+  if (instructionCache.size >= MAX_INSTRUCTION_CACHE) {
+    const oldestKey = instructionCache.keys().next().value;
+    if (oldestKey) {
+      instructionCache.delete(oldestKey);
+    }
+  }
+  instructionCache.set(key, value);
+}
+
+function buildInstructionCacheKey(payload: {
+  baseInstruction: string;
+  systemInstruction: string;
+  omegaPrompt: string;
+  content: string;
+  diagnosis: unknown;
+}) {
+  return JSON.stringify([
+    payload.baseInstruction,
+    payload.systemInstruction,
+    payload.omegaPrompt,
+    payload.content,
+    payload.diagnosis,
+  ]);
 }
 
 async function handleApi(request: Request, env: Env) {
@@ -94,15 +122,24 @@ async function handleApi(request: Request, env: Env) {
     }
 
     if (url.pathname === '/api/wuxing/instruction') {
-      const { baseInstruction, systemInstruction, omegaPrompt, content, diagnosis } = await request.json();
+      const payload = await request.json();
+      const cacheKey = buildInstructionCacheKey(payload);
+      const cached = instructionCache.get(cacheKey);
+      if (cached) {
+        return json({ instruction: cached });
+      }
+      
+      const { baseInstruction, systemInstruction, omegaPrompt, content, diagnosis } = payload;
+      const instruction = buildInternalizedOperatingInstruction({
+        baseInstruction,
+        systemInstruction,
+        omegaPrompt,
+        content,
+        diagnosis,
+      });
+      setInstructionCache(cacheKey, instruction);
       return json({
-        instruction: buildInternalizedOperatingInstruction({
-          baseInstruction,
-          systemInstruction,
-          omegaPrompt,
-          content,
-          diagnosis,
-        }),
+        instruction,
       });
     }
 

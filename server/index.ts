@@ -32,8 +32,36 @@ dotenv.config({ path: path.join(projectRoot, '.env') });
 dotenv.config({ path: path.join(projectRoot, 'training', 'vertex-ai', 'config', 'vertex.env') });
 
 const app = express();
+const instructionCache = new Map<string, string>();
+const MAX_INSTRUCTION_CACHE = 120;
 
 app.use(express.json({ limit: '60mb' }));
+
+function setInstructionCache(key: string, value: string) {
+  if (instructionCache.size >= MAX_INSTRUCTION_CACHE) {
+    const oldestKey = instructionCache.keys().next().value;
+    if (oldestKey) {
+      instructionCache.delete(oldestKey);
+    }
+  }
+  instructionCache.set(key, value);
+}
+
+function buildInstructionCacheKey(payload: {
+  baseInstruction: string;
+  systemInstruction: string;
+  omegaPrompt: string;
+  content: string;
+  diagnosis: unknown;
+}) {
+  return JSON.stringify([
+    payload.baseInstruction,
+    payload.systemInstruction,
+    payload.omegaPrompt,
+    payload.content,
+    payload.diagnosis,
+  ]);
+}
 
 function getAiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -286,21 +314,28 @@ app.post('/api/gemini/light-log', async (req, res) => {
 
 app.post('/api/wuxing/instruction', async (req, res) => {
   try {
-    const { baseInstruction, systemInstruction, omegaPrompt, content, diagnosis } = req.body as {
+    const payload = req.body as {
       baseInstruction: string;
       systemInstruction: string;
       omegaPrompt: string;
       content: string;
       diagnosis: Parameters<typeof buildInternalizedOperatingInstruction>[0]['diagnosis'];
     };
+    const cacheKey = buildInstructionCacheKey(payload);
+    const cached = instructionCache.get(cacheKey);
+    if (cached) {
+      res.json({ instruction: cached });
+      return;
+    }
 
     const instruction = buildInternalizedOperatingInstruction({
-      baseInstruction,
-      systemInstruction,
-      omegaPrompt,
-      content,
-      diagnosis,
+      baseInstruction: payload.baseInstruction,
+      systemInstruction: payload.systemInstruction,
+      omegaPrompt: payload.omegaPrompt,
+      content: payload.content,
+      diagnosis: payload.diagnosis,
     });
+    setInstructionCache(cacheKey, instruction);
 
     res.json({ instruction });
   } catch (error) {
