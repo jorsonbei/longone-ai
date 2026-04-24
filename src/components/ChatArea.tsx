@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { Message } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { Bot, User, ImageIcon, Copy, Check, Globe, Shield, Activity, GitBranch, ShieldAlert, Paperclip } from 'lucide-react';
+import { User, Copy, Check, Globe, Shield, Activity, GitBranch, ShieldAlert, Paperclip, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { format } from 'date-fns';
 import { useAuth } from '../lib/AuthContext';
+import { ThingNatureMark } from './ThingNatureBrand';
 
 interface ChatAreaProps {
   messages: Message[];
   isGenerating: boolean;
+  onRetryMessage?: (messageId: string) => void;
 }
 
-export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
+export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaProps) {
   const { user } = useAuth();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const prevMessageCountRef = React.useRef(messages.length);
@@ -58,7 +60,7 @@ export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
       <div className="flex flex-col gap-6 w-full max-w-3xl mx-auto pb-32">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center text-slate-400 pt-20">
-            <Bot className="w-12 h-12 mb-4 opacity-30 text-[#52DBA9]" />
+            <ThingNatureMark className="mb-4 h-12 w-12 rounded-[1.1rem] opacity-90" />
             <h2 className="text-2xl font-semibold mb-2 text-slate-200 tracking-tight">How can I assist you today?</h2>
             <p className="text-sm">Type a message to start conversing with the system.</p>
           </div>
@@ -79,9 +81,7 @@ export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
                 </AvatarFallback>
               </Avatar>
             ) : (
-              <div className="w-8 h-8 rounded-full bg-[#52DBA9]/10 border border-[#52DBA9]/20 flex items-center justify-center flex-shrink-0">
-                <Bot className="w-5 h-5 text-[#52DBA9]" />
-              </div>
+              <ThingNatureMark className="h-8 w-8 flex-shrink-0 rounded-full" />
             )}
 
             <div className={cn(
@@ -141,7 +141,7 @@ export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
                     {m.content ? (
                       <MarkdownRenderer content={m.content} />
                     ) : (
-                      isGenerating && (
+                      (isGenerating || m.status === 'streaming') && (
                         <div className="flex items-center gap-1.5 h-6 pt-1">
                           <span className="w-2 h-2 rounded-full bg-[#52DBA9]/50 animate-bounce" style={{ animationDelay: '0ms' }}></span>
                           <span className="w-2 h-2 rounded-full bg-[#52DBA9]/50 animate-bounce" style={{ animationDelay: '150ms' }}></span>
@@ -149,6 +149,18 @@ export function ChatArea({ messages, isGenerating }: ChatAreaProps) {
                         </div>
                       )
                     )}
+
+                    {m.status === 'error' && onRetryMessage ? (
+                      <div className="mt-4">
+                        <button
+                          onClick={() => onRetryMessage(m.id)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-[#52DBA9]/20 bg-[#52DBA9]/8 px-3 py-2 text-sm font-medium text-[#7ef8d2] transition-colors hover:bg-[#52DBA9]/14"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          重试本次回答
+                        </button>
+                      </div>
+                    ) : null}
                     
                     {/* Citations block */}
                     {m.citations && m.citations.length > 0 && (

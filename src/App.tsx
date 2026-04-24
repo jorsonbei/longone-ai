@@ -25,6 +25,12 @@ import { useWuxingRecords } from './hooks/useWuxingRecords';
 const LIGHTWEIGHT_MESSAGE_RE =
   /^(hi|hello|hey|yo|sup|test|ping|ok|okay|在吗|在？|在么|你好|您好|嗨|哈喽|测试|1)\s*[!.?。！，、~～]*$/i;
 
+const OMEGA_PROMPTS: Record<string, string> = {
+  short: '【系统指令：请使用「短期 Ω 刻度」，忽略宏大叙事，只解决用户当前亟待解决的局部问题，直接给出高信息密度（Id）的答案。】',
+  medium: '【系统指令：请使用「中期 Ω 刻度（1-3年）」，不仅解决当前问题，更要评估这个动作对用户物性向量 φ（能力/性格/结构）的长期影响，提出系统性建议。】',
+  long: '【系统指令：请使用「长期 Ω 刻度（一生/文明尺度）」，跳出日常繁琐，过滤掉暂时情绪噪音，直接逼问这个动作是否能带来绝对的净正性（Σ⁺），是否符合用户的跨时间文明路线。】',
+};
+
 const CORE_SYSTEM_STYLE = `
 【系统总则】
 1. 优先自然、准确、可执行。
@@ -215,6 +221,10 @@ export default function App() {
     ? `${window.location.origin}${window.location.pathname}?chat=${encodeURIComponent(activeChatId)}`
     : window.location.href;
 
+  const resolveOmegaPrompt = (omega?: string) => {
+    return OMEGA_PROMPTS[omega || ''] || OMEGA_PROMPTS.short;
+  };
+
   const handleExtractLog = async () => {
     if (!activeChat || activeChat.messages.length === 0) return;
     setIsGeneratingLog(true);
@@ -231,8 +241,30 @@ export default function App() {
     }
   };
 
+  const handleRetryMessage = async (messageId: string) => {
+    if (isGenerating) return;
+
+    const failedMessageIndex = currentMessages.findIndex((message) => message.id === messageId);
+    if (failedMessageIndex === -1) return;
+
+    const failedMessage = currentMessages[failedMessageIndex];
+    const sourceUserMessage = failedMessage.replyToId
+      ? currentMessages.find((message) => message.id === failedMessage.replyToId && message.role === 'user')
+      : [...currentMessages.slice(0, failedMessageIndex)].reverse().find((message) => message.role === 'user');
+
+    if (!sourceUserMessage) return;
+
+    await handleSend(
+      sourceUserMessage.content,
+      sourceUserMessage.attachments || [],
+      true,
+      resolveOmegaPrompt(sourceUserMessage.omega),
+    );
+  };
+
   const handleSend = async (content: string, attachments: Attachment[], webSearchEnabled: boolean = true, omegaPrompt: string = "") => {
-    if (!activeChatId) return;
+    const requestChatId = activeChatId;
+    if (!requestChatId) return;
     const lightweightMessage = isLightweightMessage(content, attachments);
 
     // Build user message
@@ -245,56 +277,67 @@ export default function App() {
       omega: omegaPrompt.includes("中期") ? "medium" : omegaPrompt.includes("长期") ? "long" : "short"
     };
 
-    // Note: To avoid duplication where streaming overlays the db write,
-    // we save the user message to DB, but we keep the bot message in local streaming state until done.
-    await saveMessageToDb(activeChatId, userMessage, content || 'Image request');
-
-    // The stream operates on the history (all completed + the user msg which we just saved).
-    // The currentMessages currently might not have dynamically pulled the user message yet since onSnapshot is async.
-    const updatedMessagesForPrompt = [...activePromptMessages, userMessage];
-
     if (lightweightMessage) {
+      await saveMessageToDb(requestChatId, userMessage, content || 'Image request');
       const localReply: Message = {
         id: uuidv4(),
         role: 'model',
         content: buildLightweightReply(content),
         createdAt: Date.now(),
         omega: userMessage.omega,
+        status: 'completed',
+        replyToId: userMessage.id,
       };
 
-      await saveMessageToDb(activeChatId, localReply);
+      await saveMessageToDb(requestChatId, localReply);
       return;
     }
 
-    // Setup for model response
-    setIsGenerating(true);
-    abortControllerRef.current = new AbortController();
-    
-    const botMessageId = uuidv4();
-    const botCreatedAt = Date.now();
-    let accumulatedText = "";
-
+    const updatedMessagesForPrompt = [...activePromptMessages, userMessage];
     const preflight = analyzeWuxingInput(content, attachments, wuxingConfig);
     const effectiveWebSearchEnabled = webSearchEnabled && !preflight.diagnosis.disableWebSearch;
 
-    const combinedSystemInstruction = await buildInternalizedSystemInstruction({
-      baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${THING_NATURE_MANIFESTO}`,
-      systemInstruction,
-      omegaPrompt,
-      content,
-      diagnosis: preflight.diagnosis,
-    });
+    setIsGenerating(true);
+    abortControllerRef.current = new AbortController();
+
+    const botMessageId = uuidv4();
+    const botCreatedAt = Date.now();
+    let accumulatedText = "";
+    const userSavePromise = saveMessageToDb(requestChatId, userMessage, content || 'Image request')
+      .catch((persistError) => {
+        console.error('User message persistence failed:', persistError);
+      });
+
+    updateStreamingMessages([{
+      id: botMessageId,
+      role: 'model',
+      content: '',
+      createdAt: botCreatedAt,
+      omega: userMessage.omega,
+      status: 'streaming',
+      replyToId: userMessage.id,
+      wuxingDiagnosis: preflight.diagnosis,
+    }]);
 
     try {
-      // Add empty bot message locally to stream overlay
-      updateStreamingMessages([{
-        id: botMessageId,
-        role: 'model',
-        content: '',
-        createdAt: botCreatedAt,
-        omega: userMessage.omega,
-        wuxingDiagnosis: preflight.diagnosis,
-      }]);
+      let combinedSystemInstruction: string;
+      try {
+        combinedSystemInstruction = await buildInternalizedSystemInstruction({
+          baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${THING_NATURE_MANIFESTO}`,
+          systemInstruction,
+          omegaPrompt,
+          content,
+          diagnosis: preflight.diagnosis,
+        });
+      } catch (instructionError) {
+        console.warn('Instruction build failed, falling back to base instruction.', instructionError);
+        combinedSystemInstruction = [
+          CORE_SYSTEM_STYLE,
+          THING_NATURE_MANIFESTO,
+          systemInstruction,
+          omegaPrompt,
+        ].filter(Boolean).join('\n\n');
+      }
 
       const stream = streamChat(
         updatedMessagesForPrompt, 
@@ -322,17 +365,20 @@ export default function App() {
         citations: finalCitations,
         createdAt: botCreatedAt,
         omega: userMessage.omega,
+        status: 'completed',
+        replyToId: userMessage.id,
         wuxingDiagnosis: preflight.diagnosis,
       };
 
       updateStreamingMessages([finalMessage]);
-      await saveMessageToDb(activeChatId, finalMessage);
+      await userSavePromise;
+      await saveMessageToDb(requestChatId, finalMessage);
       updateStreamingMessages([]);
       setIsGenerating(false);
 
       if (wuxingConfig.enableRecordProtocol && preflight.diagnosis.recordRecommended) {
         await createRecord({
-          chatId: activeChatId,
+          chatId: requestChatId,
           sourceMessageId: botMessageId,
           excerpt: finalMessage.content,
           diagnosis: preflight.diagnosis,
@@ -347,16 +393,35 @@ export default function App() {
             ? '当前模型额度暂时耗尽，请稍后再试。'
             : '生成回答时发生错误，请重试。');
 
-        await saveMessageToDb(activeChatId, {
+        const errorMessage: Message = {
           id: botMessageId,
           role: 'model',
           content: fallbackContent,
           createdAt: botCreatedAt,
+          status: 'error',
+          replyToId: userMessage.id,
           wuxingDiagnosis: preflight.diagnosis
-        });
+        };
+
+        updateStreamingMessages([errorMessage]);
+        await userSavePromise;
+        await saveMessageToDb(requestChatId, errorMessage);
       } else {
         // If aborted, save the partial response to DB
-        await saveMessageToDb(activeChatId, { id: botMessageId, role: 'model', content: accumulatedText, createdAt: botCreatedAt, wuxingDiagnosis: preflight.diagnosis });
+        const partialMessage: Message = {
+          id: botMessageId,
+          role: 'model',
+          content: accumulatedText,
+          createdAt: botCreatedAt,
+          status: 'completed',
+          replyToId: userMessage.id,
+          wuxingDiagnosis: preflight.diagnosis,
+        };
+        updateStreamingMessages(partialMessage.content.trim() ? [partialMessage] : []);
+        await userSavePromise;
+        if (partialMessage.content.trim()) {
+          await saveMessageToDb(requestChatId, partialMessage);
+        }
       }
     } finally {
       // It's safe to call these multiple times
@@ -674,6 +739,7 @@ export default function App() {
               <ChatArea 
                 messages={currentMessages}
                 isGenerating={isGenerating}
+                onRetryMessage={handleRetryMessage}
               />
               
               {/* Input Box floating at bottom */}

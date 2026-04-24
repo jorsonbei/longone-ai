@@ -109,6 +109,7 @@ export function useChats() {
           createdAt: data.createdAt,
           citations: data.citations,
           attachments: data.attachments,
+          replyToId: data.replyToId,
           wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
         };
       });
@@ -145,6 +146,7 @@ export function useChats() {
           createdAt: data.createdAt,
           citations: data.citations,
           attachments: data.attachments,
+          replyToId: data.replyToId,
           wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
         };
       });
@@ -290,7 +292,7 @@ export function useChats() {
     const payload: any = {
       role: msg.role,
       content: msg.content,
-      status: 'completed',
+      status: msg.status || 'completed',
       createdAt: msg.createdAt || Date.now()
     };
     if (msg.attachments) {
@@ -307,6 +309,7 @@ export function useChats() {
       });
     }
     if (msg.citations) payload.citations = msg.citations;
+    if (msg.replyToId) payload.replyToId = msg.replyToId;
     if (msg.wuxingDiagnosis) payload.wuxingDiagnosis = msg.wuxingDiagnosis;
 
     await setDoc(msgRef, payload);

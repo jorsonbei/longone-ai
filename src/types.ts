@@ -74,6 +74,8 @@ export interface Message {
   citations?: Citation[];
   createdAt?: number;
   omega?: string; // e.g. "短期", "1年", "一生"
+  status?: 'completed' | 'streaming' | 'error';
+  replyToId?: string;
   tn_scores?: ThingNatureScores;
   isAugmented?: boolean; // PRA gate state
   wuxingDiagnosis?: WuxingDiagnosisSummary;

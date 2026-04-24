@@ -51,7 +51,7 @@ async function postJson<T>(url: string, body: unknown, signal?: AbortSignal): Pr
   return response.json();
 }
 
-const STREAM_TIMEOUT_MS = 45_000;
+const STREAM_TIMEOUT_MS = 90_000;
 
 function createTimeoutSignal(timeoutMs: number, parentSignal?: AbortSignal) {
   const controller = new AbortController();
