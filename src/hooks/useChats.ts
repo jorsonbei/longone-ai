@@ -253,7 +253,7 @@ export function useChats() {
     syncRootSeedMessage(rootChatId);
   }, [workspaceId, rootChatId, syncRootSeedMessage]);
 
-  const createNewChat = async () => {
+  const createNewChat = async (initialTitle = 'New Chat') => {
     if (!workspaceId) return null;
     if (createInFlightRef.current) {
       return createInFlightRef.current;
@@ -269,7 +269,7 @@ export function useChats() {
       setActiveMessages([]);
 
       await setDoc(newChatRef, {
-        title: 'New Chat',
+        title: initialTitle,
         model: MODELS.FLASH,
         status: 'active',
         messageCount: 0,
@@ -353,7 +353,7 @@ export function useChats() {
 
     // Auto-rename if it's the first user message
     const chat = chats.find(c => c.id === chatId);
-    if (chat && chat.title === 'New Chat' && msg.role === 'user' && titleHint) {
+    if (chat && (chat.messageCount ?? 0) === 0 && msg.role === 'user' && titleHint) {
        await updateDoc(doc(db, 'workspaces', workspaceId, 'conversations', chatId), {
          title: titleHint.slice(0, 30) + (titleHint.length > 30 ? '...' : ''),
          updatedAt: Date.now()

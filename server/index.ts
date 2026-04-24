@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, GenerateContentResponse, Part } from '@google/genai';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
+import { resolvePreferredLocale } from '../src/lib/locale';
 
 type Attachment = {
   name: string;
@@ -152,6 +153,19 @@ async function buildContents(messages: Message[]) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/api/locale', (req, res) => {
+  const locale = resolvePreferredLocale({
+    country: req.header('cf-ipcountry') || req.header('x-vercel-ip-country') || undefined,
+    acceptLanguage: req.header('accept-language') || undefined,
+    fallback: 'en',
+  });
+
+  res.json({
+    locale,
+    source: req.header('cf-ipcountry') ? 'ip-country' : 'accept-language',
+  });
 });
 
 async function proxyFirebaseHelper(req: express.Request, res: express.Response, targetPath: string) {

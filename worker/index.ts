@@ -6,6 +6,7 @@ import {
   streamVertexToNdjson,
 } from '../functions/_lib/gemini';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
+import { resolvePreferredLocale } from '../src/lib/locale';
 
 type Env = {
   ASSETS: {
@@ -62,6 +63,20 @@ async function handleApi(request: Request, env: Env) {
 
   if (url.pathname === '/api/health' && request.method === 'GET') {
     return json({ ok: true });
+  }
+
+  if (url.pathname === '/api/locale' && request.method === 'GET') {
+    const country = request.headers.get('cf-ipcountry') || (request as Request & { cf?: { country?: string } }).cf?.country;
+    const locale = resolvePreferredLocale({
+      country,
+      acceptLanguage: request.headers.get('accept-language'),
+      fallback: 'en',
+    });
+
+    return json({
+      locale,
+      source: country ? 'ip-country' : 'accept-language',
+    });
   }
 
   if (request.method !== 'POST') {

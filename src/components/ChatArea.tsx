@@ -7,14 +7,16 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { format } from 'date-fns';
 import { useAuth } from '../lib/AuthContext';
 import { ThingNatureMark } from './ThingNatureBrand';
+import type { UiText } from '../content/uiText';
 
 interface ChatAreaProps {
   messages: Message[];
   isGenerating: boolean;
   onRetryMessage?: (messageId: string) => void;
+  ui: UiText;
 }
 
-export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaProps) {
+export function ChatArea({ messages, isGenerating, onRetryMessage, ui }: ChatAreaProps) {
   const { user } = useAuth();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const prevMessageCountRef = React.useRef(messages.length);
@@ -61,8 +63,8 @@ export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaPro
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center text-slate-400 pt-20">
             <ThingNatureMark className="mb-4 h-12 w-12 rounded-[1.1rem] opacity-90" />
-            <h2 className="text-2xl font-semibold mb-2 text-slate-200 tracking-tight">How can I assist you today?</h2>
-            <p className="text-sm">Type a message to start conversing with the system.</p>
+            <h2 className="text-2xl font-semibold mb-2 text-slate-200 tracking-tight">{ui.chat.emptyTitle}</h2>
+            <p className="text-sm">{ui.chat.emptySubtitle}</p>
           </div>
         )}
 
@@ -91,7 +93,7 @@ export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaPro
               {m.role === 'user' ? (
                 <>
                   <div className="flex items-center gap-2 mb-1">
-                    <div className="text-sm font-bold text-slate-200">{user?.displayName || 'You'}</div>
+                    <div className="text-sm font-bold text-slate-200">{user?.displayName || ui.chat.userLabel}</div>
                     {m.createdAt && (
                       <div className="text-[11px] text-slate-500 font-normal">
                         {format(m.createdAt, 'MMM d, h:mm a')}
@@ -132,7 +134,7 @@ export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaPro
                     <button 
                       onClick={() => handleCopy(m.id, m.content)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-white/5 rounded-md text-slate-400"
-                      title="Copy response"
+                      title={ui.chat.copyResponse}
                     >
                       {copiedId === m.id ? <Check className="w-4 h-4 text-[#52DBA9]" /> : <Copy className="w-4 h-4" />}
                     </button>
@@ -157,7 +159,7 @@ export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaPro
                           className="inline-flex items-center gap-2 rounded-xl border border-[#52DBA9]/20 bg-[#52DBA9]/8 px-3 py-2 text-sm font-medium text-[#7ef8d2] transition-colors hover:bg-[#52DBA9]/14"
                         >
                           <RotateCcw className="h-4 w-4" />
-                          重试本次回答
+                          {ui.chat.retryResponse}
                         </button>
                       </div>
                     ) : null}
@@ -167,7 +169,7 @@ export function ChatArea({ messages, isGenerating, onRetryMessage }: ChatAreaPro
                       <div className="mt-4 pt-4 border-t border-white/5">
                         <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-2">
                           <Globe className="w-3.5 h-3.5" />
-                          Sources
+                          {ui.chat.sources}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {m.citations.map((c, i) => (

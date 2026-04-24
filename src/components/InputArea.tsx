@@ -9,12 +9,14 @@ import { UploadTask, ref, uploadBytesResumable, getDownloadURL } from 'firebase/
 import { useAuth } from '../lib/AuthContext';
 import { v4 as uuidv4 } from 'uuid';
 import { cn } from '@/lib/utils';
+import type { UiText } from '../content/uiText';
 
 interface InputAreaProps {
   onSend: (content: string, attachments: Attachment[], webSearch: boolean, omega: string) => void;
   onStop: () => void;
   isGenerating: boolean;
   disabled: boolean;
+  ui: UiText;
 }
 
 type UploadStatus = {
@@ -52,21 +54,20 @@ const TEXT_FILE_EXTENSIONS = [
   '.ini',
 ];
 
-const OMEGA_SCALES = [
-  { id: 'short', label: '短期 Ω', icon: Search, desc: '解决当下问题，直接给答案', prompt: '【系统指令：请使用「短期 Ω 刻度」，忽略宏大叙事，只解决用户当前亟待解决的局部问题，直接给出高信息密度（Id）的答案。】' },
-  { id: 'medium', label: '三年 Ω', icon: Eye, desc: '看系统发展，给中期策略', prompt: '【系统指令：请使用「中期 Ω 刻度（1-3年）」，不仅解决当前问题，更要评估这个动作对用户物性向量 φ（能力/性格/结构）的长期影响，提出系统性建议。】' },
-  { id: 'long', label: '一生 Ω', icon: Telescope, desc: '对齐宇宙母体，看文明路线', prompt: '【系统指令：请使用「长期 Ω 刻度（一生/文明尺度）」，跳出日常繁琐，过滤掉暂时情绪噪音，直接逼问这个动作是否能带来绝对的净正性（Σ⁺），是否符合用户的跨时间文明路线。】' }
-];
-
-export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaProps) {
+export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputAreaProps) {
   const { workspaceId } = useAuth();
+  const omegaScales = [
+    { id: 'short', label: ui.input.omegaShort, icon: Search, desc: ui.input.omegaShortDesc, prompt: '【系统指令：请使用「短期 Ω 刻度」，忽略宏大叙事，只解决用户当前亟待解决的局部问题，直接给出高信息密度（Id）的答案。】' },
+    { id: 'medium', label: ui.input.omegaMedium, icon: Eye, desc: ui.input.omegaMediumDesc, prompt: '【系统指令：请使用「中期 Ω 刻度（1-3年）」，不仅解决当前问题，更要评估这个动作对用户物性向量 φ（能力/性格/结构）的长期影响，提出系统性建议。】' },
+    { id: 'long', label: ui.input.omegaLong, icon: Telescope, desc: ui.input.omegaLongDesc, prompt: '【系统指令：请使用「长期 Ω 刻度（一生/文明尺度）」，跳出日常繁琐，过滤掉暂时情绪噪音，直接逼问这个动作是否能带来绝对的净正性（Σ⁺），是否符合用户的跨时间文明路线。】' }
+  ];
   const [content, setContent] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadStatus[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const [activeOmega, setActiveOmega] = useState(OMEGA_SCALES[0]);
+  const [activeOmega, setActiveOmega] = useState(omegaScales[0]);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -174,10 +175,14 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
         recognitionRef.current.start();
         setIsListening(true);
       } else {
-        alert("Your browser does not support Speech Recognition.");
+        alert(ui.input.speechUnsupported);
       }
     }
   };
+
+  useEffect(() => {
+    setActiveOmega((current) => omegaScales.find((scale) => scale.id === current.id) || omegaScales[0]);
+  }, [ui.input.omegaLong, ui.input.omegaLongDesc, ui.input.omegaMedium, ui.input.omegaMediumDesc, ui.input.omegaShort, ui.input.omegaShortDesc]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -212,7 +217,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
     try {
       const preparedAttachments = await Promise.all(Array.from(files).map(async file => {
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-          alert(`File ${file.name} is too large. Max size is ${MAX_FILE_SIZE_MB}MB.`);
+          alert(ui.input.fileTooLarge(file.name, MAX_FILE_SIZE_MB));
           return null;
         }
 
@@ -417,7 +422,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
 
           <div className="mx-2 mt-2 flex items-center gap-2 rounded-2xl border border-dashed border-white/6 bg-white/[0.015] px-3 py-2 text-[10px] text-slate-600">
             <Inbox className="h-3 w-3 text-[#52DBA9]/80" />
-            <span>拖拽或粘贴文件</span>
+            <span>{ui.input.dragAndPaste}</span>
           </div>
 
           {(attachments.length > 0 || uploadProgress.length > 0) && (
@@ -466,7 +471,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                         ) : att.url ? (
                           <span className="text-[#52DBA9]">完成</span>
                         ) : (
-                          <span>本地</span>
+                          <span>{ui.input.localAttachment}</span>
                         )}
                       </div>
                     </div>
@@ -478,7 +483,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
           
           <Textarea
             ref={textareaRef}
-            placeholder={isGenerating ? "正在生成回答..." : "向物性论发送消息...（⌘+Enter 发送）"}
+            placeholder={isGenerating ? ui.input.placeholderGenerating : ui.input.placeholder}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -497,7 +502,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                 >
                   <Paperclip className="w-4 h-4" />
                 </TooltipTrigger>
-                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">Attach file</TooltipContent>
+                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">{ui.input.attachFile}</TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -511,7 +516,9 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                 >
                   <Globe className="w-4 h-4" />
                 </TooltipTrigger>
-                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">Web Search {webSearchEnabled ? 'Enabled' : 'Disabled'}</TooltipContent>
+                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">
+                  {webSearchEnabled ? ui.input.webSearchEnabled : ui.input.webSearchDisabled}
+                </TooltipContent>
               </Tooltip>
 
               <Tooltip>
@@ -525,7 +532,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </TooltipTrigger>
-                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">{isListening ? 'Stop Dictation' : 'Start Dictation'}</TooltipContent>
+                <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">{isListening ? ui.input.stopDictation : ui.input.startDictation}</TooltipContent>
               </Tooltip>
 
               <DropdownMenu>
@@ -537,7 +544,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                   <span className="text-xs font-medium hidden sm:inline-block">{activeOmega.label}</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" side="top" className="w-56 bg-[#252833] border-white/10 shadow-xl rounded-xl p-1 mb-2">
-                  {OMEGA_SCALES.map((scale) => (
+                  {omegaScales.map((scale) => (
                     <DropdownMenuItem
                       key={scale.id}
                       onClick={() => setActiveOmega(scale)}
@@ -566,7 +573,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
                   >
                     <Square className="w-3.5 h-3.5 fill-current text-slate-300" />
                   </TooltipTrigger>
-                  <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">Stop generating</TooltipContent>
+                  <TooltipContent className="bg-[#252833] border-white/5 text-slate-200">{ui.input.stopGenerating}</TooltipContent>
                 </Tooltip>
               ) : (
                 <button 
@@ -581,7 +588,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled }: InputAreaP
           </div>
         </div>
         <div className="mt-3 text-center text-[10px] text-slate-500">
-          物性论 可能出现偏差，请核对关键信息。
+          {ui.input.disclaimer}
         </div>
       </div>
     </footer>

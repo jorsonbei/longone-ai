@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '../lib/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ThingNatureBrand } from './ThingNatureBrand';
+import type { UiText } from '../content/uiText';
 
 interface SidebarProps {
   chats: ChatSession[];
@@ -20,9 +21,10 @@ interface SidebarProps {
   onRenameChat: (id: string, newTitle: string) => void;
   onOpenSettings: () => void;
   onLogOut: () => void;
+  ui: UiText;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -48,7 +50,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this chat?')) {
+    if (confirm(ui.sidebar.deleteConfirm)) {
       onDeleteChat(id);
     }
   };
@@ -57,7 +59,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     <div className="flex flex-col h-full w-full bg-[linear-gradient(180deg,#151823_0%,#12141d_100%)] text-white">
       {/* Brand & Logo */}
       <div className="p-6 pb-3 shrink-0">
-        <ThingNatureBrand subtitle="CIVILIZATION INTELLIGENCE" />
+        <ThingNatureBrand subtitle={ui.brand.sidebarSubtitle} />
       </div>
 
       <div className="px-4 pt-4 pb-3 shrink-0">
@@ -66,8 +68,8 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <Globe className="w-3.5 h-3.5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-100">物性论官网</span>
-            <span className="text-[11px] text-slate-500">理解理论、产业与社会价值</span>
+            <span className="text-sm font-semibold text-slate-100">{ui.sidebar.officialSiteTitle}</span>
+            <span className="text-[11px] text-slate-500">{ui.sidebar.officialSiteSubtitle}</span>
           </div>
         </button>
         {canAccessAdmin ? (
@@ -76,8 +78,8 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
               <Shield className="w-3.5 h-3.5" />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-semibold text-slate-100">管理后台</span>
-              <span className="text-[11px] text-slate-500">内容、会话与系统控制台</span>
+              <span className="text-sm font-semibold text-slate-100">{ui.sidebar.adminTitle}</span>
+              <span className="text-[11px] text-slate-500">{ui.sidebar.adminSubtitle}</span>
             </div>
           </button>
         ) : null}
@@ -86,8 +88,8 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
              <Plus className="w-3.5 h-3.5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-100">新建会话</span>
-            <span className="text-[11px] text-slate-500">开始一次新的物性论对话</span>
+            <span className="text-sm font-semibold text-slate-100">{ui.sidebar.newChatTitle}</span>
+            <span className="text-[11px] text-slate-500">{ui.sidebar.newChatSubtitle}</span>
           </div>
         </button>
       </div>
@@ -95,7 +97,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
       <ScrollArea className="flex-1 px-3">
         <div className="flex flex-col gap-1 pb-4">
           <div className="px-3 py-3 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">
-            会话记录
+            {ui.sidebar.chatHistory}
           </div>
           {chats.map(chat => (
             <div 
@@ -142,14 +144,14 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
                   <button 
                     onClick={(e) => handleEdit(chat, e)} 
                     className="p-1 text-white/50 hover:text-white rounded-md"
-                    title="Rename"
+                    title={ui.sidebar.rename}
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                   <button 
                     onClick={(e) => handleDelete(chat.id, e)} 
                     className="p-1 text-white/50 hover:text-red-400 rounded-md"
-                    title="Delete"
+                    title={ui.sidebar.delete}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -159,7 +161,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
           ))}
           {chats.length === 0 && (
             <div className="text-sm text-slate-500 text-center py-4">
-              No recent chats
+              {ui.sidebar.noRecentChats}
             </div>
           )}
         </div>
@@ -175,8 +177,8 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
                   <User className="w-4 h-4 flex-shrink-0" />
                 </div>
                 <div className="min-w-0 text-left">
-                  <div className="truncate text-sm font-medium text-slate-200">{user?.displayName || '账户'}</div>
-                  <div className="truncate text-[11px] text-slate-500">{user?.email || '账号与帮助'}</div>
+                  <div className="truncate text-sm font-medium text-slate-200">{user?.displayName || ui.sidebar.accountFallback}</div>
+                  <div className="truncate text-[11px] text-slate-500">{user?.email || ui.sidebar.accountHelp}</div>
                 </div>
               </div>
               <HelpCircle className="w-4 h-4 flex-shrink-0 text-slate-500" />
@@ -189,12 +191,12 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
           >
             <DropdownMenuItem className="gap-2 cursor-pointer focus:bg-white/10 text-gray-300 py-2.5">
               <HelpCircle className="w-4 h-4" />
-              <span>Help Center</span>
+              <span>{ui.sidebar.helpCenter}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator className="bg-white/10" />
             <DropdownMenuItem onClick={onLogOut} className="gap-2 cursor-pointer focus:bg-white/10 focus:text-red-400 text-gray-300 py-2.5">
               <LogOut className="w-4 h-4" />
-              <span>Sign Out</span>
+              <span>{ui.sidebar.signOut}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -204,7 +206,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
           className="mt-1 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3 text-slate-300 transition-colors hover:bg-white/[0.07] hover:text-white"
         >
           <Settings className="h-4 w-4 flex-shrink-0" />
-          <span className="text-sm font-medium">Settings</span>
+          <span className="text-sm font-medium">{ui.sidebar.settings}</span>
         </button>
       </div>
     </div>
