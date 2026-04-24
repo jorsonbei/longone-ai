@@ -1,8 +1,18 @@
-export const SUPPORTED_LOCALES = ['en', 'zh', 'fr', 'es', 'vi', 'de'] as const;
+export const SUPPORTED_LOCALES = ['en', 'zh', 'fr', 'es', 'vi', 'de', 'ja'] as const;
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 const SUPPORTED_LOCALE_SET = new Set<string>(SUPPORTED_LOCALES);
+
+export const LOCALE_OPTIONS: Array<{ value: Locale; label: string }> = [
+  { value: 'en', label: 'English' },
+  { value: 'zh', label: '中文' },
+  { value: 'fr', label: 'Français' },
+  { value: 'es', label: 'Español' },
+  { value: 'vi', label: 'Tiếng Việt' },
+  { value: 'de', label: 'Deutsch' },
+  { value: 'ja', label: '日本語' },
+];
 
 const COUNTRY_TO_LOCALE: Record<string, Locale> = {
   CN: 'zh',
@@ -35,6 +45,7 @@ const COUNTRY_TO_LOCALE: Record<string, Locale> = {
   NI: 'es',
   DO: 'es',
   VN: 'vi',
+  JP: 'ja',
   US: 'en',
   GB: 'en',
   AU: 'en',
@@ -63,6 +74,7 @@ export function normalizeLocale(value?: string | null): Locale | null {
   if (base === 'es') return 'es';
   if (base === 'vi') return 'vi';
   if (base === 'de') return 'de';
+  if (base === 'ja') return 'ja';
   if (base === 'en') return 'en';
 
   return null;

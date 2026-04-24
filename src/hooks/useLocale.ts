@@ -17,8 +17,24 @@ function resolveInitialLocale(): Locale {
   );
 }
 
+function getStoredLocale(): Locale | null {
+  if (typeof window === 'undefined') return null;
+  return normalizeLocale(window.localStorage.getItem(LOCALE_STORAGE_KEY));
+}
+
 export function useLocale() {
-  const [locale, setLocale] = useState<Locale>(resolveInitialLocale);
+  const [locale, setLocaleState] = useState<Locale>(resolveInitialLocale);
+
+  const setLocale = (nextLocale: Locale) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
+      const url = new URL(window.location.href);
+      url.searchParams.set('lang', nextLocale);
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+
+    setLocaleState(nextLocale);
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -26,7 +42,13 @@ export function useLocale() {
     const queryLocale = getQueryLocale();
     if (queryLocale) {
       window.localStorage.setItem(LOCALE_STORAGE_KEY, queryLocale);
-      setLocale(queryLocale);
+      setLocaleState(queryLocale);
+      return;
+    }
+
+    const storedLocale = getStoredLocale();
+    if (storedLocale) {
+      setLocaleState(storedLocale);
       return;
     }
 
@@ -42,7 +64,7 @@ export function useLocale() {
       })
       .then((resolvedLocale) => {
         if (resolvedLocale) {
-          setLocale(resolvedLocale);
+          setLocaleState(resolvedLocale);
         }
       })
       .catch((error) => {

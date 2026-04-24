@@ -1,13 +1,15 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useAuth } from '../lib/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ThingNatureBrand } from './ThingNatureBrand';
 import type { UiText } from '../content/uiText';
+import { LOCALE_OPTIONS, type Locale } from '../lib/locale';
 
 interface SidebarProps {
   chats: ChatSession[];
@@ -22,12 +24,24 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onLogOut: () => void;
   ui: UiText;
+  locale: Locale;
+  onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
+
+  const languageLabelByLocale: Record<Locale, string> = {
+    en: 'Language',
+    zh: '语言',
+    fr: 'Langue',
+    es: 'Idioma',
+    vi: 'Ngôn ngữ',
+    de: 'Sprache',
+    ja: '言語',
+  };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -169,6 +183,25 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
       
       {/* Footer Profile */}
       <div className="p-4 flex flex-col gap-3 shrink-0 bg-transparent">
+        <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <Languages className="h-3.5 w-3.5" />
+            <span>{languageLabelByLocale[locale]}</span>
+          </div>
+          <Select value={locale} onValueChange={(value) => onChangeLocale(value as Locale)}>
+            <SelectTrigger className="h-11 rounded-xl border-white/10 bg-[#171a24] text-slate-100 shadow-none">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-white/10 bg-[#1C1E26] text-slate-100">
+              {LOCALE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="focus:bg-white/10">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <DropdownMenu>
           <DropdownMenuTrigger className="w-full focus:outline-none">
             <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3 text-slate-300 transition-colors hover:bg-white/[0.07] hover:text-white">

@@ -63,7 +63,7 @@ function buildLightweightReply(content: string) {
 
 export default function App() {
   const { user, loading: authLoading, authError, signIn, logOut, isAdmin } = useAuth();
-  const { locale } = useLocale();
+  const { locale, setLocale } = useLocale();
   const ui = useMemo(() => getUiText(locale), [locale]);
   
   const {
@@ -465,6 +465,8 @@ export default function App() {
           onOpenSettings={() => setIsSettingsOpen(true)}
           onLogOut={logOut}
           ui={ui}
+          locale={locale}
+          onChangeLocale={setLocale}
         />
 
         {/* Main Content */}
