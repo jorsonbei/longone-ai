@@ -60,7 +60,8 @@ function getVertexAiClient() {
 
 function resolveChatClientAndModel(requestedModel: string) {
   const tunedModel = process.env.VERTEX_TUNED_MODEL;
-  if (tunedModel) {
+  const vertexEnabled = process.env.VERTEX_ENABLED === 'true';
+  if (vertexEnabled && tunedModel) {
     return {
       ai: getVertexAiClient(),
       model: tunedModel,

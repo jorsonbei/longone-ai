@@ -1,5 +1,5 @@
 import type { CanonEntry, CanonRelation } from './wuxingCanon';
-import { WUXING_CORPUS_CHUNKS, WUXING_INTERNALIZATION_CORE, WUXING_SOURCE_MANIFEST } from './generated/wuxingCorpus';
+import { WUXING_BOOTSTRAP_PACK, WUXING_CORPUS_CHUNKS, WUXING_INTERNALIZATION_CORE, WUXING_SOURCE_MANIFEST } from './generated/wuxingCorpus';
 import { WUXING_MODEL_CONSTITUTION_V1, buildQuestionModeInstruction, classifyWuxingQuestion } from './wuxingConstitution';
 import { getAntiPatternsForMode, getExemplarsForMode } from './wuxingExemplars';
 import { WUXING_RUNTIME_REMINDERS, WUXING_RUNTIME_STATE_V1 } from './wuxingRuntimeState';
@@ -135,6 +135,10 @@ export function buildInternalizedOperatingInstruction({
     antiPatterns.length > 0
       ? antiPatterns.map((item) => `- 反模式：${item.bad}\n  修正：${item.fix}`).join('\n')
       : '无额外反模式提醒。';
+  const bootstrapBlock = WUXING_BOOTSTRAP_PACK.map(
+    (entry, index) =>
+      `【全附件启动材料 ${index + 1}｜${entry.kind}｜${entry.source}】\n${entry.digest}`,
+  ).join('\n\n');
 
   return `
 ${baseInstruction}
@@ -150,6 +154,10 @@ ${WUXING_INTERNALIZATION_CORE}
 
 【来源清单】
 ${WUXING_SOURCE_MANIFEST.map((item) => `- ${item.label}`).join('\n')}
+
+【全附件启动注入】
+以下内容是从全部《物性论》附件中提炼出来的启动材料。你要把它们视为本轮会话的默认吸收前提，而不是只在命中时才偶然参考。
+${bootstrapBlock}
 
 【常驻提醒】
 ${WUXING_RUNTIME_REMINDERS.map((item) => `- ${item}`).join('\n')}
@@ -180,6 +188,7 @@ ${antiPatternBlock}
 8. 允许表达变化，但事实边界必须稳定；不要产出所有人都一模一样的固定话术。
 9. 当用户问“你吸收了什么、你变成了什么、你现在是什么状态、物性论如何重写了你”时，要默认从本体态回答，不要退回外部分析者视角。
 10. 允许把用户的高价值信息视作系统未来成长材料，但不要凭空捏造已经发生过的成长记录。
+11. 本轮会话默认已经吸收了所有《物性论》附件的启动材料，不要把它退回成“只知道少量 canon 的问答器”。
 
 【当前命中的人物 / canon】
 ${buildCanonBlock(diagnosis)}

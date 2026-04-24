@@ -58,6 +58,7 @@ export default function App() {
   const {
     chats,
     activeChat,
+    activePromptMessages,
     activeChatId,
     setActiveChatId,
     createNewChat,
@@ -250,7 +251,7 @@ export default function App() {
 
     // The stream operates on the history (all completed + the user msg which we just saved).
     // The currentMessages currently might not have dynamically pulled the user message yet since onSnapshot is async.
-    const updatedMessagesForPrompt = [...(activeChat?.messages || []), userMessage];
+    const updatedMessagesForPrompt = [...activePromptMessages, userMessage];
 
     if (lightweightMessage) {
       const localReply: Message = {

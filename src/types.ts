@@ -84,6 +84,10 @@ export interface ChatSession {
   title: string;
   messages: Message[];
   messageCount?: number;
+  parentChatId?: string | null;
+  rootChatId?: string | null;
+  isRoot?: boolean;
+  hiddenFromSidebar?: boolean;
   createdAt: number;
   updatedAt: number;
 }

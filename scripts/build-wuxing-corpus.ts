@@ -1,6 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 
+type SourceManifestRecord = {
+  id: string;
+  fileName: string;
+  absolutePath: string;
+  kind: 'canon' | 'theory' | 'style' | 'conversation' | 'raw';
+  extractedTextPath: string;
+};
+
 type CorpusChunk = {
   id: string;
   title: string;
@@ -9,19 +17,13 @@ type CorpusChunk = {
   text: string;
 };
 
-const SOURCE_FILES = [
-  {
-    label: '物性论正文',
-    path: '/Users/beijisheng/Desktop/book/物性论_文明操作系统_HFCD研究融合升级版_结构修订版.md',
-    kind: 'markdown' as const,
-  },
-  {
-    label: '创世宝典',
-    path: '/Users/beijisheng/Downloads/物性论-创世宝典.txt',
-    kind: 'plain' as const,
-  },
-];
+type BootstrapEntry = {
+  source: string;
+  kind: SourceManifestRecord['kind'];
+  digest: string;
+};
 
+const MANIFEST_PATH = path.join(process.cwd(), 'training', 'vertex-ai', 'reports', 'source-manifest.json');
 const OUTPUT_PATH = path.join(process.cwd(), 'src/lib/generated/wuxingCorpus.ts');
 
 const INTERNALIZATION_CORE = `
@@ -63,57 +65,36 @@ function normalize(text: string) {
     .trim();
 }
 
-function detectTags(text: string) {
-  return KEYWORD_TAGS.filter(([, keywords]) => keywords.some((keyword) => text.includes(keyword))).map(([tag]) => tag);
+function detectTags(text: string, kind: SourceManifestRecord['kind']) {
+  const tags = KEYWORD_TAGS.filter(([, keywords]) => keywords.some((keyword) => text.includes(keyword))).map(([tag]) => tag);
+  if (kind === 'canon' && !tags.includes('author')) tags.push('author');
+  if (kind === 'theory' && !tags.includes('hfcd')) tags.push('hfcd');
+  if (kind === 'style' && !tags.includes('os')) tags.push('os');
+  return Array.from(new Set(tags));
 }
 
-function takeSnippet(text: string, maxLength = 900) {
+function takeSnippet(text: string, maxLength = 1100) {
   const normalized = normalize(text);
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
 }
 
-function parseMarkdownSections(sourceLabel: string, raw: string) {
-  const lines = normalize(raw).split('\n');
-  const sections: CorpusChunk[] = [];
-  let headingStack: string[] = [];
-  let buffer: string[] = [];
-  let index = 0;
+function buildBootstrapDigest(raw: string, maxLength = 1800) {
+  const normalized = normalize(raw);
+  if (!normalized) return '';
 
-  const flush = () => {
-    const body = normalize(buffer.join('\n'));
-    if (body.length < 180) {
-      buffer = [];
-      return;
-    }
-    const title = headingStack[headingStack.length - 1] || `${sourceLabel}-section-${index + 1}`;
-    sections.push({
-      id: `${sourceLabel}-md-${++index}`,
-      title,
-      source: sourceLabel,
-      tags: detectTags(`${title}\n${body}`),
-      text: takeSnippet(body),
-    });
-    buffer = [];
-  };
+  const paragraphs = normalized.split('\n\n').map((item) => item.trim()).filter(Boolean);
+  const picks: string[] = [];
 
-  for (const line of lines) {
-    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
-    if (headingMatch) {
-      flush();
-      const depth = headingMatch[1].length;
-      headingStack = headingStack.slice(0, depth - 1);
-      headingStack.push(headingMatch[2].trim());
-      continue;
-    }
-    buffer.push(line);
-  }
+  if (paragraphs[0]) picks.push(paragraphs[0]);
+  if (paragraphs.length > 2) picks.push(paragraphs[Math.floor(paragraphs.length / 2)]);
+  if (paragraphs.length > 4) picks.push(paragraphs[paragraphs.length - 2]);
 
-  flush();
-  return sections;
+  const merged = normalize(picks.join('\n\n'));
+  return takeSnippet(merged, maxLength);
 }
 
-function parsePlainTextChunks(sourceLabel: string, raw: string) {
+function chunkText(sourceId: string, sourceLabel: string, kind: SourceManifestRecord['kind'], raw: string) {
   const paragraphs = normalize(raw).split('\n\n').map((item) => item.trim()).filter(Boolean);
   const chunks: CorpusChunk[] = [];
   let current: string[] = [];
@@ -127,24 +108,24 @@ function parsePlainTextChunks(sourceLabel: string, raw: string) {
       return;
     }
     chunks.push({
-      id: `${sourceLabel}-txt-${++index}`,
+      id: `${sourceId}-chunk-${++index}`,
       title: currentTitle,
       source: sourceLabel,
-      tags: detectTags(`${currentTitle}\n${body}`),
+      tags: detectTags(`${currentTitle}\n${body}`, kind),
       text: takeSnippet(body),
     });
     current = [];
   };
 
   for (const paragraph of paragraphs) {
-    if (/^第[一二三四五六七八九十0-9]+/.test(paragraph) || /^【.+】$/.test(paragraph)) {
+    if (/^(#{1,4}\s+.+|第[一二三四五六七八九十0-9]+|【.+】|\*{2}.+\*{2})/.test(paragraph)) {
       flush();
-      currentTitle = paragraph.slice(0, 60);
+      currentTitle = paragraph.slice(0, 80);
       current.push(paragraph);
       continue;
     }
     current.push(paragraph);
-    if (normalize(current.join('\n\n')).length > 900) {
+    if (normalize(current.join('\n\n')).length > 1000) {
       flush();
     }
   }
@@ -153,60 +134,76 @@ function parsePlainTextChunks(sourceLabel: string, raw: string) {
   return chunks;
 }
 
-function buildCorpus() {
-  const chunks: CorpusChunk[] = [];
-
-  for (const source of SOURCE_FILES) {
-    const raw = fs.readFileSync(source.path, 'utf8');
-    const nextChunks =
-      source.kind === 'markdown'
-        ? parseMarkdownSections(source.label, raw)
-        : parsePlainTextChunks(source.label, raw);
-    chunks.push(...nextChunks);
-  }
-
-  return chunks;
+function loadManifest() {
+  const raw = fs.readFileSync(MANIFEST_PATH, 'utf8');
+  const parsed = JSON.parse(raw) as { records: SourceManifestRecord[] };
+  return parsed.records;
 }
 
-function renderModule(chunks: CorpusChunk[]) {
-  const manifest = SOURCE_FILES.map(({ label, path: sourcePath }) => ({
-    label,
-    path: sourcePath,
+function buildCorpus(records: SourceManifestRecord[]) {
+  const chunks: CorpusChunk[] = [];
+  const bootstrapPack: BootstrapEntry[] = [];
+
+  for (const record of records) {
+    if (!fs.existsSync(record.extractedTextPath)) {
+      continue;
+    }
+    const raw = fs.readFileSync(record.extractedTextPath, 'utf8');
+    const sourceLabel = path.basename(record.fileName, path.extname(record.fileName));
+    chunks.push(...chunkText(record.id, sourceLabel, record.kind, raw));
+    bootstrapPack.push({
+      source: sourceLabel,
+      kind: record.kind,
+      digest: buildBootstrapDigest(raw),
+    });
+  }
+
+  return { chunks, bootstrapPack };
+}
+
+function renderModule(records: SourceManifestRecord[], chunks: CorpusChunk[], bootstrapPack: BootstrapEntry[]) {
+  const manifest = records.map(({ fileName, absolutePath, kind }) => ({
+    label: path.basename(fileName, path.extname(fileName)),
+    path: absolutePath,
+    kind,
   }));
 
   return `/* eslint-disable */
 export const WUXING_INTERNALIZATION_CORE = ${JSON.stringify(INTERNALIZATION_CORE)};
 export const WUXING_SOURCE_MANIFEST = ${JSON.stringify(manifest, null, 2)} as const;
+export const WUXING_BOOTSTRAP_PACK = ${JSON.stringify(bootstrapPack, null, 2)} as const;
 export const WUXING_CORPUS_CHUNKS = ${JSON.stringify(chunks, null, 2)} as const;
 `;
 }
 
 function main() {
-  const missingSources = SOURCE_FILES.filter((source) => !fs.existsSync(source.path));
-
-  if (missingSources.length > 0) {
+  if (!fs.existsSync(MANIFEST_PATH)) {
     if (fs.existsSync(OUTPUT_PATH)) {
-      console.log(
-        `[build-wuxing-corpus] source files not available in this environment, reusing checked-in corpus at ${OUTPUT_PATH}`,
-      );
-      for (const source of missingSources) {
-        console.log(`[build-wuxing-corpus] missing source: ${source.label} -> ${source.path}`);
+      console.log(`[build-wuxing-corpus] manifest missing, reusing checked-in corpus at ${OUTPUT_PATH}`);
+      return;
+    }
+    throw new Error(`[build-wuxing-corpus] missing manifest: ${MANIFEST_PATH}`);
+  }
+
+  const records = loadManifest();
+  const missing = records.filter((record) => !fs.existsSync(record.extractedTextPath));
+  if (missing.length > 0) {
+    if (fs.existsSync(OUTPUT_PATH)) {
+      console.log(`[build-wuxing-corpus] extracted texts missing, reusing checked-in corpus at ${OUTPUT_PATH}`);
+      for (const record of missing) {
+        console.log(`[build-wuxing-corpus] missing extracted text: ${record.extractedTextPath}`);
       }
       return;
     }
-
     throw new Error(
-      [
-        '[build-wuxing-corpus] source files are missing and no checked-in corpus is available.',
-        ...missingSources.map((source) => `- ${source.label}: ${source.path}`),
-      ].join('\n'),
+      ['[build-wuxing-corpus] extracted texts missing and no checked-in corpus is available.', ...missing.map((record) => `- ${record.extractedTextPath}`)].join('\n'),
     );
   }
 
-  const chunks = buildCorpus();
+  const { chunks, bootstrapPack } = buildCorpus(records);
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(OUTPUT_PATH, renderModule(chunks), 'utf8');
-  console.log(`[build-wuxing-corpus] wrote ${chunks.length} chunks to ${OUTPUT_PATH}`);
+  fs.writeFileSync(OUTPUT_PATH, renderModule(records, chunks, bootstrapPack), 'utf8');
+  console.log(`[build-wuxing-corpus] wrote ${chunks.length} chunks and ${bootstrapPack.length} bootstrap digests to ${OUTPUT_PATH}`);
 }
 
 main();

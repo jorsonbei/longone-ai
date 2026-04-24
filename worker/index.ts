@@ -12,6 +12,7 @@ type Env = {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
   GEMINI_API_KEY?: string;
+  VERTEX_ENABLED?: string;
   VERTEX_TUNED_MODEL?: string;
   VERTEX_SERVICE_ACCOUNT_JSON?: string;
   VERTEX_SERVICE_ACCOUNT_JSON_BASE64?: string;
@@ -44,7 +45,9 @@ async function handleApi(request: Request, env: Env) {
       const { messages, model, systemInstruction, webSearchEnabled = true } = await request.json();
       const contents = await buildContents(messages || []);
       const vertexEnabled = Boolean(
-        env.VERTEX_TUNED_MODEL && (env.VERTEX_SERVICE_ACCOUNT_JSON_BASE64 || env.VERTEX_SERVICE_ACCOUNT_JSON),
+        env.VERTEX_ENABLED === 'true' &&
+          env.VERTEX_TUNED_MODEL &&
+          (env.VERTEX_SERVICE_ACCOUNT_JSON_BASE64 || env.VERTEX_SERVICE_ACCOUNT_JSON),
       );
       const body = {
         contents,

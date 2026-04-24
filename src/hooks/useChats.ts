@@ -5,8 +5,10 @@ import { collection, doc, query, orderBy, onSnapshot, setDoc, deleteDoc, updateD
 import { ChatSession, Message } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { MODELS } from '../services/geminiService';
+import { WUXING_ROOT_SEED_MESSAGE } from '../lib/wuxingRootSeed';
 
 const INLINE_ATTACHMENT_PERSIST_LIMIT = 850_000;
+const ROOT_CHAT_TITLE = '物性论母会话';
 
 function normalizeWuxingDiagnosis(input: any) {
   if (!input || typeof input !== 'object') return undefined;
@@ -35,10 +37,13 @@ export function useChats() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [activeMessages, setActiveMessages] = useState<Message[]>([]);
+  const [rootChatId, setRootChatId] = useState<string | null>(null);
+  const [rootMessages, setRootMessages] = useState<Message[]>([]);
 
   // Local state overlay for streaming messages to avoid Firestore writes on every token
   const [streamingMessages, setStreamingMessages] = useState<Message[]>([]);
   const createInFlightRef = useRef<Promise<string | null> | null>(null);
+  const rootCreateInFlightRef = useRef<Promise<string | null> | null>(null);
 
   // Load conversations
   useEffect(() => {
@@ -64,11 +69,17 @@ export function useChats() {
           updatedAt: data.updatedAt,
           messages: [],
           messageCount: countSnapshot.data().count,
+          parentChatId: data.parentChatId || null,
+          rootChatId: data.rootChatId || null,
+          isRoot: Boolean(data.isRoot),
+          hiddenFromSidebar: Boolean(data.hiddenFromSidebar),
         } satisfies ChatSession;
       }));
 
       if (cancelled) return;
-      setChats(fetched);
+      const rootSession = fetched.find((chat) => chat.isRoot || chat.hiddenFromSidebar) || null;
+      setRootChatId(rootSession?.id || null);
+      setChats(fetched.filter((chat) => !(chat.isRoot || chat.hiddenFromSidebar)));
       setIsLoaded(true);
     });
 
@@ -77,6 +88,35 @@ export function useChats() {
       unsubscribe();
     };
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !rootChatId) {
+      setRootMessages([]);
+      return;
+    }
+
+    const messagesRef = collection(db, 'workspaces', workspaceId, 'conversations', rootChatId, 'messages');
+    const q = query(messagesRef, orderBy('createdAt', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          role: data.role as 'user' | 'model',
+          content: data.content,
+          status: data.status,
+          createdAt: data.createdAt,
+          citations: data.citations,
+          attachments: data.attachments,
+          wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
+        };
+      });
+      setRootMessages(msgs);
+    });
+
+    return () => unsubscribe();
+  }, [workspaceId, rootChatId]);
 
   // Load messages for active chat
   useEffect(() => {
@@ -125,6 +165,55 @@ export function useChats() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, chats.length]);
 
+  const ensureRootChat = async () => {
+    if (!workspaceId) return null;
+    if (rootChatId) return rootChatId;
+    if (rootCreateInFlightRef.current) return rootCreateInFlightRef.current;
+
+    const task = (async () => {
+      const newRootId = uuidv4();
+      const timestamp = Date.now();
+      const rootRef = doc(db, 'workspaces', workspaceId, 'conversations', newRootId);
+      await setDoc(rootRef, {
+        title: ROOT_CHAT_TITLE,
+        model: MODELS.PRO,
+        status: 'active',
+        messageCount: 1,
+        isRoot: true,
+        hiddenFromSidebar: true,
+        rootChatId: newRootId,
+        parentChatId: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      const seedMessageId = uuidv4();
+      const seedMessageRef = doc(db, 'workspaces', workspaceId, 'conversations', newRootId, 'messages', seedMessageId);
+      await setDoc(seedMessageRef, {
+        role: 'model',
+        content: WUXING_ROOT_SEED_MESSAGE,
+        status: 'completed',
+        createdAt: timestamp,
+      });
+
+      setRootChatId(newRootId);
+      return newRootId;
+    })();
+
+    rootCreateInFlightRef.current = task;
+    try {
+      return await task;
+    } finally {
+      rootCreateInFlightRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoaded || !workspaceId || rootChatId) return;
+    ensureRootChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, workspaceId, rootChatId]);
+
   const createNewChat = async () => {
     if (!workspaceId) return null;
     if (createInFlightRef.current) {
@@ -132,6 +221,7 @@ export function useChats() {
     }
 
     const task = (async () => {
+      const ensuredRootId = await ensureRootChat();
       const newId = uuidv4();
       const timestamp = Date.now();
       const newChatRef = doc(db, 'workspaces', workspaceId, 'conversations', newId);
@@ -144,6 +234,10 @@ export function useChats() {
         model: MODELS.FLASH,
         status: 'active',
         messageCount: 0,
+        rootChatId: ensuredRootId,
+        parentChatId: ensuredRootId,
+        isRoot: false,
+        hiddenFromSidebar: false,
         createdAt: timestamp,
         updatedAt: timestamp
       });
@@ -237,6 +331,11 @@ export function useChats() {
   }, []);
 
   const activeChatBase = chats.find(c => c.id === activeChatId) || null;
+  const effectiveRootChatId = activeChatBase?.rootChatId || rootChatId;
+  const inheritedRootMessages =
+    effectiveRootChatId && effectiveRootChatId !== activeChatBase?.id
+      ? rootMessages
+      : [];
   // Combine cloud messages with active local streaming messages, ensuring no duplicate IDs
   const activeChat = activeChatBase ? { 
     ...activeChatBase, 
@@ -245,11 +344,17 @@ export function useChats() {
       ...streamingMessages.filter(sm => !activeMessages.some(am => am.id === sm.id))
     ]
   } : null;
+  const activePromptMessages = [
+    ...inheritedRootMessages,
+    ...(activeChat?.messages || []),
+  ];
 
   return {
     chats,
     activeChat,
+    activePromptMessages,
     activeChatId,
+    rootChatId,
     setActiveChatId,
     createNewChat,
     deleteChat,
