@@ -1,0 +1,30 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="18" fill="#091019"/>
+  <rect x="1" y="1" width="62" height="62" rx="17" stroke="rgba(255,255,255,0.08)"/>
+  <g filter="url(#glow)">
+    <ellipse cx="32" cy="32" rx="19" ry="11.5" stroke="url(#orbit)" stroke-width="2.6" opacity="0.95"/>
+    <ellipse cx="32" cy="32" rx="12" ry="19" transform="rotate(32 32 32)" stroke="rgba(146,233,255,0.26)" stroke-width="1.9"/>
+    <path d="M22 47.5L41.5 16.5" stroke="url(#axis)" stroke-width="3.3" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="6.8" fill="#DDFBFF"/>
+    <circle cx="32" cy="32" r="3.8" fill="#7EF8D2"/>
+    <circle cx="20.5" cy="23.5" r="3.2" fill="#7EF8D2"/>
+    <circle cx="44.5" cy="40.5" r="3.2" fill="#93A8FF"/>
+    <circle cx="22" cy="47.5" r="4.2" fill="#39DFA9"/>
+    <circle cx="41.5" cy="16.5" r="3.6" fill="#B5C7FF"/>
+  </g>
+  <defs>
+    <filter id="glow" x="8" y="10" width="48" height="46" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+      <feGaussianBlur stdDeviation="1.2" result="effect1_foregroundBlur"/>
+    </filter>
+    <linearGradient id="axis" x1="18" y1="52" x2="46" y2="12" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EF0C2"/>
+      <stop offset="1" stop-color="#8EA4FF"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="15" y1="32" x2="49" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7EF8D2"/>
+      <stop offset="1" stop-color="#8198FF"/>
+    </linearGradient>
+  </defs>
+</svg>

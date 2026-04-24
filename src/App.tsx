@@ -263,7 +263,7 @@ export default function App() {
   };
 
   const handleSend = async (content: string, attachments: Attachment[], webSearchEnabled: boolean = true, omegaPrompt: string = "") => {
-    const requestChatId = activeChatId;
+    const requestChatId = activeChatId || await createNewChat();
     if (!requestChatId) return;
     const lightweightMessage = isLightweightMessage(content, attachments);
 
@@ -747,7 +747,7 @@ export default function App() {
                 onSend={handleSend}
                 onStop={stopGenerating}
                 isGenerating={isGenerating}
-                disabled={!activeChatId}
+                disabled={false}
               />
             </>
           )}
