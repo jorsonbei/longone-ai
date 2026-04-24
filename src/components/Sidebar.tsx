@@ -42,6 +42,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     de: 'Sprache',
     ja: '言語',
   };
+  const currentLocaleOption = LOCALE_OPTIONS.find((option) => option.value === locale) || LOCALE_OPTIONS[0];
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -183,14 +184,14 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
       
       {/* Footer Profile */}
       <div className="p-4 flex flex-col gap-3 shrink-0 bg-transparent">
-        <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3">
-          <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            <Languages className="h-3.5 w-3.5" />
-            <span>{languageLabelByLocale[locale]}</span>
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-300">
+            <Languages className="h-4 w-4 flex-shrink-0 text-slate-500" />
+            <span className="truncate">{languageLabelByLocale[locale]}</span>
           </div>
           <Select value={locale} onValueChange={(value) => onChangeLocale(value as Locale)}>
-            <SelectTrigger className="h-11 rounded-xl border-white/10 bg-[#171a24] text-slate-100 shadow-none">
-              <SelectValue />
+            <SelectTrigger className="h-10 w-[132px] rounded-xl border-white/10 bg-[#171a24] px-3 text-slate-100 shadow-none">
+              <SelectValue>{currentLocaleOption.label}</SelectValue>
             </SelectTrigger>
             <SelectContent className="border-white/10 bg-[#1C1E26] text-slate-100">
               {LOCALE_OPTIONS.map((option) => (
