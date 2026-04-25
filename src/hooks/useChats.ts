@@ -6,6 +6,7 @@ import { ChatSession, Message } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { MODELS } from '../services/geminiService';
 import { WUXING_ROOT_SEED_MESSAGE, WUXING_ROOT_SEED_MESSAGE_ID, WUXING_ROOT_SEED_VERSION } from '../lib/wuxingRootSeed';
+import { normalizeMessageOrder } from '../lib/messageOrdering';
 
 const INLINE_ATTACHMENT_PERSIST_LIMIT = 850_000;
 const ROOT_CHAT_TITLE = '物性论母会话';
@@ -137,7 +138,7 @@ export function useChats() {
           wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
         };
       });
-      setRootMessages(msgs);
+      setRootMessages(normalizeMessageOrder(msgs));
     });
 
     return () => unsubscribe();
@@ -174,7 +175,7 @@ export function useChats() {
           wuxingDiagnosis: normalizeWuxingDiagnosis(data.wuxingDiagnosis),
         };
       });
-      setActiveMessages(msgs);
+      setActiveMessages(normalizeMessageOrder(msgs));
     });
 
     return () => unsubscribe();
@@ -411,10 +412,10 @@ export function useChats() {
   // Combine cloud messages with active local streaming messages, ensuring no duplicate IDs
   const activeChat = activeChatBase ? { 
     ...activeChatBase, 
-    messages: [
+    messages: normalizeMessageOrder([
       ...activeMessages, 
       ...streamingMessages.filter(sm => !activeMessages.some(am => am.id === sm.id))
-    ]
+    ])
   } : null;
   const activePromptMessages = [
     ...inheritedRootMessages,

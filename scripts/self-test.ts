@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { MODELS } from '../src/services/geminiService';
 import { analyzeWuxingInput, DEFAULT_WUXING_CONFIG } from '../src/lib/wuxingKernel';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
+import { normalizeMessageOrder } from '../src/lib/messageOrdering';
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -67,6 +68,36 @@ async function generateWithFallback(
 }
 
 async function main() {
+  const orderedMessages = normalizeMessageOrder([
+    {
+      id: 'answer-current',
+      role: 'model',
+      content: 'answer',
+      createdAt: 1000,
+      status: 'completed',
+      replyToId: 'question-current',
+    },
+    {
+      id: 'question-current',
+      role: 'user',
+      content: 'question',
+      createdAt: 1000,
+      status: 'completed',
+    },
+    {
+      id: 'question-next',
+      role: 'user',
+      content: 'next',
+      createdAt: 1002,
+      status: 'completed',
+    },
+  ]);
+  assert(
+    orderedMessages.map((message) => message.id).join(',') === 'question-current,answer-current,question-next',
+    'Message ordering should keep each user question above its model answer.',
+  );
+  console.log('[self-test] message ordering OK');
+
   const nameCase = analyzeWuxingInput(
     '帮我给阮氏兰惠这个名字做结构解析，并说明她在物性论里的角色。',
     [],

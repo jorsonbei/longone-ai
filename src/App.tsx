@@ -331,13 +331,15 @@ export default function App() {
     if (!requestChatId) return;
     const lightweightMessage = isLightweightMessage(content, attachments);
 
+    const turnCreatedAt = Date.now();
+
     // Build user message
     const userMessage: Message = {
       id: uuidv4(),
       role: 'user',
       content,
       attachments,
-      createdAt: Date.now(),
+      createdAt: turnCreatedAt,
       omega: omegaPrompt.includes("中期") ? "medium" : omegaPrompt.includes("长期") ? "long" : "short"
     };
 
@@ -346,7 +348,7 @@ export default function App() {
         id: uuidv4(),
         role: 'model',
         content: buildLightweightReply(content, locale),
-        createdAt: Date.now(),
+        createdAt: turnCreatedAt + 1,
         omega: userMessage.omega,
         status: 'completed',
         replyToId: userMessage.id,
@@ -367,7 +369,7 @@ export default function App() {
     abortControllerRef.current = new AbortController();
 
     const botMessageId = uuidv4();
-    const botCreatedAt = Date.now();
+    const botCreatedAt = turnCreatedAt + 1;
     let accumulatedText = "";
     const userSavePromise = saveMessageToDb(requestChatId, userMessage, content || 'Image request')
       .catch((persistError) => {
