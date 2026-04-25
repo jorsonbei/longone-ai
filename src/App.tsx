@@ -342,7 +342,6 @@ export default function App() {
     };
 
     if (lightweightMessage) {
-      await saveMessageToDb(requestChatId, userMessage, content || 'Image request');
       const localReply: Message = {
         id: uuidv4(),
         role: 'model',
@@ -353,7 +352,10 @@ export default function App() {
         replyToId: userMessage.id,
       };
 
+      updateStreamingMessages([userMessage, localReply]);
+      await saveMessageToDb(requestChatId, userMessage, content || 'Image request');
       await saveMessageToDb(requestChatId, localReply);
+      updateStreamingMessages([]);
       return;
     }
 
@@ -372,16 +374,19 @@ export default function App() {
         console.error('User message persistence failed:', persistError);
       });
 
-    updateStreamingMessages([{
-      id: botMessageId,
-      role: 'model',
-      content: '',
-      createdAt: botCreatedAt,
-      omega: userMessage.omega,
-      status: 'streaming',
-      replyToId: userMessage.id,
-      wuxingDiagnosis: preflight.diagnosis,
-    }]);
+    updateStreamingMessages([
+      userMessage,
+      {
+        id: botMessageId,
+        role: 'model',
+        content: '',
+        createdAt: botCreatedAt,
+        omega: userMessage.omega,
+        status: 'streaming',
+        replyToId: userMessage.id,
+        wuxingDiagnosis: preflight.diagnosis,
+      },
+    ]);
 
     try {
       let combinedSystemInstruction: string;
@@ -436,7 +441,7 @@ export default function App() {
         wuxingDiagnosis: preflight.diagnosis,
       };
 
-      updateStreamingMessages([finalMessage]);
+      updateStreamingMessages([userMessage, finalMessage]);
       await userSavePromise;
       await saveMessageToDb(requestChatId, finalMessage);
       updateStreamingMessages([]);
@@ -469,7 +474,7 @@ export default function App() {
           wuxingDiagnosis: preflight.diagnosis
         };
 
-        updateStreamingMessages([errorMessage]);
+        updateStreamingMessages([userMessage, errorMessage]);
         await userSavePromise;
         await saveMessageToDb(requestChatId, errorMessage);
       } else {
@@ -483,7 +488,7 @@ export default function App() {
           replyToId: userMessage.id,
           wuxingDiagnosis: preflight.diagnosis,
         };
-        updateStreamingMessages(partialMessage.content.trim() ? [partialMessage] : []);
+        updateStreamingMessages(partialMessage.content.trim() ? [userMessage, partialMessage] : [userMessage]);
         await userSavePromise;
         if (partialMessage.content.trim()) {
           await saveMessageToDb(requestChatId, partialMessage);

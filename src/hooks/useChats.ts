@@ -264,25 +264,47 @@ export function useChats() {
       const newId = uuidv4();
       const timestamp = Date.now();
       const newChatRef = doc(db, 'workspaces', workspaceId, 'conversations', newId);
-
-      setStreamingMessages([]);
-      setActiveMessages([]);
-
-      await setDoc(newChatRef, {
+      const optimisticChat: ChatSession = {
+        id: newId,
         title: initialTitle,
-        model: MODELS.FLASH,
-        status: 'active',
+        messages: [],
         messageCount: 0,
         rootChatId: ensuredRootId,
         parentChatId: ensuredRootId,
         isRoot: false,
         hiddenFromSidebar: false,
         createdAt: timestamp,
-        updatedAt: timestamp
-      });
+        updatedAt: timestamp,
+      };
 
+      setStreamingMessages([]);
+      setActiveMessages([]);
+      setChats((prev) => {
+        if (prev.some((chat) => chat.id === newId)) return prev;
+        return [optimisticChat, ...prev];
+      });
       setActiveChatId(newId);
-      return newId;
+
+      try {
+        await setDoc(newChatRef, {
+          title: initialTitle,
+          model: MODELS.FLASH,
+          status: 'active',
+          messageCount: 0,
+          rootChatId: ensuredRootId,
+          parentChatId: ensuredRootId,
+          isRoot: false,
+          hiddenFromSidebar: false,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+
+        return newId;
+      } catch (error) {
+        setChats((prev) => prev.filter((chat) => chat.id !== newId));
+        setActiveChatId((current) => (current === newId ? null : current));
+        throw error;
+      }
     })();
 
     createInFlightRef.current = task;
@@ -370,7 +392,17 @@ export function useChats() {
     setStreamingMessages(msgs);
   }, []);
 
-  const activeChatBase = chats.find(c => c.id === activeChatId) || null;
+  const activeChatBase = chats.find(c => c.id === activeChatId)
+    || (activeChatId && (activeMessages.length > 0 || streamingMessages.length > 0)
+      ? {
+          id: activeChatId,
+          title: '',
+          messages: [],
+          messageCount: activeMessages.length + streamingMessages.length,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }
+      : null);
   const effectiveRootChatId = activeChatBase?.rootChatId || rootChatId;
   const inheritedRootMessages =
     effectiveRootChatId && effectiveRootChatId !== activeChatBase?.id
