@@ -24,6 +24,7 @@ import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
 import { getUiText } from './content/uiText';
 import { getOfficialSiteContent } from './content/officialSiteContent';
+import type { Locale } from './lib/locale';
 
 const LIGHTWEIGHT_MESSAGE_RE =
   /^(hi|hello|hey|yo|sup|test|ping|ok|okay|在吗|在？|在么|你好|您好|嗨|哈喽|测试|1)\s*[!.?。！，、~～]*$/i;
@@ -42,23 +43,76 @@ const CORE_SYSTEM_STYLE = `
 4. 只有当用户明确提出分析、策略、情绪、选择、长期规划、关系、系统性问题时，才切换到《物性论》框架。
 `.trim();
 
+const RESPONSE_LANGUAGE_NAMES: Record<Locale, string> = {
+  en: 'English',
+  zh: '简体中文',
+  fr: 'Français',
+  es: 'Español',
+  vi: 'Tiếng Việt',
+  de: 'Deutsch',
+  ja: '日本語',
+};
+
+const LIGHTWEIGHT_REPLIES: Record<Locale, { ping: string; greeting: string; default: string }> = {
+  en: {
+    ping: 'I am here. The channel is working. You can ask your question directly.',
+    greeting: 'Hi, I am here. You can go straight to the point.',
+    default: 'Hello, I am here. You can ask your question directly.',
+  },
+  zh: {
+    ping: '我在，链路正常。你可以直接说你的问题。',
+    greeting: '你好，我在。你可以直接说重点。',
+    default: '你好，我在。你可以直接说你的问题。',
+  },
+  fr: {
+    ping: 'Je suis la. La liaison fonctionne. Vous pouvez poser votre question directement.',
+    greeting: 'Bonjour, je suis la. Vous pouvez aller droit au but.',
+    default: 'Bonjour, je suis la. Vous pouvez poser votre question directement.',
+  },
+  es: {
+    ping: 'Estoy aqui. La conexion funciona. Puedes decir tu pregunta directamente.',
+    greeting: 'Hola, estoy aqui. Puedes ir directo al punto.',
+    default: 'Hola, estoy aqui. Puedes decir tu pregunta directamente.',
+  },
+  vi: {
+    ping: 'Toi dang o day. Ket noi dang hoat dong. Ban co the hoi truc tiep.',
+    greeting: 'Xin chao, toi dang o day. Ban co the vao thang van de.',
+    default: 'Xin chao, toi dang o day. Ban co the hoi truc tiep.',
+  },
+  de: {
+    ping: 'Ich bin da. Die Verbindung funktioniert. Sie koennen Ihre Frage direkt stellen.',
+    greeting: 'Hallo, ich bin da. Sie koennen direkt zum Punkt kommen.',
+    default: 'Hallo, ich bin da. Sie koennen Ihre Frage direkt stellen.',
+  },
+  ja: {
+    ping: 'ここにいます。接続は正常です。質問をそのまま送ってください。',
+    greeting: 'こんにちは、ここにいます。そのまま要点を送ってください。',
+    default: 'こんにちは、ここにいます。質問をそのまま送ってください。',
+  },
+};
+
 function isLightweightMessage(content: string, attachments: Attachment[]) {
   const normalized = content.trim();
   return attachments.length === 0 && normalized.length > 0 && normalized.length <= 24 && LIGHTWEIGHT_MESSAGE_RE.test(normalized);
 }
 
-function buildLightweightReply(content: string) {
+function buildLocaleResponseInstruction(locale: Locale) {
+  return `【回复语言要求】当前网站显示语言是「${RESPONSE_LANGUAGE_NAMES[locale]}」。除非用户明确要求使用其他语言，否则你必须始终使用「${RESPONSE_LANGUAGE_NAMES[locale]}」回答，包括开场语、解释、项目符号、总结和按钮式文案，不要自动退回中文或英文。`;
+}
+
+function buildLightweightReply(content: string, locale: Locale) {
   const normalized = content.trim().toLowerCase();
+  const replySet = LIGHTWEIGHT_REPLIES[locale] || LIGHTWEIGHT_REPLIES.en;
 
   if (/^(test|ping|1)\s*[!.?。！，、~～]*$/.test(normalized)) {
-    return '我在，链路正常。你可以直接说你的问题。';
+    return replySet.ping;
   }
 
   if (/^(hi|hello|hey|yo|sup)\s*[!.?。！，、~～]*$/.test(normalized)) {
-    return 'Hi，我在。你可以直接说重点。';
+    return replySet.greeting;
   }
 
-  return '你好，我在。你可以直接说你的问题。';
+  return replySet.default;
 }
 
 export default function App() {
@@ -292,7 +346,7 @@ export default function App() {
       const localReply: Message = {
         id: uuidv4(),
         role: 'model',
-        content: buildLightweightReply(content),
+        content: buildLightweightReply(content, locale),
         createdAt: Date.now(),
         omega: userMessage.omega,
         status: 'completed',
@@ -332,8 +386,9 @@ export default function App() {
     try {
       let combinedSystemInstruction: string;
       try {
+        const localeInstruction = buildLocaleResponseInstruction(locale);
         combinedSystemInstruction = await buildInternalizedSystemInstruction({
-          baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${THING_NATURE_MANIFESTO}`,
+          baseInstruction: `${CORE_SYSTEM_STYLE}\n\n${localeInstruction}\n\n${THING_NATURE_MANIFESTO}`,
           systemInstruction,
           omegaPrompt,
           content,
@@ -343,6 +398,7 @@ export default function App() {
         console.warn('Instruction build failed, falling back to base instruction.', instructionError);
         combinedSystemInstruction = [
           CORE_SYSTEM_STYLE,
+          buildLocaleResponseInstruction(locale),
           THING_NATURE_MANIFESTO,
           systemInstruction,
           omegaPrompt,
