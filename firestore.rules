@@ -38,13 +38,17 @@ service cloud.firestore {
 
     function isValidConversation(data) {
       return data.keys().hasAll(['title', 'model', 'status', 'createdAt', 'updatedAt'])
-        && data.keys().size() <= 6
+        && data.keys().size() <= 10
         && data.title is string && data.title.size() <= 200
         && data.model is string && data.model.size() <= 100
         && data.status is string && data.status.size() <= 20
         && data.createdAt is number
         && data.updatedAt is number
-        && (!('messageCount' in data) || data.messageCount is number);
+        && (!('messageCount' in data) || data.messageCount is number)
+        && (!('rootChatId' in data) || (data.rootChatId is string && data.rootChatId.size() <= 128))
+        && (!('parentChatId' in data) || data.parentChatId == null || (data.parentChatId is string && data.parentChatId.size() <= 128))
+        && (!('isRoot' in data) || data.isRoot is bool)
+        && (!('hiddenFromSidebar' in data) || data.hiddenFromSidebar is bool);
     }
 
     function isValidMessageCreate(data) {
