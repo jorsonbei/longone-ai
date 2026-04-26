@@ -188,7 +188,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
     if (textareaRef.current) {
       textareaRef.current.style.height = '0px';
       const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = Math.min(scrollHeight, 200) + 'px';
+      textareaRef.current.style.height = Math.min(scrollHeight, 150) + 'px';
     }
   }, [content]);
 
@@ -404,12 +404,12 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
   };
 
   return (
-    <footer className="w-full bg-[#13151A] p-4 md:p-6 pb-6 md:pb-8 sticky bottom-0 z-10 shrink-0">
+    <footer className="w-full bg-[#13151A] p-3 pb-4 md:p-4 md:pb-5 sticky bottom-0 z-10 shrink-0">
       <div className="max-w-3xl mx-auto relative px-0">
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          className="bg-[#1C1E26] rounded-[32px] shadow-xl p-1.5 flex flex-col border border-white/5 focus-within:border-white/10 transition-colors"
+          className="bg-[#1C1E26] rounded-[28px] shadow-xl p-1.5 flex flex-col border border-white/5 focus-within:border-white/10 transition-colors"
         >
           <input 
             type="file" 
@@ -420,7 +420,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
             accept={SUPPORTED_FILE_TYPES}
           />
 
-          <div className="mx-2 mt-2 flex items-center gap-2 rounded-2xl border border-dashed border-white/6 bg-white/[0.015] px-3 py-2 text-[10px] text-slate-600">
+          <div className="mx-2 mt-1.5 flex items-center gap-2 rounded-2xl border border-dashed border-white/6 bg-white/[0.015] px-3 py-1.5 text-[10px] text-slate-600">
             <Inbox className="h-3 w-3 text-[#52DBA9]/80" />
             <span>{ui.input.dragAndPaste}</span>
           </div>
@@ -488,15 +488,15 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled}
-            className="w-full p-3 text-base focus-visible:ring-0 resize-none placeholder:text-slate-500 border-0 shadow-none bg-transparent min-h-[64px] max-h-[320px] text-slate-200"
-            rows={2}
+            className="w-full p-2.5 text-base focus-visible:ring-0 resize-none placeholder:text-slate-500 border-0 shadow-none bg-transparent min-h-[48px] max-h-[240px] text-slate-200"
+            rows={1}
           />
           
-          <div className="flex items-center justify-between px-2 pt-2 pb-1 bg-transparent">
+          <div className="flex items-center justify-between px-2 pt-1 pb-0.5 bg-transparent">
             <div className="flex items-center gap-1">
               <Tooltip>
                 <TooltipTrigger
-                  className="p-2 hover:bg-white/5 rounded-lg text-slate-400 w-9 h-9 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50"
+                  className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 w-8 h-8 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
                 >
@@ -508,7 +508,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
               <Tooltip>
                 <TooltipTrigger
                   className={cn(
-                    "p-2 hover:bg-white/5 rounded-lg w-9 h-9 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50",
+                    "p-1.5 hover:bg-white/5 rounded-lg w-8 h-8 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50",
                     webSearchEnabled ? "text-[#52DBA9] bg-[#52DBA9]/10" : "text-slate-400"
                   )}
                   onClick={() => setWebSearchEnabled(!webSearchEnabled)}
@@ -524,7 +524,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
               <Tooltip>
                 <TooltipTrigger
                   className={cn(
-                    "p-2 hover:bg-white/5 rounded-lg w-9 h-9 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50",
+                    "p-1.5 hover:bg-white/5 rounded-lg w-8 h-8 flex shrink-0 items-center justify-center transition-colors disabled:opacity-50",
                     isListening ? "text-red-400 bg-red-400/10 animate-pulse" : "text-slate-400"
                   )}
                   onClick={toggleListening}
@@ -538,7 +538,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
               <DropdownMenu>
                 <DropdownMenuTrigger
                   disabled={disabled}
-                  className="px-2 py-1.5 hover:bg-white/5 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 text-slate-300 h-9 shrink-0 ml-1 focus:outline-none"
+                  className="px-2 py-1 hover:bg-white/5 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 text-slate-300 h-8 shrink-0 ml-1 focus:outline-none"
                 >
                   <activeOmega.icon className="w-4 h-4" />
                   <span className="text-xs font-medium hidden sm:inline-block">{activeOmega.label}</span>
@@ -569,7 +569,7 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
                 <Tooltip>
                   <TooltipTrigger
                     onClick={onStop}
-                    className="bg-[#252833] hover:bg-opacity-80 text-white w-9 h-9 flex flex-shrink-0 items-center justify-center rounded-lg transition-all"
+                    className="bg-[#252833] hover:bg-opacity-80 text-white w-8 h-8 flex flex-shrink-0 items-center justify-center rounded-lg transition-all"
                   >
                     <Square className="w-3.5 h-3.5 fill-current text-slate-300" />
                   </TooltipTrigger>
@@ -579,16 +579,13 @@ export function InputArea({ onSend, onStop, isGenerating, disabled, ui }: InputA
                 <button 
                   onClick={handleSend}
                   disabled={disabled || (!content.trim() && attachments.length === 0)}
-                  className="bg-[#52DBA9] hover:bg-[#34d399] disabled:bg-[#252833] disabled:text-slate-500 text-[#13151A] w-9 h-9 rounded-lg transition-all flex items-center justify-center shrink-0"
+                  className="bg-[#52DBA9] hover:bg-[#34d399] disabled:bg-[#252833] disabled:text-slate-500 text-[#13151A] w-8 h-8 rounded-lg transition-all flex items-center justify-center shrink-0"
                 >
                   <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
                 </button>
               )}
             </div>
           </div>
-        </div>
-        <div className="mt-3 text-center text-[10px] text-slate-500">
-          {ui.input.disclaimer}
         </div>
       </div>
     </footer>
