@@ -8,11 +8,13 @@ import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternal
 import { resolvePreferredLocale } from '../src/lib/locale';
 import {
   auditRecords,
+  HFCDFieldSimulationInput,
   HFCDIndustry,
   HFCDGates,
   learnHFCDParameters,
   normalizeHFCDThresholds,
   parseCsv,
+  runHFCDFieldSimulation,
   simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
@@ -204,8 +206,9 @@ app.post('/api/hfcd/audit', (req, res) => {
       records?: Array<Record<string, unknown>>;
       csv?: string;
       model?: string;
-      mode?: 'audit' | 'calibrate' | 'simulate' | 'advanced';
+      mode?: 'audit' | 'calibrate' | 'simulate' | 'advanced' | 'field';
       thresholds?: Partial<HFCDGates>;
+      fieldSimulation?: HFCDFieldSimulationInput;
     };
     const industry = body.industry || 'quantum';
     const rows = body.csv ? parseCsv(body.csv) : body.rows || body.records || [];
@@ -228,6 +231,15 @@ app.post('/api/hfcd/audit', (req, res) => {
       mode === 'simulate' || mode === 'advanced'
         ? simulateHFCDScenarios(rows, industry, parameterProfile || learnHFCDParameters(rows, industry))
         : undefined;
+    const fieldSimulation =
+      mode === 'field' || (mode === 'advanced' && body.fieldSimulation)
+        ? runHFCDFieldSimulation({
+            rows,
+            industry,
+            profile: parameterProfile || learnHFCDParameters(rows, industry),
+            input: body.fieldSimulation,
+          })
+        : undefined;
     res.json({
       model: body.model || 'hfcd-v1',
       mode,
@@ -239,6 +251,7 @@ app.post('/api/hfcd/audit', (req, res) => {
       gateSafety: summarizeGateSafety(results),
       blindMetrics: validateBlindMetrics(results),
       simulation,
+      fieldSimulation,
       results,
     });
   } catch (error) {

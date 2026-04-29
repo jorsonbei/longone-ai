@@ -11,6 +11,7 @@ import {
   HFCD_INDUSTRIES,
   learnHFCDParameters,
   parseCsv,
+  runHFCDFieldSimulation,
   simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
@@ -146,6 +147,19 @@ async function main() {
   const simulatedReport = simulateHFCDScenarios(blindRows, 'quantum', learnedProfile);
   assert(simulatedReport.scenarios.length >= 6, 'HFCD simulation should generate multiple R&D scenarios.');
   assert(simulatedReport.recommendedScenarioId !== 'baseline', 'HFCD simulation should recommend an actionable non-baseline scenario.');
+  const fieldSimulationReport = runHFCDFieldSimulation({
+    rows: blindRows,
+    industry: 'quantum',
+    profile: learnedProfile,
+    input: {
+      boundary: { timeHorizon: 48, gridResolution: 24 },
+      scan: { candidateCount: 3, scanDepth: 0.5, stepSize: 0.06 },
+    },
+  });
+  assert(fieldSimulationReport.model === 'hfcd-field-v1', 'HFCD field simulation should use the full field simulation model.');
+  assert(fieldSimulationReport.candidates.length === 3, 'HFCD field simulation should honor candidate count.');
+  assert(fieldSimulationReport.candidates[0].trajectory.length > 1, 'HFCD field simulation should generate multi-step trajectories.');
+  assert(fieldSimulationReport.recommendedCandidateId !== 'baseline', 'HFCD field simulation should recommend an actionable route.');
   const hfcdReport = generateMarkdownReport({ projectName: 'HFCD 自测报告', industry: 'quantum', results: quantumResults });
   assert(hfcdReport.includes('Executive Summary'), 'HFCD report should include an executive summary.');
   assert(hfcdReport.includes('字段体检与解释'), 'HFCD report should include field explanations.');

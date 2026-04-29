@@ -9,11 +9,13 @@ import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternal
 import { resolvePreferredLocale } from '../src/lib/locale';
 import {
   auditRecords,
+  HFCDFieldSimulationInput,
   HFCDIndustry,
   HFCDGates,
   learnHFCDParameters,
   normalizeHFCDThresholds,
   parseCsv,
+  runHFCDFieldSimulation,
   simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
@@ -194,8 +196,9 @@ async function handleApi(request: Request, env: Env) {
         records?: Array<Record<string, unknown>>;
         csv?: string;
         model?: string;
-        mode?: 'audit' | 'calibrate' | 'simulate' | 'advanced';
+        mode?: 'audit' | 'calibrate' | 'simulate' | 'advanced' | 'field';
         thresholds?: Partial<HFCDGates>;
+        fieldSimulation?: HFCDFieldSimulationInput;
       };
       const industry = payload.industry || 'quantum';
       const rows = payload.csv ? parseCsv(payload.csv) : payload.rows || payload.records || [];
@@ -214,6 +217,15 @@ async function handleApi(request: Request, env: Env) {
         mode === 'simulate' || mode === 'advanced'
           ? simulateHFCDScenarios(rows, industry, parameterProfile || learnHFCDParameters(rows, industry))
           : undefined;
+      const fieldSimulation =
+        mode === 'field' || (mode === 'advanced' && payload.fieldSimulation)
+          ? runHFCDFieldSimulation({
+              rows,
+              industry,
+              profile: parameterProfile || learnHFCDParameters(rows, industry),
+              input: payload.fieldSimulation,
+            })
+          : undefined;
       return json({
         model: payload.model || 'hfcd-v1',
         mode,
@@ -225,6 +237,7 @@ async function handleApi(request: Request, env: Env) {
         gateSafety: summarizeGateSafety(results),
         blindMetrics: validateBlindMetrics(results),
         simulation,
+        fieldSimulation,
         results,
       });
     }

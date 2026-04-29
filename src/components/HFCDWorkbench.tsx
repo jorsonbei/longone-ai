@@ -23,6 +23,9 @@ import {
   generateMarkdownReport,
   getFieldProfile,
   getIndustryFieldProfiles,
+  defaultHFCDFieldSimulationInput,
+  HFCDFieldSimulationInput,
+  HFCDFieldSimulationReport,
   HFCD_GATE_EXPLANATIONS,
   HFCD_INDUSTRIES,
   HFCDIndustry,
@@ -31,7 +34,9 @@ import {
   HFCDAuditResult,
   HFCDFailureMode,
   learnHFCDParameters,
+  normalizeHFCDFieldSimulationInput,
   parseCsv,
+  runHFCDFieldSimulation,
   simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
@@ -748,6 +753,297 @@ function SimulationPanel({ report }: { report: HFCDSimulationReport | null }) {
   );
 }
 
+function NumberInputCard({
+  label,
+  value,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onChange: (value: number) => void;
+  hint: string;
+}) {
+  return (
+    <label className="rounded-2xl border border-white/8 bg-black/10 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-bold text-white">{label}</span>
+        <span className="font-mono text-xs text-[#9df4d7]">{value}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="mt-3 w-full accent-[#52DBA9]"
+      />
+      <p className="mt-2 text-xs leading-6 text-slate-500">{hint}</p>
+    </label>
+  );
+}
+
+function FieldSimulationPanel({
+  industry,
+  report,
+  input,
+  onInputChange,
+  onNeedData,
+}: {
+  industry: HFCDIndustry;
+  report: HFCDFieldSimulationReport | null;
+  input: HFCDFieldSimulationInput;
+  onInputChange: React.Dispatch<React.SetStateAction<HFCDFieldSimulationInput>>;
+  onNeedData: () => void;
+}) {
+  const normalized = report?.input || normalizeHFCDFieldSimulationInput(input, industry);
+  const setField = (section: keyof HFCDFieldSimulationInput, key: string, value: number) => {
+    onInputChange((current) => ({
+      ...current,
+      [section]: {
+        ...((current[section] as Record<string, number> | undefined) || {}),
+        [key]: value,
+      },
+    }));
+  };
+  const recommended = report?.candidates.find((candidate) => candidate.scenarioId === report.recommendedCandidateId);
+  const downloadFieldSimulation = () => {
+    if (!report) return;
+    downloadText(
+      `hfcd_field_simulation_${report.industry}.csv`,
+      toCsv(
+        report.candidates.map((candidate) => ({
+          scenario: candidate.name,
+          target: candidate.target,
+          strict_stable: candidate.summary.strictStableCount,
+          high_risk: candidate.summary.highRiskCount,
+          average_risk_score: candidate.summary.averageRiskScore,
+          stability_index: candidate.stabilityIndex,
+          energy_closure: candidate.energyClosure,
+          convergence_score: candidate.convergenceScore,
+          predicted_gain: candidate.predictedGain,
+          confidence: candidate.confidence,
+        })),
+      ),
+      'text/csv;charset=utf-8',
+    );
+  };
+
+  const groups = [
+    {
+      title: '物理参数',
+      section: 'physical' as const,
+      fields: [
+        ['qIdentityRigidity', '核心身份刚性', '核心状态是否不容易被扰动击穿。'],
+        ['coherenceRetention', '相干保持', '系统在长程演化中保持一致性的能力。'],
+        ['fieldCoupling', '场耦合强度', '关键模块之间有效协同的程度。'],
+        ['thermalLoad', '热负荷', '热、代谢或能量负担；越高压力越大。'],
+        ['entropyPressure', '熵压', '噪声、退化和混乱扩散压力。'],
+      ],
+    },
+    {
+      title: '工艺参数',
+      section: 'process' as const,
+      fields: [
+        ['controlGain', '控制增益', '客户能主动调控系统的能力。'],
+        ['processDrift', '工艺漂移', '制程、校准或批次漂移压力；越高越不稳。'],
+        ['repairIntensity', '修复强度', '研发修复动作的可执行强度。'],
+        ['measurementNoise', '测量噪声', '测量链路或数据采集噪声；越高越不稳。'],
+        ['materialSupport', '环境/材料支撑', '结构、环境或材料对输出的承载能力。'],
+      ],
+    },
+    {
+      title: '边界条件',
+      section: 'boundary' as const,
+      fields: [
+        ['boundaryTightness', '边界收紧度', '限制串扰、裂纹、退化、异质性外扩的能力。'],
+        ['externalShock', '外部冲击', '环境扰动、负载波动或应力冲击；越高越不稳。'],
+        ['safetyReserve', '安全余量', '系统被扰动后仍能回稳的余量。'],
+      ],
+    },
+    {
+      title: '数字孪生输入',
+      section: 'digitalTwin' as const,
+      fields: [
+        ['coverage', '覆盖度', '数字孪生覆盖真实系统变量的比例。'],
+        ['fidelity', '保真度', '数字孪生与真实系统的一致性。'],
+        ['parameterCompleteness', '参数完整度', '物理、工艺、边界参数是否完整。'],
+        ['historicalDepth', '历史深度', '历史实验/生产数据的长度和可复用性。'],
+      ],
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-2xl font-black text-white">完整场仿真输入</h3>
+            <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-400">
+              这里输入客户的物理参数、工艺参数、边界条件和数字孪生质量。系统会做多步场演化，比较候选研发路线的收敛度、稳定指数、能量闭合和风险下降。
+            </p>
+          </div>
+          <button
+            onClick={report ? downloadFieldSimulation : onNeedData}
+            className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
+          >
+            {report ? '下载场仿真结果' : '先上传数据'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        {groups.map((group) => (
+          <div key={group.title} className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+            <h4 className="text-lg font-black text-white">{group.title}</h4>
+            <div className="mt-4 grid gap-3">
+              {group.fields.map(([key, label, hint]) => {
+                const value = Number((normalized[group.section] as Record<string, number>)[key]);
+                return (
+                  <NumberInputCard
+                    key={key}
+                    label={label}
+                    value={value}
+                    onChange={(next) => setField(group.section, key, next)}
+                    hint={hint}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5 xl:col-span-2">
+          <h4 className="text-lg font-black text-white">仿真网格与扫描深度</h4>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <NumberInputCard
+              label="仿真步长"
+              value={normalized.boundary.timeHorizon}
+              min={24}
+              max={720}
+              step={12}
+              onChange={(next) => setField('boundary', 'timeHorizon', next)}
+              hint="场演化运行多少步。越高越接近长程仿真，但计算更重。"
+            />
+            <NumberInputCard
+              label="网格分辨率"
+              value={normalized.boundary.gridResolution}
+              min={16}
+              max={128}
+              step={4}
+              onChange={(next) => setField('boundary', 'gridResolution', next)}
+              hint="用于模拟边界、扩散和耦合的分辨率。"
+            />
+            <NumberInputCard
+              label="候选方案数"
+              value={normalized.scan.candidateCount}
+              min={2}
+              max={6}
+              step={1}
+              onChange={(next) => setField('scan', 'candidateCount', next)}
+              hint="扫描多少条研发修复路线。"
+            />
+            <NumberInputCard
+              label="扫描深度"
+              value={normalized.scan.scanDepth}
+              onChange={(next) => setField('scan', 'scanDepth', next)}
+              hint="参数扫描的探索强度。"
+            />
+            <NumberInputCard
+              label="单步调节幅度"
+              value={normalized.scan.stepSize}
+              min={0.02}
+              max={0.24}
+              step={0.01}
+              onChange={(next) => setField('scan', 'stepSize', next)}
+              hint="每一步参数演化的调节幅度。"
+            />
+          </div>
+        </div>
+      </div>
+
+      {report && recommended ? (
+        <div className="space-y-5">
+          <div className="rounded-[30px] border border-[#52DBA9]/18 bg-[#52DBA9]/8 p-6">
+            <div className="text-xs font-bold uppercase tracking-[0.24em] text-[#91ffe1]">Field Simulation Recommendation</div>
+            <h3 className="mt-3 text-2xl font-black text-white">{recommended.name}</h3>
+            <p className="mt-3 max-w-4xl text-sm leading-8 text-slate-300">{recommended.target}</p>
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <MetricCard label="稳定指数" value={recommended.stabilityIndex} note="综合达标、核心达标和平均风险后的场稳定度。" />
+              <MetricCard label="能量闭合" value={recommended.energyClosure} note="负荷是否被当前系统吸收并闭合。" />
+              <MetricCard label="收敛得分" value={recommended.convergenceScore} note="稳定指数、能量闭合和低风险合成得分。" />
+              <MetricCard label="可信度" value={recommended.confidence} note="由数字孪生质量、标签数和样本量决定。" />
+            </div>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            {report.candidates.map((candidate) => (
+              <article
+                key={candidate.scenarioId}
+                className={`rounded-[28px] border p-5 ${
+                  candidate.scenarioId === report.recommendedCandidateId
+                    ? 'border-[#52DBA9]/30 bg-[#52DBA9]/10'
+                    : 'border-white/8 bg-white/[0.03]'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h4 className="text-xl font-black text-white">{candidate.name}</h4>
+                  <span className="rounded-full bg-white/8 px-3 py-1 text-xs font-bold text-slate-300">gain {candidate.predictedGain}</span>
+                </div>
+                <p className="mt-2 text-sm leading-7 text-slate-400">{candidate.target}</p>
+                <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+                  <div className="rounded-2xl bg-black/14 p-3"><div className="font-black text-white">{candidate.summary.strictStableCount}</div><div className="mt-1 text-[10px] text-slate-500">达标</div></div>
+                  <div className="rounded-2xl bg-black/14 p-3"><div className="font-black text-red-200">{candidate.summary.highRiskCount}</div><div className="mt-1 text-[10px] text-slate-500">高风险</div></div>
+                  <div className="rounded-2xl bg-black/14 p-3"><div className="font-black text-[#9df4d7]">{candidate.energyClosure}</div><div className="mt-1 text-[10px] text-slate-500">闭合</div></div>
+                  <div className="rounded-2xl bg-black/14 p-3"><div className="font-black text-white">{candidate.convergenceScore}</div><div className="mt-1 text-[10px] text-slate-500">收敛</div></div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="overflow-x-auto rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+            <h4 className="text-lg font-black text-white">推荐方案轨迹</h4>
+            <table className="mt-4 min-w-[760px] w-full border-collapse text-left text-sm">
+              <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.18em] text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">step</th>
+                  <th className="px-4 py-3">全部达标</th>
+                  <th className="px-4 py-3">核心达标</th>
+                  <th className="px-4 py-3">高风险</th>
+                  <th className="px-4 py-3">平均风险</th>
+                  <th className="px-4 py-3">稳定指数</th>
+                  <th className="px-4 py-3">能量闭合</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recommended.trajectory.map((point) => (
+                  <tr key={point.step} className="border-t border-white/8 text-slate-300">
+                    <td className="px-4 py-3 font-mono text-xs">{point.step}</td>
+                    <td className="px-4 py-3">{point.strictStableCount}</td>
+                    <td className="px-4 py-3">{point.looseStableCount}</td>
+                    <td className="px-4 py-3">{point.highRiskCount}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{point.averageRiskScore}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{point.stabilityIndex}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{point.energyClosure}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-[28px] border border-amber-300/16 bg-amber-300/8 p-5 text-sm leading-7 text-amber-100">
+          还没有可运行的场仿真数据。先上传 CSV 或加载示例数据，系统会自动生成完整场仿真报告。
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FieldHealthPanel({ fieldHealth }: { fieldHealth: ReturnType<typeof validateRows>['fieldHealth'] }) {
   return (
     <div className="mt-5 space-y-2">
@@ -852,6 +1148,7 @@ export function HFCDWorkbench() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [apiTestResult, setApiTestResult] = useState<string | null>(null);
   const [apiResponsePreview, setApiResponsePreview] = useState<string | null>(null);
+  const [fieldInput, setFieldInput] = useState<HFCDFieldSimulationInput>(() => defaultHFCDFieldSimulationInput('quantum'));
 
   useEffect(() => {
     try {
@@ -915,6 +1212,10 @@ export function HFCDWorkbench() {
     }
   }, [apiKeys]);
 
+  useEffect(() => {
+    setFieldInput(defaultHFCDFieldSimulationInput(industry));
+  }, [industry]);
+
   const validation = useMemo(() => validateRows(rows, industry), [industry, rows]);
   const summary = useMemo(() => summarizeAudit(results), [results]);
   const blindMetrics = useMemo(() => validateBlindMetrics(results), [results]);
@@ -931,6 +1232,13 @@ export function HFCDWorkbench() {
   const simulationReport = useMemo(
     () => (rows.length && parameterProfile ? simulateHFCDScenarios(rows, industry, parameterProfile) : null),
     [industry, parameterProfile, rows],
+  );
+  const fieldSimulationReport = useMemo(
+    () =>
+      rows.length && parameterProfile
+        ? runHFCDFieldSimulation({ rows, industry, profile: parameterProfile, input: fieldInput })
+        : null,
+    [fieldInput, industry, parameterProfile, rows],
   );
 
   const dashboardStats = useMemo(() => {
@@ -1110,7 +1418,7 @@ export function HFCDWorkbench() {
   const apiExample = `curl -X POST https://longone.ai/api/hfcd/audit \\
   -H "content-type: application/json" \\
   -H "x-api-key: ${apiKeys[0]?.key || 'hfcd_live_xxx'}" \\
-  -d '{"model":"hfcd-v1","mode":"advanced","industry":"quantum","rows":[{"sample_id":"qpu_cal_001","T1_us":82,"T2_us":71,"gate2q_error":0.009,"assignment_fidelity":0.94,"job_success_rate":0.94,"actual_failure":0}]}'`;
+  -d '{"model":"hfcd-field-v1","mode":"field","industry":"quantum","rows":[{"sample_id":"qpu_cal_001","T1_us":82,"T2_us":71,"gate2q_error":0.009,"assignment_fidelity":0.94,"job_success_rate":0.94,"actual_failure":0}],"fieldSimulation":{"physical":{"qIdentityRigidity":0.74,"coherenceRetention":0.72,"fieldCoupling":0.62,"thermalLoad":0.34,"entropyPressure":0.28},"process":{"controlGain":0.68,"processDrift":0.22,"repairIntensity":0.58,"measurementNoise":0.08,"materialSupport":0.66},"boundary":{"boundaryTightness":0.64,"externalShock":0.18,"safetyReserve":0.72,"timeHorizon":120,"gridResolution":48},"digitalTwin":{"coverage":0.7,"fidelity":0.68,"parameterCompleteness":0.76,"historicalDepth":0.62},"scan":{"candidateCount":6,"scanDepth":0.72,"stepSize":0.08}}}'`;
 
   const handleTestApiCall = async () => {
     setApiTestResult('调用中...');
@@ -1123,7 +1431,7 @@ export function HFCDWorkbench() {
           'content-type': 'application/json',
           ...(apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : {}),
         },
-        body: JSON.stringify({ model: 'hfcd-v1', mode: 'advanced', industry, rows: rowsForApi }),
+        body: JSON.stringify({ model: 'hfcd-field-v1', mode: 'field', industry, rows: rowsForApi, fieldSimulation: fieldInput }),
       });
       const payload = await response.json();
       setApiResponsePreview(JSON.stringify(payload, null, 2));
@@ -1133,7 +1441,10 @@ export function HFCDWorkbench() {
         }
         throw new Error(payload?.error || 'API call failed.');
       }
-      setApiTestResult(`调用成功：${payload.summary.sampleCount} 个样本，${payload.summary.highRiskCount} 个高风险，主要风险 ${compactFailureMode(payload.summary.primaryFailureMode)}。`);
+      const fieldNote = payload.fieldSimulation?.recommendedCandidateId
+        ? `完整场仿真推荐 ${payload.fieldSimulation.recommendedCandidateId}。`
+        : '';
+      setApiTestResult(`调用成功：${payload.summary.sampleCount} 个样本，${payload.summary.highRiskCount} 个高风险，主要风险 ${compactFailureMode(payload.summary.primaryFailureMode)}。${fieldNote}`);
       if (apiKeys[0]) {
         setApiKeys((current) =>
           current.map((item, index) =>
@@ -1634,16 +1945,40 @@ export function HFCDWorkbench() {
         {activeTab === 'simulation' ? (
           <section className="mt-8">
             <SectionTitle
-              title="研发方案仿真"
-              description="基于当前客户数据和学习后的行业参数，自动扫描多条研发修复路径，比较哪条路径最可能减少高风险样本、提升达标样本，并输出可下载的候选方案表。"
+              title="研发方案仿真与完整场仿真"
+              description="先用客户数据快速扫描研发修复路径，再录入物理参数、工艺参数、边界条件和数字孪生输入，运行 hfcd-field-v1 完整场仿真，比较长期轨迹、收敛评分和推荐方案。"
             />
             <div className="mb-6 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-              <h3 className="text-xl font-black text-white">运行边界</h3>
-              <p className="mt-3 text-sm leading-8 text-slate-300">
-                当前上线的是轻量研发方案仿真：系统会在七类关键指标上做参数扫描，比较不同修复路径的风险改善幅度。完整 V12.x 场动力学仿真仍需要客户提供物理参数、工艺参数、边界条件和数字孪生输入。
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-white">两层仿真已经接入</h3>
+                  <p className="mt-3 max-w-5xl text-sm leading-8 text-slate-300">
+                    第一层直接基于上传数据扫描候选修复路径，适合快速判断哪类研发动作最可能降低风险。第二层接收客户的物理参数、工艺参数、边界条件和数字孪生输入，输出多步场轨迹、候选路线对比、推荐方案、收敛评分和可信度。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
+                    加载仿真示例
+                  </button>
+                  <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
+                    上传客户数据
+                  </button>
+                </div>
+              </div>
             </div>
             <SimulationPanel report={simulationReport} />
+            <div className="mt-8">
+              <FieldSimulationPanel
+                industry={industry}
+                input={fieldInput}
+                report={fieldSimulationReport}
+                onInputChange={setFieldInput}
+                onNeedData={() => {
+                  setUploadError('请先上传 CSV 数据或加载示例数据，再运行完整场仿真。');
+                  setActiveTab('upload');
+                }}
+              />
+            </div>
           </section>
         ) : null}
 
@@ -1760,9 +2095,9 @@ export function HFCDWorkbench() {
             <SectionTitle title="API 商业版" description="把研发风险诊断接入企业系统。客户可以把实验数据、生产数据或质检数据通过 API 提交，系统返回字段检查、风险排序、修复建议和报告结构。" />
             <div className="mb-6 grid gap-4 md:grid-cols-3">
               {[
-                ['1. 提交数据', '通过 POST /api/hfcd/audit 提交行业类型、mode 和 rows/csv。mode 支持 audit、calibrate、simulate、advanced。'],
-                ['2. 自动计算', '系统完成字段检查、风险评分、参数学习、盲测验证和研发方案仿真。'],
-                ['3. 回写客户系统', '同步返回结果；后续可扩展 job_id、异步报告、callback_url 和企业账单。'],
+                ['1. 提交数据', '通过 POST /api/hfcd/audit 提交行业类型、mode、rows/csv。需要完整场仿真时使用 mode=field，并附带 fieldSimulation 参数。'],
+                ['2. 自动计算', '系统完成字段检查、风险评分、参数学习、盲测验证、研发方案扫描和完整场仿真。'],
+                ['3. 回写客户系统', '同步返回审计结果、候选方案、场轨迹和推荐路线；后续可扩展 job_id、异步报告、callback_url 和企业账单。'],
               ].map(([title, body]) => (
                 <div key={title} className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                   <div className="font-bold text-white">{title}</div>
@@ -1810,7 +2145,7 @@ export function HFCDWorkbench() {
                     <div>Endpoint：<span className="font-mono text-[#9df4d7]">POST /api/hfcd/audit</span></div>
                     <div>模型名称：<span className="font-mono text-[#9df4d7]">研发增强模型 v1</span></div>
                     <div>行业参数版本：<span className="font-mono text-[#9df4d7]">quantum/materials/energy/bio@v1.3-advanced</span></div>
-                    <div>运行模式：<span className="font-mono text-[#9df4d7]">audit / calibrate / simulate / advanced</span></div>
+                    <div>运行模式：<span className="font-mono text-[#9df4d7]">audit / calibrate / simulate / advanced / field</span></div>
                     <div>回调字段：<span className="font-mono text-[#9df4d7]">callback_url</span> 已预留给异步报告生成。</div>
                   </div>
                 </div>
@@ -1835,6 +2170,7 @@ export function HFCDWorkbench() {
                       ['blindMetrics', 'AUC、precision@top10%、baseline 对比、提前预警。'],
                       ['parameterProfile', '客户行业参数学习结果：默认安全线、学习后安全线、样本统计和使用建议。'],
                       ['simulation', '研发候选方案仿真：不同修复路径的达标增益、高风险减少和推荐方案。'],
+                      ['fieldSimulation', '完整场仿真：客户参数输入、多步轨迹、候选研发路线、推荐方案、收敛评分和可信度。'],
                       ['results', '每个样本的指标数值、通过状态、风险分和可读诊断。'],
                       ['callback', '后续异步报告生成后回调客户系统。'],
                     ].map(([key, body]) => (
@@ -1852,7 +2188,7 @@ export function HFCDWorkbench() {
                     异步报告流程
                   </div>
                   <p className="mt-3 text-sm leading-8 text-slate-300">
-                    当前 API 已支持同步审计、参数学习和轻量研发仿真；商业版异步流程为：提交数据 → 返回 job_id → Worker 后台生成 Markdown/HTML/PDF-ready 报告 → callback_url 推送结果 → 调用次数计入企业账单。
+                    当前 API 已支持同步审计、参数学习、候选方案扫描和 hfcd-field-v1 完整场仿真；商业版异步流程为：提交数据 → 返回 job_id → Worker 后台生成 Markdown/HTML/PDF-ready 报告 → callback_url 推送结果 → 调用次数计入企业账单。
                   </p>
                 </div>
               </div>
@@ -1889,7 +2225,7 @@ export function HFCDWorkbench() {
                 {[
                   ['快速审计模式', '默认 SaaS 模式：上传历史实验/生产/寿命/批次数据，输出风险评分、风险类型、稳定状态、修复建议和报告。'],
                   ['冻结参数盲测模式', '客户提供历史数据和 actual_failure 标签，系统冻结 HFCD 参数并输出 AUC、precision@top10% 和提前预警能力。'],
-                  ['深度仿真模式', '当前已上线轻量研发方案仿真：在七类指标上扫描候选修复路径；完整 V12.x 场动力学仿真需要客户提供物理参数、工艺参数、边界条件和数字孪生空间。'],
+                  ['完整场仿真模式', '客户补充物理参数、工艺参数、边界条件和数字孪生输入后，系统运行 hfcd-field-v1，输出多步场轨迹、候选研发路线、推荐方案、收敛评分和可信度。'],
                 ].map(([title, body]) => (
                   <div key={title} className="rounded-[24px] border border-white/8 bg-black/10 p-5">
                     <div className="text-sm font-bold text-white">{title}</div>

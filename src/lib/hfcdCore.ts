@@ -186,6 +186,85 @@ export interface HFCDSimulationReport {
   recommendedScenarioId: HFCDSimulationScenarioId;
 }
 
+export interface HFCDFieldSimulationInput {
+  physical?: {
+    qIdentityRigidity?: number;
+    coherenceRetention?: number;
+    fieldCoupling?: number;
+    thermalLoad?: number;
+    entropyPressure?: number;
+  };
+  process?: {
+    controlGain?: number;
+    processDrift?: number;
+    repairIntensity?: number;
+    measurementNoise?: number;
+    materialSupport?: number;
+  };
+  boundary?: {
+    boundaryTightness?: number;
+    externalShock?: number;
+    safetyReserve?: number;
+    timeHorizon?: number;
+    gridResolution?: number;
+  };
+  digitalTwin?: {
+    coverage?: number;
+    fidelity?: number;
+    parameterCompleteness?: number;
+    historicalDepth?: number;
+  };
+  scan?: {
+    candidateCount?: number;
+    scanDepth?: number;
+    stepSize?: number;
+  };
+}
+
+export interface HFCDNormalizedFieldSimulationInput {
+  physical: Required<NonNullable<HFCDFieldSimulationInput['physical']>>;
+  process: Required<NonNullable<HFCDFieldSimulationInput['process']>>;
+  boundary: Required<NonNullable<HFCDFieldSimulationInput['boundary']>>;
+  digitalTwin: Required<NonNullable<HFCDFieldSimulationInput['digitalTwin']>>;
+  scan: Required<NonNullable<HFCDFieldSimulationInput['scan']>>;
+}
+
+export interface HFCDFieldTrajectoryPoint {
+  step: number;
+  strictStableCount: number;
+  looseStableCount: number;
+  highRiskCount: number;
+  averageRiskScore: number;
+  stabilityIndex: number;
+  energyClosure: number;
+}
+
+export interface HFCDFieldCandidateResult {
+  scenarioId: HFCDSimulationScenarioId;
+  name: string;
+  target: string;
+  summary: HFCDAuditSummary;
+  results: HFCDAuditResult[];
+  trajectory: HFCDFieldTrajectoryPoint[];
+  stabilityIndex: number;
+  energyClosure: number;
+  convergenceScore: number;
+  predictedGain: number;
+  confidence: number;
+}
+
+export interface HFCDFieldSimulationReport {
+  model: 'hfcd-field-v1';
+  industry: HFCDIndustry;
+  generatedAt: number;
+  input: HFCDNormalizedFieldSimulationInput;
+  requirements: string[];
+  profile: HFCDParameterProfile;
+  baselineSummary: HFCDAuditSummary;
+  candidates: HFCDFieldCandidateResult[];
+  recommendedCandidateId: HFCDSimulationScenarioId;
+}
+
 export const HFCD_THRESHOLDS: HFCDGates = {
   Q_error: 0.01,
   energy_drift_per_q: 0.05,
@@ -276,6 +355,37 @@ export const HFCD_SIMULATION_SCENARIOS: HFCDSimulationScenario[] = [
     multipliers: { manifest_fraction: 1.12, peak_ratio: 1.04, cavity_peak_ratio: 1.03 },
   },
 ];
+
+const HFCD_FIELD_DEFAULTS: Record<HFCDIndustry, HFCDNormalizedFieldSimulationInput> = {
+  quantum: {
+    physical: { qIdentityRigidity: 0.72, coherenceRetention: 0.74, fieldCoupling: 0.68, thermalLoad: 0.34, entropyPressure: 0.28 },
+    process: { controlGain: 0.7, processDrift: 0.24, repairIntensity: 0.66, measurementNoise: 0.26, materialSupport: 0.7 },
+    boundary: { boundaryTightness: 0.68, externalShock: 0.22, safetyReserve: 0.64, timeHorizon: 180, gridResolution: 48 },
+    digitalTwin: { coverage: 0.66, fidelity: 0.68, parameterCompleteness: 0.62, historicalDepth: 0.56 },
+    scan: { candidateCount: 6, scanDepth: 0.72, stepSize: 0.08 },
+  },
+  materials: {
+    physical: { qIdentityRigidity: 0.7, coherenceRetention: 0.69, fieldCoupling: 0.64, thermalLoad: 0.42, entropyPressure: 0.32 },
+    process: { controlGain: 0.62, processDrift: 0.28, repairIntensity: 0.64, measurementNoise: 0.2, materialSupport: 0.78 },
+    boundary: { boundaryTightness: 0.66, externalShock: 0.26, safetyReserve: 0.62, timeHorizon: 220, gridResolution: 44 },
+    digitalTwin: { coverage: 0.6, fidelity: 0.62, parameterCompleteness: 0.58, historicalDepth: 0.54 },
+    scan: { candidateCount: 6, scanDepth: 0.68, stepSize: 0.08 },
+  },
+  energy: {
+    physical: { qIdentityRigidity: 0.68, coherenceRetention: 0.7, fieldCoupling: 0.66, thermalLoad: 0.46, entropyPressure: 0.35 },
+    process: { controlGain: 0.66, processDrift: 0.32, repairIntensity: 0.62, measurementNoise: 0.22, materialSupport: 0.72 },
+    boundary: { boundaryTightness: 0.7, externalShock: 0.3, safetyReserve: 0.66, timeHorizon: 240, gridResolution: 52 },
+    digitalTwin: { coverage: 0.64, fidelity: 0.65, parameterCompleteness: 0.6, historicalDepth: 0.58 },
+    scan: { candidateCount: 6, scanDepth: 0.7, stepSize: 0.08 },
+  },
+  bio: {
+    physical: { qIdentityRigidity: 0.66, coherenceRetention: 0.68, fieldCoupling: 0.62, thermalLoad: 0.38, entropyPressure: 0.42 },
+    process: { controlGain: 0.6, processDrift: 0.34, repairIntensity: 0.58, measurementNoise: 0.28, materialSupport: 0.74 },
+    boundary: { boundaryTightness: 0.62, externalShock: 0.3, safetyReserve: 0.58, timeHorizon: 200, gridResolution: 40 },
+    digitalTwin: { coverage: 0.58, fidelity: 0.6, parameterCompleteness: 0.56, historicalDepth: 0.5 },
+    scan: { candidateCount: 6, scanDepth: 0.64, stepSize: 0.08 },
+  },
+};
 
 export const HFCD_GATE_EXPLANATIONS: Record<
   keyof HFCDGates,
@@ -404,6 +514,59 @@ function calculateGateStats(gateSets: HFCDGates[]): Record<keyof HFCDGates, HFCD
 function clampGateValue(gate: keyof HFCDGates, value: number) {
   const [lo, hi] = gate === 'radius_ratio' ? [0.9, 1.8] : gate === 'energy_drift_per_q' || gate === 'Q_error' ? [0, 0.12] : [0, 1.3];
   return round(clamp(value, lo, hi));
+}
+
+function normalizeUnit(value: number | undefined, fallback: number) {
+  return round(clamp(value ?? fallback, 0, 1), 4);
+}
+
+function normalizeCount(value: number | undefined, fallback: number, lo: number, hi: number) {
+  return Math.round(clamp(value ?? fallback, lo, hi));
+}
+
+export function defaultHFCDFieldSimulationInput(industry: HFCDIndustry): HFCDNormalizedFieldSimulationInput {
+  return JSON.parse(JSON.stringify(HFCD_FIELD_DEFAULTS[industry])) as HFCDNormalizedFieldSimulationInput;
+}
+
+export function normalizeHFCDFieldSimulationInput(
+  input: HFCDFieldSimulationInput | undefined,
+  industry: HFCDIndustry,
+): HFCDNormalizedFieldSimulationInput {
+  const fallback = defaultHFCDFieldSimulationInput(industry);
+  return {
+    physical: {
+      qIdentityRigidity: normalizeUnit(input?.physical?.qIdentityRigidity, fallback.physical.qIdentityRigidity),
+      coherenceRetention: normalizeUnit(input?.physical?.coherenceRetention, fallback.physical.coherenceRetention),
+      fieldCoupling: normalizeUnit(input?.physical?.fieldCoupling, fallback.physical.fieldCoupling),
+      thermalLoad: normalizeUnit(input?.physical?.thermalLoad, fallback.physical.thermalLoad),
+      entropyPressure: normalizeUnit(input?.physical?.entropyPressure, fallback.physical.entropyPressure),
+    },
+    process: {
+      controlGain: normalizeUnit(input?.process?.controlGain, fallback.process.controlGain),
+      processDrift: normalizeUnit(input?.process?.processDrift, fallback.process.processDrift),
+      repairIntensity: normalizeUnit(input?.process?.repairIntensity, fallback.process.repairIntensity),
+      measurementNoise: normalizeUnit(input?.process?.measurementNoise, fallback.process.measurementNoise),
+      materialSupport: normalizeUnit(input?.process?.materialSupport, fallback.process.materialSupport),
+    },
+    boundary: {
+      boundaryTightness: normalizeUnit(input?.boundary?.boundaryTightness, fallback.boundary.boundaryTightness),
+      externalShock: normalizeUnit(input?.boundary?.externalShock, fallback.boundary.externalShock),
+      safetyReserve: normalizeUnit(input?.boundary?.safetyReserve, fallback.boundary.safetyReserve),
+      timeHorizon: normalizeCount(input?.boundary?.timeHorizon, fallback.boundary.timeHorizon, 24, 720),
+      gridResolution: normalizeCount(input?.boundary?.gridResolution, fallback.boundary.gridResolution, 16, 128),
+    },
+    digitalTwin: {
+      coverage: normalizeUnit(input?.digitalTwin?.coverage, fallback.digitalTwin.coverage),
+      fidelity: normalizeUnit(input?.digitalTwin?.fidelity, fallback.digitalTwin.fidelity),
+      parameterCompleteness: normalizeUnit(input?.digitalTwin?.parameterCompleteness, fallback.digitalTwin.parameterCompleteness),
+      historicalDepth: normalizeUnit(input?.digitalTwin?.historicalDepth, fallback.digitalTwin.historicalDepth),
+    },
+    scan: {
+      candidateCount: normalizeCount(input?.scan?.candidateCount, fallback.scan.candidateCount, 2, HFCD_SIMULATION_SCENARIOS.length),
+      scanDepth: normalizeUnit(input?.scan?.scanDepth, fallback.scan.scanDepth),
+      stepSize: round(clamp(input?.scan?.stepSize ?? fallback.scan.stepSize, 0.02, 0.24), 4),
+    },
+  };
 }
 
 export const HFCD_INDUSTRIES: Record<HFCDIndustry, HFCDIndustrySpec> = {
@@ -1410,6 +1573,186 @@ export function simulateHFCDScenarios(
   };
 }
 
+function summarizeFieldState(
+  step: number,
+  gateSets: HFCDGates[],
+  rows: Array<Record<string, unknown>>,
+  industry: HFCDIndustry,
+  thresholds: HFCDGates,
+): HFCDFieldTrajectoryPoint {
+  const results = gateSets.map((gates, index) => buildAuditResultFromGates(rows[index] || {}, industry, gates, thresholds));
+  const summary = summarizeAudit(results);
+  const energyHeadroom = mean(gateSets.map((gates) => 1 - gates.energy_drift_per_q / Math.max(thresholds.energy_drift_per_q, 1e-9)));
+  const riskPressure = summary.sampleCount ? summary.highRiskCount / summary.sampleCount : 0;
+  const stabilityIndex = summary.sampleCount
+    ? round((summary.strictStableCount / summary.sampleCount) * 0.55 + (summary.looseStableCount / summary.sampleCount) * 0.25 + Math.max(0, 1 - summary.averageRiskScore) * 0.2, 4)
+    : 0;
+  return {
+    step,
+    strictStableCount: summary.strictStableCount,
+    looseStableCount: summary.looseStableCount,
+    highRiskCount: summary.highRiskCount,
+    averageRiskScore: summary.averageRiskScore,
+    stabilityIndex,
+    energyClosure: round(clamp(energyHeadroom * 0.7 + (1 - riskPressure) * 0.3, 0, 1), 4),
+  };
+}
+
+function evolveFieldGates(
+  gates: HFCDGates,
+  scenario: HFCDSimulationScenario,
+  input: HFCDNormalizedFieldSimulationInput,
+  stepGain: number,
+): HFCDGates {
+  const { physical, process, boundary, digitalTwin, scan } = input;
+  const twinQuality = mean([
+    digitalTwin.coverage,
+    digitalTwin.fidelity,
+    digitalTwin.parameterCompleteness,
+    digitalTwin.historicalDepth,
+  ]);
+  const support = mean([process.materialSupport, boundary.boundaryTightness, boundary.safetyReserve, twinQuality]);
+  const coherence = mean([physical.qIdentityRigidity, physical.coherenceRetention, physical.fieldCoupling]);
+  const control = mean([process.controlGain, process.repairIntensity, scan.scanDepth]);
+  const pressure = mean([
+    physical.thermalLoad,
+    physical.entropyPressure,
+    process.processDrift,
+    process.measurementNoise,
+    boundary.externalShock,
+  ]);
+  const scenarioBias = {
+    core: scenario.multipliers.Q_error ? Math.max(0, 1 - scenario.multipliers.Q_error) : 0.04,
+    load: scenario.multipliers.energy_drift_per_q ? Math.max(0, 1 - scenario.multipliers.energy_drift_per_q) : 0.04,
+    support: scenario.multipliers.cavity_peak_ratio ? Math.max(0, scenario.multipliers.cavity_peak_ratio - 1) : 0.03,
+    radius: scenario.multipliers.radius_ratio ? Math.max(0, 1 - scenario.multipliers.radius_ratio) : 0.03,
+    buffer: scenario.multipliers.buffer_score ? Math.max(0, scenario.multipliers.buffer_score - 1) : 0.04,
+    delivery: scenario.multipliers.manifest_fraction ? Math.max(0, scenario.multipliers.manifest_fraction - 1) : 0.03,
+  };
+  const resolutionDamping = clamp(boundary.gridResolution / 128, 0.14, 1);
+  const gain = stepGain * scan.stepSize * resolutionDamping;
+  const drift = gain * pressure * (1 - support) * 0.42;
+
+  return {
+    Q_error: clampGateValue(
+      'Q_error',
+      gates.Q_error * (1 - gain * (0.55 * control + 0.45 * coherence + scenarioBias.core)) + drift * 0.16,
+    ),
+    energy_drift_per_q: clampGateValue(
+      'energy_drift_per_q',
+      gates.energy_drift_per_q * (1 - gain * (0.5 * control + scenarioBias.load)) + gain * physical.thermalLoad * 0.035 + drift * 0.12,
+    ),
+    cavity_peak_ratio: clampGateValue(
+      'cavity_peak_ratio',
+      gates.cavity_peak_ratio + gain * (0.18 * support + 0.1 * twinQuality + scenarioBias.support) - gain * pressure * 0.08,
+    ),
+    peak_ratio: clampGateValue(
+      'peak_ratio',
+      gates.peak_ratio + gain * (0.12 * coherence + 0.1 * control + scenarioBias.delivery) - gain * physical.thermalLoad * 0.06,
+    ),
+    radius_ratio: clampGateValue(
+      'radius_ratio',
+      gates.radius_ratio * (1 - gain * (0.34 * boundary.boundaryTightness + 0.22 * control + scenarioBias.radius)) + gain * pressure * 0.028,
+    ),
+    manifest_fraction: clampGateValue(
+      'manifest_fraction',
+      gates.manifest_fraction + gain * (0.16 * support + 0.14 * twinQuality + scenarioBias.delivery) - gain * pressure * 0.07,
+    ),
+    buffer_score: clampGateValue(
+      'buffer_score',
+      gates.buffer_score + gain * (0.18 * boundary.safetyReserve + 0.12 * support + scenarioBias.buffer) - gain * pressure * 0.08,
+    ),
+  };
+}
+
+export function runHFCDFieldSimulation(params: {
+  rows: Array<Record<string, unknown>>;
+  industry: HFCDIndustry;
+  profile?: HFCDParameterProfile;
+  input?: HFCDFieldSimulationInput;
+}): HFCDFieldSimulationReport {
+  const { rows, industry } = params;
+  const profile = params.profile || learnHFCDParameters(rows, industry);
+  const input = normalizeHFCDFieldSimulationInput(params.input, industry);
+  const thresholds = profile.thresholds;
+  const baselineResults = auditRecords(rows, industry, { thresholds });
+  const baselineSummary = summarizeAudit(baselineResults);
+  const scenarioPool = HFCD_SIMULATION_SCENARIOS.filter((scenario) => scenario.id !== 'baseline').slice(0, input.scan.candidateCount);
+  const baseGates = rows.map((row) => ADAPTERS[industry](row));
+  const sampleRows = rows.length ? rows : HFCD_INDUSTRIES[industry].sampleRows;
+  const initialGates = baseGates.length ? baseGates : sampleRows.map((row) => ADAPTERS[industry](row));
+  const steps = input.boundary.timeHorizon;
+  const checkpointEvery = Math.max(1, Math.floor(steps / 8));
+
+  const candidates = scenarioPool.map((scenario) => {
+    let currentGates = initialGates.map((gates) => ({ ...gates }));
+    const trajectory: HFCDFieldTrajectoryPoint[] = [
+      summarizeFieldState(0, currentGates, sampleRows, industry, thresholds),
+    ];
+
+    for (let step = 1; step <= steps; step += 1) {
+      const stepGain = 1 + (step / steps) * input.scan.scanDepth;
+      currentGates = currentGates.map((gates) => evolveFieldGates(gates, scenario, input, stepGain));
+      if (step % checkpointEvery === 0 || step === steps) {
+        trajectory.push(summarizeFieldState(step, currentGates, sampleRows, industry, thresholds));
+      }
+    }
+
+    const finalResults = currentGates.map((gates, index) =>
+      buildAuditResultFromGates(sampleRows[index] || {}, industry, gates, thresholds),
+    );
+    const summary = summarizeAudit(finalResults);
+    const finalPoint = trajectory[trajectory.length - 1];
+    const stabilityGain = finalPoint.stabilityIndex - (trajectory[0]?.stabilityIndex || 0);
+    const highRiskReduction = baselineSummary.highRiskCount - summary.highRiskCount;
+    const averageRiskReduction = baselineSummary.averageRiskScore - summary.averageRiskScore;
+    const twinQuality = mean([
+      input.digitalTwin.coverage,
+      input.digitalTwin.fidelity,
+      input.digitalTwin.parameterCompleteness,
+      input.digitalTwin.historicalDepth,
+    ]);
+    const confidence = round(clamp(0.25 + twinQuality * 0.45 + (profile.labeledCount > 0 ? 0.18 : 0) + Math.min(rows.length, 50) / 50 * 0.12, 0, 0.98), 4);
+    const convergenceScore = round(finalPoint.stabilityIndex * 0.45 + finalPoint.energyClosure * 0.35 + Math.max(0, 1 - summary.averageRiskScore) * 0.2, 4);
+    const predictedGain = round(stabilityGain * 1.8 + highRiskReduction * 0.35 + averageRiskReduction * 1.4, 4);
+
+    return {
+      scenarioId: scenario.id,
+      name: scenario.name,
+      target: scenario.target,
+      summary,
+      results: finalResults,
+      trajectory,
+      stabilityIndex: finalPoint.stabilityIndex,
+      energyClosure: finalPoint.energyClosure,
+      convergenceScore,
+      predictedGain,
+      confidence,
+    };
+  });
+  const recommended =
+    candidates
+      .sort((a, b) => b.predictedGain + b.convergenceScore - (a.predictedGain + a.convergenceScore))[0] || candidates[0];
+  const requirements = [
+    '物理参数：核心身份刚性、相干保持、耦合强度、热负荷、熵压。',
+    '工艺参数：控制增益、工艺漂移、修复强度、测量噪声、材料/环境支撑。',
+    '边界条件：边界收紧度、外部冲击、安全余量、仿真步长、网格分辨率。',
+    '数字孪生输入：覆盖度、保真度、参数完整度、历史深度。',
+  ];
+
+  return {
+    model: 'hfcd-field-v1',
+    industry,
+    generatedAt: Date.now(),
+    input,
+    requirements,
+    profile,
+    baselineSummary,
+    candidates,
+    recommendedCandidateId: recommended?.scenarioId || 'baseline',
+  };
+}
+
 export function summarizeAudit(results: HFCDAuditResult[]): HFCDAuditSummary {
   const failureModeCounts = results.reduce<Record<string, number>>((counts, result) => {
     counts[result.failure_mode] = (counts[result.failure_mode] || 0) + 1;
@@ -1626,11 +1969,11 @@ export function generateMarkdownReport(params: {
     '- 先用 Top Risk 样本开研发复盘会，不要从全量平均值开始。',
     '- 对主要风险类型建立专项修复路径，并保留修复前后的同口径数据。',
     '- 如果提供 actual_failure 标签，下一步进入冻结参数盲测，验证 HFCD 对历史失效的提前预警能力。',
-    '- 如果客户能提供物理参数、工艺参数、边界条件和数字孪生空间，再进入 HFCD Simulation Mode。',
+    '- 如果客户能提供物理参数、工艺参数、边界条件和数字孪生空间，可直接进入 hfcd-field-v1 完整场仿真，比较多条研发路线的长期轨迹。',
     '',
     '## 运行边界',
     '',
-    '当前运行的是 HFCD Stability-Window Audit：系统将客户行业数据转换为七类稳定性指标，输出稳定状态、风险类型、高风险样本和研发修复方案。深度仿真需要更多物理参数、工艺参数、边界条件和数字孪生输入。',
+    '当前报告先完成稳定性审计：系统将客户行业数据转换为七类稳定性指标，输出稳定状态、风险类型、高风险样本和研发修复方案。工作台和 API 已支持 hfcd-field-v1 完整场仿真：客户补充物理参数、工艺参数、边界条件和数字孪生输入后，系统会生成多步轨迹、候选研发路线、推荐方案、收敛评分和可信度。',
     '',
   ].join('\n');
 }
