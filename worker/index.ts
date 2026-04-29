@@ -7,6 +7,15 @@ import {
 } from '../functions/_lib/gemini';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 import { resolvePreferredLocale } from '../src/lib/locale';
+import {
+  auditRecords,
+  HFCDIndustry,
+  parseCsv,
+  summarizeAudit,
+  summarizeGateSafety,
+  validateBlindMetrics,
+  validateRows,
+} from '../src/lib/hfcdCore';
 
 type Env = {
   ASSETS: {
@@ -17,6 +26,7 @@ type Env = {
   VERTEX_TUNED_MODEL?: string;
   VERTEX_SERVICE_ACCOUNT_JSON?: string;
   VERTEX_SERVICE_ACCOUNT_JSON_BASE64?: string;
+  HFCD_API_KEYS?: string;
   NODE_ENV?: string;
 };
 const instructionCache = new Map<string, string>();
@@ -56,6 +66,17 @@ function buildInstructionCacheKey(payload: {
     payload.content,
     payload.diagnosis,
   ]);
+}
+
+function assertHfcdApiKey(request: Request, env: Env) {
+  const configuredKeys = (env.HFCD_API_KEYS || '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (configuredKeys.length === 0) return true;
+  const authorization = request.headers.get('authorization') || '';
+  const key = request.headers.get('x-api-key') || authorization.replace(/^Bearer\s+/i, '');
+  return configuredKeys.includes(key);
 }
 
 async function handleApi(request: Request, env: Env) {
@@ -155,6 +176,37 @@ async function handleApi(request: Request, env: Env) {
       setInstructionCache(cacheKey, instruction);
       return json({
         instruction,
+      });
+    }
+
+    if (url.pathname === '/api/hfcd/audit') {
+      if (!assertHfcdApiKey(request, env)) {
+        return json({ error: 'Invalid HFCD API key.' }, { status: 401 });
+      }
+
+      const payload = (await request.json()) as {
+        industry?: HFCDIndustry;
+        rows?: Array<Record<string, unknown>>;
+        records?: Array<Record<string, unknown>>;
+        csv?: string;
+        model?: string;
+      };
+      const industry = payload.industry || 'quantum';
+      const rows = payload.csv ? parseCsv(payload.csv) : payload.rows || payload.records || [];
+      const validation = validateRows(rows, industry);
+      if (!validation.isValid) {
+        return json({ error: 'Invalid HFCD input.', validation }, { status: 400 });
+      }
+
+      const results = auditRecords(rows, industry);
+      return json({
+        model: payload.model || 'hfcd-v1',
+        industry,
+        validation,
+        summary: summarizeAudit(results),
+        gateSafety: summarizeGateSafety(results),
+        blindMetrics: validateBlindMetrics(results),
+        results,
       });
     }
 

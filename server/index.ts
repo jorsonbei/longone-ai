@@ -6,6 +6,15 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI, GenerateContentResponse, Part } from '@google/genai';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 import { resolvePreferredLocale } from '../src/lib/locale';
+import {
+  auditRecords,
+  HFCDIndustry,
+  parseCsv,
+  summarizeAudit,
+  summarizeGateSafety,
+  validateBlindMetrics,
+  validateRows,
+} from '../src/lib/hfcdCore';
 
 type Attachment = {
   name: string;
@@ -166,6 +175,57 @@ app.get('/api/locale', (req, res) => {
     locale,
     source: req.header('cf-ipcountry') ? 'ip-country' : 'accept-language',
   });
+});
+
+function assertHfcdApiKey(req: express.Request) {
+  const configuredKeys = (process.env.HFCD_API_KEYS || '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (configuredKeys.length === 0) return true;
+  const key = String(req.header('x-api-key') || req.header('authorization')?.replace(/^Bearer\s+/i, '') || '');
+  return configuredKeys.includes(key);
+}
+
+app.post('/api/hfcd/audit', (req, res) => {
+  try {
+    if (!assertHfcdApiKey(req)) {
+      res.status(401).json({ error: 'Invalid HFCD API key.' });
+      return;
+    }
+
+    const body = req.body as {
+      industry?: HFCDIndustry;
+      rows?: Array<Record<string, unknown>>;
+      records?: Array<Record<string, unknown>>;
+      csv?: string;
+      model?: string;
+    };
+    const industry = body.industry || 'quantum';
+    const rows = body.csv ? parseCsv(body.csv) : body.rows || body.records || [];
+    const validation = validateRows(rows, industry);
+    if (!validation.isValid) {
+      res.status(400).json({
+        error: 'Invalid HFCD input.',
+        validation,
+      });
+      return;
+    }
+
+    const results = auditRecords(rows, industry);
+    res.json({
+      model: body.model || 'hfcd-v1',
+      industry,
+      validation,
+      summary: summarizeAudit(results),
+      gateSafety: summarizeGateSafety(results),
+      blindMetrics: validateBlindMetrics(results),
+      results,
+    });
+  } catch (error) {
+    console.error('HFCD audit API failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'HFCD audit failed.' });
+  }
 });
 
 async function proxyFirebaseHelper(req: express.Request, res: express.Response, targetPath: string) {

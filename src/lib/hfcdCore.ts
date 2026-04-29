@@ -45,6 +45,8 @@ export interface HFCDAuditResult {
   repair_plan: string;
   readable: HFCDReadableDiagnosis;
   actual_failure?: number | null;
+  baseline_score?: number | null;
+  warning_lead_time?: number | null;
 }
 
 export interface HFCDTemplateField {
@@ -75,6 +77,10 @@ export interface HFCDValidationSummary {
   hasActualFailure: boolean;
   auc: number | null;
   precisionTop10: number | null;
+  baselineAuc?: number | null;
+  baselinePrecisionTop10?: number | null;
+  precisionLift?: number | null;
+  warningLeadTimeAvg?: number | null;
   highRiskCount: number;
   failureRateTop10: number | null;
 }
@@ -106,6 +112,14 @@ export interface HFCDReadableDiagnosis {
   repairSummary: string;
   failedGates: string[];
   primaryDrivers: string[];
+}
+
+export interface HFCDGateSafetySummary {
+  gate: keyof HFCDGates;
+  label: string;
+  safeCount: number;
+  failCount: number;
+  safeRate: number;
 }
 
 export const HFCD_THRESHOLDS: HFCDGates = {
@@ -994,6 +1008,11 @@ export function auditRecord(row: Record<string, unknown>, industry: HFCDIndustry
   const riskScore = round(1 - Object.values(status).filter(Boolean).length / 7);
   const repairPlan = planRepair(industry, failureMode);
   const actualFailure = safeNumber(row, 'actual_failure');
+  const baselineScore = safeNumber(row, 'baseline_score');
+  const warningLeadTime = firstFinite(
+    [safeNumber(row, 'lead_time_days'), safeNumber(row, 'warning_lead_time_days'), safeNumber(row, 'time_to_failure_days')],
+    Number.NaN,
+  );
   return {
     sample_id: String(row.sample_id || 'unknown_sample'),
     gates,
@@ -1014,6 +1033,8 @@ export function auditRecord(row: Record<string, unknown>, industry: HFCDIndustry
       repairPlan,
     }),
     actual_failure: actualFailure === undefined ? null : actualFailure,
+    baseline_score: baselineScore === undefined ? null : baselineScore,
+    warning_lead_time: Number.isFinite(warningLeadTime) ? warningLeadTime : null,
   };
 }
 
@@ -1027,6 +1048,8 @@ export function flattenAuditResult(result: HFCDAuditResult) {
     failure_mode: result.failure_mode,
     risk_score: result.risk_score,
     actual_failure: result.actual_failure ?? '',
+    baseline_score: result.baseline_score ?? '',
+    warning_lead_time: result.warning_lead_time ?? '',
     severity: result.readable.severity,
     business_summary: result.readable.businessSummary,
     hfcd_summary: result.readable.hfcdSummary,
@@ -1060,6 +1083,50 @@ export function summarizeAudit(results: HFCDAuditResult[]): HFCDAuditSummary {
   };
 }
 
+export function summarizeGateSafety(results: HFCDAuditResult[]): HFCDGateSafetySummary[] {
+  const statusKeys: Array<[keyof HFCDGateStatus, keyof HFCDGates]> = [
+    ['Q_safe', 'Q_error'],
+    ['E_safe', 'energy_drift_per_q'],
+    ['C_safe', 'cavity_peak_ratio'],
+    ['P_safe', 'peak_ratio'],
+    ['R_safe', 'radius_ratio'],
+    ['M_safe', 'manifest_fraction'],
+    ['B_safe', 'buffer_score'],
+  ];
+
+  return statusKeys.map(([statusKey, gate]) => {
+    const safeCount = results.filter((result) => result.gate_status[statusKey]).length;
+    const failCount = Math.max(0, results.length - safeCount);
+    return {
+      gate,
+      label: HFCD_GATE_EXPLANATIONS[gate].label,
+      safeCount,
+      failCount,
+      safeRate: results.length ? round(safeCount / results.length, 4) : 0,
+    };
+  });
+}
+
+function calculateAuc(items: Array<{ score: number; label: 0 | 1 }>) {
+  const positives = items.filter((item) => item.label === 1);
+  const negatives = items.filter((item) => item.label === 0);
+  if (positives.length === 0 || negatives.length === 0) return null;
+  let wins = 0;
+  positives.forEach((positive) => {
+    negatives.forEach((negative) => {
+      if (positive.score > negative.score) wins += 1;
+      if (positive.score === negative.score) wins += 0.5;
+    });
+  });
+  return round(wins / (positives.length * negatives.length), 4);
+}
+
+function calculatePrecisionTop10(items: Array<{ score: number; label: 0 | 1 }>) {
+  const topCount = Math.max(1, Math.ceil(items.length * 0.1));
+  const topRisk = [...items].sort((a, b) => b.score - a.score).slice(0, topCount);
+  return topRisk.length ? round(topRisk.filter((item) => item.label === 1).length / topRisk.length, 4) : null;
+}
+
 export function validateBlindMetrics(results: HFCDAuditResult[]): HFCDValidationSummary {
   const labeled = results
     .map((result) => ({
@@ -1068,24 +1135,19 @@ export function validateBlindMetrics(results: HFCDAuditResult[]): HFCDValidation
     }))
     .filter((item): item is { score: number; label: 0 | 1 } => item.label !== null);
 
+  const auc = calculateAuc(labeled);
+  const precisionTop10 = calculatePrecisionTop10(labeled);
+  const baselineLabeled = results
+    .map((result) => ({
+      score: result.baseline_score,
+      label: result.actual_failure === 1 ? 1 : result.actual_failure === 0 ? 0 : null,
+    }))
+    .filter((item): item is { score: number; label: 0 | 1 } => item.label !== null && typeof item.score === 'number');
+  const baselinePrecisionTop10 = baselineLabeled.length ? calculatePrecisionTop10(baselineLabeled) : null;
+  const leadTimes = results
+    .filter((result) => result.actual_failure === 1 && result.risk_score >= 0.43 && typeof result.warning_lead_time === 'number')
+    .map((result) => result.warning_lead_time as number);
   const positives = labeled.filter((item) => item.label === 1);
-  const negatives = labeled.filter((item) => item.label === 0);
-  let auc: number | null = null;
-
-  if (positives.length > 0 && negatives.length > 0) {
-    let wins = 0;
-    positives.forEach((positive) => {
-      negatives.forEach((negative) => {
-        if (positive.score > negative.score) wins += 1;
-        if (positive.score === negative.score) wins += 0.5;
-      });
-    });
-    auc = round(wins / (positives.length * negatives.length), 4);
-  }
-
-  const topCount = Math.max(1, Math.ceil(labeled.length * 0.1));
-  const topRisk = [...labeled].sort((a, b) => b.score - a.score).slice(0, topCount);
-  const precisionTop10 = topRisk.length ? round(topRisk.filter((item) => item.label === 1).length / topRisk.length, 4) : null;
   const failureRate = labeled.length ? round(positives.length / labeled.length, 4) : null;
 
   return {
@@ -1093,6 +1155,13 @@ export function validateBlindMetrics(results: HFCDAuditResult[]): HFCDValidation
     hasActualFailure: labeled.length > 0,
     auc,
     precisionTop10,
+    baselineAuc: baselineLabeled.length ? calculateAuc(baselineLabeled) : null,
+    baselinePrecisionTop10,
+    precisionLift:
+      precisionTop10 !== null && baselinePrecisionTop10 !== null
+        ? round(precisionTop10 - baselinePrecisionTop10, 4)
+        : null,
+    warningLeadTimeAvg: leadTimes.length ? round(mean(leadTimes), 4) : null,
     highRiskCount: results.filter((result) => result.risk_score >= 0.43).length,
     failureRateTop10: failureRate,
   };
@@ -1107,6 +1176,7 @@ export function generateMarkdownReport(params: {
   const spec = HFCD_INDUSTRIES[industry];
   const summary = summarizeAudit(results);
   const validation = validateBlindMetrics(results);
+  const gateSafety = summarizeGateSafety(results);
   const fieldProfiles = getIndustryFieldProfiles(industry);
   const topRisk = [...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10);
   const tableCell = (value: unknown) => String(value ?? '').replace(/\|/g, '/').replace(/\n/g, ' ');
@@ -1131,6 +1201,9 @@ export function generateMarkdownReport(params: {
       const explanation = HFCD_GATE_EXPLANATIONS[gate];
       return `| ${gate} | ${explanation.label} | ${tableCell(explanation.safeRule)} | ${tableCell(explanation.businessMeaning)} |`;
     })
+    .join('\n');
+  const gateSafetyRows = gateSafety
+    .map((gate) => `| ${gate.gate} | ${gate.label} | ${gate.safeCount} | ${gate.failCount} | ${round(gate.safeRate * 100, 2)}% |`)
     .join('\n');
   const topRows = topRisk
     .map(
@@ -1176,6 +1249,16 @@ export function generateMarkdownReport(params: {
     `- actual_failure 标签：${validation.hasActualFailure ? '已检测' : '未提供'}`,
     `- AUC：${validation.auc ?? 'N/A'}`,
     `- precision@top10%：${validation.precisionTop10 ?? 'N/A'}`,
+    `- baseline AUC：${validation.baselineAuc ?? 'N/A'}`,
+    `- baseline precision@top10%：${validation.baselinePrecisionTop10 ?? 'N/A'}`,
+    `- HFCD precision lift：${validation.precisionLift ?? 'N/A'}`,
+    `- 平均提前预警天数：${validation.warningLeadTimeAvg ?? 'N/A'}`,
+    '',
+    '## Gate 安全统计',
+    '',
+    '| HFCD Gate | 人话名称 | Safe | Fail | Safe Rate |',
+    '|---|---|---:|---:|---:|',
+    gateSafetyRows || '| none | none | 0 | 0 | 0% |',
     '',
     '## FailureMode 分布',
     '',

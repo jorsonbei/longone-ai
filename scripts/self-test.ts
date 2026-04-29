@@ -11,6 +11,7 @@ import {
   HFCD_INDUSTRIES,
   parseCsv,
   summarizeAudit,
+  summarizeGateSafety,
   templateToCsv,
   validateBlindMetrics,
   validateRows,
@@ -124,12 +125,24 @@ async function main() {
   assert(quantumResults[0].readable.hfcdSummary.includes('HFCD 判定'), 'HFCD audit result should generate readable HFCD variable evidence.');
   const quantumSummary = summarizeAudit(quantumResults);
   assert(quantumSummary.sampleCount === 1, 'HFCD summary sample count mismatch.');
+  const gateSafety = summarizeGateSafety(quantumResults);
+  assert(gateSafety.length === 7, 'HFCD gate safety summary should include seven gates.');
   const blindMetrics = validateBlindMetrics(quantumResults);
   assert(blindMetrics.hasActualFailure, 'HFCD blind metrics should detect actual_failure labels.');
+  const blindRows = parseCsv([
+    'sample_id,T1_us,T2_us,T1_ref_us,T2_ref_us,gate2q_error,assignment_fidelity,job_success_rate,actual_failure,baseline_score,lead_time_days',
+    'risk_1,50,42,90,80,0.04,0.82,0.62,1,0.40,18',
+    'stable_1,90,82,90,80,0.004,0.98,0.98,0,0.35,0',
+  ].join('\n'));
+  const blindResults = auditRecords(blindRows, 'quantum');
+  const enhancedBlindMetrics = validateBlindMetrics(blindResults);
+  assert(enhancedBlindMetrics.baselineAuc !== undefined, 'HFCD blind metrics should include baseline comparison fields.');
+  assert(enhancedBlindMetrics.warningLeadTimeAvg !== undefined, 'HFCD blind metrics should include warning lead-time fields.');
   const hfcdReport = generateMarkdownReport({ projectName: 'HFCD 自测报告', industry: 'quantum', results: quantumResults });
   assert(hfcdReport.includes('Executive Summary'), 'HFCD report should include an executive summary.');
   assert(hfcdReport.includes('字段体检与解释'), 'HFCD report should include field explanations.');
   assert(hfcdReport.includes('样本诊断：业务解释 / HFCD 变量 / 修复方案'), 'HFCD report should include three-layer sample diagnosis.');
+  assert(hfcdReport.includes('Gate 安全统计'), 'HFCD report should include gate safety statistics.');
   console.log('[self-test] HFCD audit core OK');
 
   const nameCase = analyzeWuxingInput(
