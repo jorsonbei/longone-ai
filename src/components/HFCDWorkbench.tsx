@@ -1044,6 +1044,12 @@ export function HFCDWorkbench() {
                     <span className="mt-2 text-xs leading-6 text-slate-500">当前文件：{fileName || '尚未选择'}</span>
                     <input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => handleUploadFile(event.target.files?.[0] || null)} />
                   </label>
+                  <button
+                    onClick={handleRunAudit}
+                    className="mt-4 w-full rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)] transition-colors hover:bg-[#67e5b7]"
+                  >
+                    运行 HFCD 分析
+                  </button>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       onClick={() => handleDownloadTemplate(industry)}
@@ -1073,12 +1079,6 @@ export function HFCDWorkbench() {
                   </div>
                   <FieldHealthPanel fieldHealth={validation.fieldHealth} />
                   {uploadError ? <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{uploadError}</div> : null}
-                  <button
-                    onClick={handleRunAudit}
-                    className="mt-5 w-full rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
-                  >
-                    运行 HFCD 分析
-                  </button>
                 </div>
               </div>
 
