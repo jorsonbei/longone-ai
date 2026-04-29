@@ -21,6 +21,9 @@ import {
   FAILURE_MODE_LABELS,
   flattenAuditResult,
   generateMarkdownReport,
+  getFieldProfile,
+  getIndustryFieldProfiles,
+  HFCD_GATE_EXPLANATIONS,
   HFCD_INDUSTRIES,
   HFCDIndustry,
   HFCDAuditResult,
@@ -86,6 +89,115 @@ function formatDate(timestamp: number) {
   }).format(timestamp);
 }
 
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildClientHtmlReport({
+  projectName,
+  industry,
+  results,
+}: {
+  projectName: string;
+  industry: HFCDIndustry;
+  results: HFCDAuditResult[];
+}) {
+  const spec = HFCD_INDUSTRIES[industry];
+  const summary = summarizeAudit(results);
+  const validation = validateBlindMetrics(results);
+  const fields = getIndustryFieldProfiles(industry);
+  const topRisk = [...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10);
+  const conclusion =
+    summary.highRiskCount > 0
+      ? `本批数据出现 ${summary.highRiskCount} 个高风险样本，主失效模式为 ${summary.primaryFailureMode}。建议先锁定 Top Risk 样本做研发复盘。`
+      : summary.strictStableCount === summary.sampleCount && summary.sampleCount > 0
+        ? '本批数据整体处于严格稳定窗，可作为当前阶段的基准窗口。'
+        : `本批数据处于临界状态，主失效模式为 ${summary.primaryFailureMode}，建议先修复未通过的稳定门。`;
+
+  return `<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(projectName || 'HFCD 稳定窗审计报告')}</title>
+  <style>
+    body{margin:0;background:#0f1117;color:#e5edf7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7}
+    main{max-width:1120px;margin:0 auto;padding:48px 28px 72px}
+    .hero,.card{border:1px solid rgba(255,255,255,.09);border-radius:28px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.025));box-shadow:0 24px 80px rgba(0,0,0,.28)}
+    .hero{padding:36px;background:radial-gradient(circle at 10% 0%,rgba(82,219,169,.18),transparent 28%),linear-gradient(180deg,#171a24,#10131b)}
+    h1{margin:10px 0 10px;font-size:38px;line-height:1.12}
+    h2{margin:34px 0 16px;font-size:24px}
+    .eyebrow{color:#8dffdf;font-size:12px;font-weight:800;letter-spacing:.22em;text-transform:uppercase}
+    .muted{color:#9aa8bd}.grid{display:grid;gap:14px}.metrics{grid-template-columns:repeat(5,minmax(0,1fr));margin-top:22px}
+    .metric{border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:16px;background:rgba(0,0,0,.16)}
+    .metric b{display:block;font-size:24px;color:#fff}.metric span{font-size:12px;color:#8b9bb3}
+    table{width:100%;border-collapse:collapse;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden}
+    th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px 12px;text-align:left;vertical-align:top;font-size:13px}
+    th{color:#8dffdf;background:rgba(82,219,169,.08);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+    .card{padding:22px;margin:14px 0}.pill{display:inline-block;border-radius:999px;padding:3px 10px;background:rgba(82,219,169,.12);color:#9df4d7;font-size:12px;font-weight:800}
+    .risk{background:rgba(245,158,11,.14);color:#fde68a}.high{background:rgba(248,113,113,.14);color:#fecaca}
+    .cols{grid-template-columns:repeat(3,minmax(0,1fr))}.small{font-size:13px;color:#9aa8bd}
+    @media(max-width:860px){.metrics,.cols{grid-template-columns:1fr}main{padding:28px 16px}h1{font-size:30px}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="eyebrow">HFCD Stability-Window Audit</div>
+    <h1>${escapeHtml(projectName || 'HFCD 稳定窗审计报告')}</h1>
+    <p class="muted">行业：${escapeHtml(spec.title)}。${escapeHtml(conclusion)}</p>
+    <div class="grid metrics">
+      <div class="metric"><b>${summary.sampleCount}</b><span>样本数</span></div>
+      <div class="metric"><b>${summary.strictStableCount}</b><span>strict stable</span></div>
+      <div class="metric"><b>${summary.looseStableCount}</b><span>loose stable</span></div>
+      <div class="metric"><b>${summary.highRiskCount}</b><span>高风险样本</span></div>
+      <div class="metric"><b>${summary.averageRiskScore}</b><span>平均风险分</span></div>
+    </div>
+  </section>
+
+  <h2>字段解释</h2>
+  <table>
+    <thead><tr><th>字段</th><th>业务含义</th><th>影响门</th><th>推荐区间</th><th>风险信号</th></tr></thead>
+    <tbody>
+      ${fields
+        .map(
+          (field) =>
+            `<tr><td><code>${escapeHtml(field.key)}</code><br />${escapeHtml(field.label)}</td><td>${escapeHtml(field.plainMeaning || field.description)}</td><td>${escapeHtml(field.hfcdGate || '-')}</td><td>${escapeHtml(field.goodRange || '-')}</td><td>${escapeHtml(field.riskSignal || '-')}</td></tr>`,
+        )
+        .join('')}
+    </tbody>
+  </table>
+
+  <h2>样本诊断</h2>
+  ${topRisk
+    .map((result) => {
+      const severityClass = result.readable.severity === '高风险' ? 'high' : result.readable.severity === '临界' ? 'risk' : '';
+      return `<article class="card">
+        <span class="pill ${severityClass}">${escapeHtml(result.readable.severity)} · risk ${result.risk_score}</span>
+        <h3>${escapeHtml(result.sample_id)} · ${escapeHtml(result.failure_mode)}</h3>
+        <div class="grid cols">
+          <div><b>业务解释</b><p class="small">${escapeHtml(result.readable.businessSummary)}</p></div>
+          <div><b>HFCD 变量</b><p class="small">${escapeHtml(result.readable.hfcdSummary)}</p></div>
+          <div><b>修复方案</b><p class="small">${escapeHtml(result.readable.repairSummary)}</p></div>
+        </div>
+      </article>`;
+    })
+    .join('')}
+
+  <h2>盲测指标</h2>
+  <div class="card">
+    <p>actual_failure 标签：${validation.hasActualFailure ? '已检测' : '未提供'}；AUC：${validation.auc ?? 'N/A'}；precision@top10%：${validation.precisionTop10 ?? 'N/A'}。</p>
+    <p class="small">运行边界：当前为 HFCD Stability-Window Audit，不是完整 V12.x 场动力学仿真。深度仿真需要更多物理参数、工艺参数、边界条件和数字孪生输入。</p>
+  </div>
+</main>
+</body>
+</html>`;
+}
+
 function MetricCard({ label, value, note }: { label: string; value: React.ReactNode; note: string }) {
   return (
     <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] p-5">
@@ -147,6 +259,114 @@ function IndustryCard({
 
 function compactFailureMode(mode: string) {
   return mode.replace(/_/g, ' ');
+}
+
+function GateLegendPanel() {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {(Object.entries(HFCD_GATE_EXPLANATIONS) as Array<[keyof typeof HFCD_GATE_EXPLANATIONS, (typeof HFCD_GATE_EXPLANATIONS)[keyof typeof HFCD_GATE_EXPLANATIONS]]>).map(
+        ([key, gate]) => (
+          <div key={key} className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs text-[#9df4d7]">{key}</span>
+              <span className="text-sm font-bold text-white">{gate.label}</span>
+            </div>
+            <p className="mt-2 text-xs leading-6 text-slate-500">{gate.businessMeaning}</p>
+            <div className="mt-2 text-[11px] font-semibold text-slate-400">安全线：{gate.safeRule}</div>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+function FieldHealthPanel({ fieldHealth }: { fieldHealth: ReturnType<typeof validateRows>['fieldHealth'] }) {
+  return (
+    <div className="mt-5 space-y-2">
+      <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">字段体检报告</div>
+      <div className="max-h-[360px] overflow-y-auto pr-1">
+        <div className="grid gap-2">
+          {fieldHealth.map((field) => (
+            <div
+              key={field.key}
+              className={`rounded-2xl border px-4 py-3 ${
+                field.present
+                  ? 'border-[#52DBA9]/14 bg-[#52DBA9]/7'
+                  : field.required
+                    ? 'border-red-400/18 bg-red-500/10'
+                    : 'border-white/8 bg-black/10'
+              }`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs text-[#9df4d7]">{field.key}</span>
+                <span className="text-sm font-bold text-white">{field.label}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${field.present ? 'bg-[#52DBA9]/16 text-[#9df4d7]' : 'bg-white/8 text-slate-400'}`}>
+                  {field.present ? '已检测' : field.required ? '缺失必填' : '建议补充'}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-6 text-slate-400">{field.effect}</p>
+              <p className="mt-1 text-xs leading-6 text-slate-500">{field.guidance}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResultDiagnosisPanel({ results }: { results: HFCDAuditResult[] }) {
+  if (!results.length) {
+    return (
+      <div className="rounded-[24px] border border-white/8 bg-black/10 p-6 text-sm text-slate-500">
+        运行分析后，这里会按“业务解释 / HFCD 变量 / 修复方案”三层展示每个样本。
+      </div>
+    );
+  }
+
+  const sorted = [...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 12);
+  return (
+    <div className="space-y-3">
+      {sorted.map((result) => (
+        <article key={result.sample_id} className="rounded-[26px] border border-white/8 bg-black/10 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-xs text-[#9df4d7]">{result.sample_id}</div>
+              <div className="mt-1 text-lg font-black text-white">{result.failure_mode}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  result.readable.severity === '稳定'
+                    ? 'bg-[#52DBA9]/14 text-[#9df4d7]'
+                    : result.readable.severity === '临界'
+                      ? 'bg-amber-500/12 text-amber-200'
+                      : 'bg-red-500/14 text-red-200'
+                }`}
+              >
+                {result.readable.severity}
+              </span>
+              <span className="rounded-full bg-white/8 px-3 py-1 text-xs font-bold text-slate-300">risk {result.risk_score}</span>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">业务解释</div>
+              <p className="mt-3 text-sm leading-7 text-slate-300">{result.readable.businessSummary}</p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">HFCD 变量</div>
+              <p className="mt-3 text-sm leading-7 text-slate-300">{result.readable.hfcdSummary}</p>
+              <p className="mt-2 text-xs leading-6 text-slate-500">主驱动：{result.readable.primaryDrivers.join(' / ')}</p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">修复方案</div>
+              <p className="mt-3 text-sm leading-7 text-slate-300">{result.readable.repairSummary}</p>
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
 }
 
 export function HFCDWorkbench() {
@@ -263,7 +483,7 @@ export function HFCDWorkbench() {
 
   const downloadCurrentHtml = () => {
     if (!results.length) return;
-    const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>${projectName}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7;padding:40px;color:#111827}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d1d5db;padding:8px;text-align:left}code{background:#f3f4f6;padding:2px 4px;border-radius:4px}</style></head><body><pre>${markdownReport.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre></body></html>`;
+    const html = buildClientHtmlReport({ projectName, industry, results });
     downloadText(`${projectName || 'hfcd_audit'}_report.html`, html, 'text/html;charset=utf-8');
   };
 
@@ -452,6 +672,7 @@ export function HFCDWorkbench() {
                     <div className="text-slate-300">缺失必填：<span className={validation.missingRequired.length ? 'font-semibold text-red-300' : 'font-semibold text-[#9df4d7]'}>{validation.missingRequired.join(', ') || '无'}</span></div>
                     <div className="text-slate-500">建议补充：{validation.suggestedFields.slice(0, 8).join(', ') || '无'}</div>
                   </div>
+                  <FieldHealthPanel fieldHealth={validation.fieldHealth} />
                   {uploadError ? <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{uploadError}</div> : null}
                   <button
                     onClick={handleRunAudit}
@@ -474,13 +695,16 @@ export function HFCDWorkbench() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="text-xl font-black tracking-tight text-white">结果表</h3>
-                      <p className="mt-1 text-sm text-slate-500">输出 HFCD 七门、Gate、strict/loose、FailureMode、risk_score 和 repair_plan。</p>
+                      <p className="mt-1 text-sm text-slate-500">先看样本诊断，再看变量明细。结果按“业务解释 / HFCD 变量 / 修复方案”三层输出。</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button disabled={!results.length} onClick={downloadCurrentCsv} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 disabled:opacity-40">下载 CSV</button>
                       <button disabled={!results.length} onClick={downloadCurrentMarkdown} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 disabled:opacity-40">下载 Markdown</button>
                       <button disabled={!results.length} onClick={downloadCurrentHtml} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 disabled:opacity-40">下载 HTML</button>
                     </div>
+                  </div>
+                  <div className="mt-5">
+                    <ResultDiagnosisPanel results={results} />
                   </div>
                   <div className="mt-5">{renderResultsTable(results)}</div>
                 </div>
@@ -494,7 +718,7 @@ export function HFCDWorkbench() {
                           <tr key={`${row.sample_id || 'row'}-${index}`} className="border-t border-white/8">
                             {Object.entries(row).slice(0, 8).map(([key, value]) => (
                               <td key={key} className="px-3 py-2 text-slate-400">
-                                <span className="text-slate-600">{key}: </span>{value}
+                                <span className="text-slate-600">{getFieldProfile(industry, key).label}: </span>{value}
                               </td>
                             ))}
                           </tr>
@@ -515,6 +739,7 @@ export function HFCDWorkbench() {
             <div className="grid gap-5 lg:grid-cols-2">
               {(Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((item) => {
                 const spec = HFCD_INDUSTRIES[item];
+                const fields = getIndustryFieldProfiles(item);
                 return (
                   <article key={item} className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
                     <div className="flex items-start justify-between gap-4">
@@ -525,13 +750,20 @@ export function HFCDWorkbench() {
                       <button onClick={() => handleDownloadTemplate(item)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">下载 CSV</button>
                     </div>
                     <div className="mt-5 grid gap-2">
-                      {spec.fields.map((field) => (
+                      {fields.map((field) => (
                         <div key={field.key} className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-mono text-xs text-[#9df4d7]">{field.key}</span>
+                            <span className="text-xs font-bold text-white">{field.label}</span>
                             {field.required ? <span className="rounded-full bg-red-500/12 px-2 py-0.5 text-[10px] font-bold text-red-200">required</span> : null}
+                            <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-bold text-slate-400">{field.hfcdGate || 'extra'}</span>
                           </div>
-                          <p className="mt-1 text-xs leading-6 text-slate-500">{field.description}</p>
+                          <p className="mt-2 text-xs leading-6 text-slate-400">{field.plainMeaning || field.description}</p>
+                          <div className="mt-2 grid gap-2 text-[11px] leading-5 text-slate-500 md:grid-cols-3">
+                            <span>单位：{field.unit || '-'}</span>
+                            <span>正常方向：{field.goodRange || '-'}</span>
+                            <span>风险信号：{field.riskSignal || '-'}</span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -597,6 +829,10 @@ export function HFCDWorkbench() {
         {activeTab === 'knowledge' ? (
           <section className="mt-8">
             <SectionTitle title="HFCD 知识库" description="把内部 V12.x 规则沉淀成客户看得懂的 FailureMode 字典。系统不是黑箱分类器，而是有物理机制和研发动作的诊断引擎。" />
+            <div className="mb-8 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+              <h3 className="mb-4 text-xl font-black tracking-tight text-white">七门稳定窗</h3>
+              <GateLegendPanel />
+            </div>
             <div className="grid gap-4 lg:grid-cols-2">
               {(Object.keys(FAILURE_MODE_LABELS) as HFCDFailureMode[]).map((mode) => (
                 <div key={mode} className="rounded-[26px] border border-white/8 bg-white/[0.03] p-5">

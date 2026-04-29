@@ -43,6 +43,7 @@ export interface HFCDAuditResult {
   failure_mode: HFCDFailureMode;
   risk_score: number;
   repair_plan: string;
+  readable: HFCDReadableDiagnosis;
   actual_failure?: number | null;
 }
 
@@ -51,6 +52,12 @@ export interface HFCDTemplateField {
   label: string;
   required: boolean;
   description: string;
+  unit?: string;
+  direction?: 'higher_is_better' | 'lower_is_better' | 'label' | 'neutral';
+  goodRange?: string;
+  riskSignal?: string;
+  hfcdGate?: keyof HFCDGates | 'blind_label' | 'identity';
+  plainMeaning?: string;
 }
 
 export interface HFCDIndustrySpec {
@@ -82,6 +89,25 @@ export interface HFCDAuditSummary {
   averageRiskScore: number;
 }
 
+export interface HFCDFieldHealth {
+  key: string;
+  label: string;
+  present: boolean;
+  required: boolean;
+  hfcdGate?: HFCDTemplateField['hfcdGate'];
+  effect: string;
+  guidance: string;
+}
+
+export interface HFCDReadableDiagnosis {
+  severity: '稳定' | '临界' | '高风险';
+  businessSummary: string;
+  hfcdSummary: string;
+  repairSummary: string;
+  failedGates: string[];
+  primaryDrivers: string[];
+}
+
 export const HFCD_THRESHOLDS: HFCDGates = {
   Q_error: 0.01,
   energy_drift_per_q: 0.05,
@@ -90,6 +116,47 @@ export const HFCD_THRESHOLDS: HFCDGates = {
   radius_ratio: 1.3,
   manifest_fraction: 0.8,
   buffer_score: 0.5,
+};
+
+export const HFCD_GATE_EXPLANATIONS: Record<
+  keyof HFCDGates,
+  { label: string; businessMeaning: string; safeRule: string }
+> = {
+  Q_error: {
+    label: 'Q 核身份误差',
+    businessMeaning: '系统核心身份是否还保持住。量子芯片里对应相干身份，新材料里对应相身份，电池里对应 SOH，生命科学里对应细胞身份。',
+    safeRule: 'Q_error <= 0.01',
+  },
+  energy_drift_per_q: {
+    label: '单位 Q 能量漂移',
+    businessMeaning: '系统是否被过驱动、过热、过载或出现能量账本失衡。',
+    safeRule: 'energy_drift_per_q <= 0.05',
+  },
+  cavity_peak_ratio: {
+    label: '承载腔/核心峰比',
+    businessMeaning: '环境和结构是否足以承载核心输出。承载不足时，系统看似还能运行，但很容易坍缩。',
+    safeRule: 'cavity_peak_ratio >= 0.85',
+  },
+  peak_ratio: {
+    label: '核心峰值保持',
+    businessMeaning: '核心性能是否仍有足够峰值，不只是活着，而是还能稳定输出。',
+    safeRule: 'peak_ratio >= 1.00',
+  },
+  radius_ratio: {
+    label: '半径局域度',
+    businessMeaning: '风险是否向外扩散。半径越大，说明失效、串扰、裂纹、退化或异质性正在外溢。',
+    safeRule: 'radius_ratio <= 1.30',
+  },
+  manifest_fraction: {
+    label: '显化达成率',
+    businessMeaning: '实验、生产或任务是否真正落成。它衡量系统从“看起来可行”到“实际交付”的比例。',
+    safeRule: 'manifest_fraction >= 0.80',
+  },
+  buffer_score: {
+    label: '缓冲余量',
+    businessMeaning: '系统还有没有抗扰动余量。缓冲掉到底后，轻微扰动也会触发失稳。',
+    safeRule: 'buffer_score >= 0.50',
+  },
 };
 
 function clamp(value: unknown, lo: number, hi: number) {
@@ -277,6 +344,207 @@ export const HFCD_INDUSTRIES: Record<HFCDIndustry, HFCDIndustrySpec> = {
     ],
   },
 };
+
+const FIELD_PROFILES: Record<HFCDIndustry, Record<string, Partial<HFCDTemplateField>>> = {
+  quantum: {
+    sample_id: {
+      unit: '-',
+      direction: 'label',
+      hfcdGate: 'identity',
+      plainMeaning: '一次校准窗口、实验批次或芯片样本编号，用来追踪每条诊断结果。',
+      goodRange: '唯一且不为空',
+      riskSignal: '编号缺失会导致报告无法定位风险样本。',
+    },
+    T1_us: {
+      unit: 'us',
+      direction: 'higher_is_better',
+      hfcdGate: 'Q_error',
+      plainMeaning: '量子比特从激发态回落前能保持多久，是 Q 核身份是否稳住的关键指标。',
+      goodRange: '越接近或高于 T1_ref_us 越好',
+      riskSignal: 'T1 明显低于参考值会推高 Q_error，表示 Q 核身份退化。',
+    },
+    T2_us: {
+      unit: 'us',
+      direction: 'higher_is_better',
+      hfcdGate: 'Q_error',
+      plainMeaning: '相位相干能保持多久，直接反映芯片核心身份是否被噪声侵蚀。',
+      goodRange: '越接近或高于 T2_ref_us 越好',
+      riskSignal: 'T2 下滑会推高 Q_error，常见于退相干、串扰或环境噪声上升。',
+    },
+    T2star_us: {
+      unit: 'us',
+      direction: 'higher_is_better',
+      hfcdGate: 'Q_error',
+      plainMeaning: '未回波校正下的相干时间，帮助识别慢漂移和频率噪声。',
+      goodRange: '越高越好',
+      riskSignal: 'T2* 过低通常说明频率环境不干净，需要补充 detuning 和串扰检查。',
+    },
+    T1_ref_us: {
+      unit: 'us',
+      direction: 'neutral',
+      hfcdGate: 'Q_error',
+      plainMeaning: 'T1 的基准线，用来判断当前窗口相对历史好状态退化了多少。',
+      goodRange: '使用同芯片或同批次可信基准',
+      riskSignal: '参考值缺失时，Q_error 会退回保守估计，诊断分辨率下降。',
+    },
+    T2_ref_us: {
+      unit: 'us',
+      direction: 'neutral',
+      hfcdGate: 'Q_error',
+      plainMeaning: 'T2 的基准线，用来判断相干身份的相对漂移。',
+      goodRange: '使用同芯片或同批次可信基准',
+      riskSignal: '参考值缺失会降低 Q 核漂移判断精度。',
+    },
+    ramsey_detuning_khz: {
+      unit: 'kHz',
+      direction: 'lower_is_better',
+      hfcdGate: 'radius_ratio',
+      plainMeaning: 'Ramsey 失谐越大，说明频率窗口越偏离中心，风险半径越容易外扩。',
+      goodRange: '越接近 0 越好',
+      riskSignal: '失谐过大会推高 radius_ratio，进入 de_localized 风险。',
+    },
+    gate1q_error: {
+      unit: 'ratio',
+      direction: 'lower_is_better',
+      hfcdGate: 'energy_drift_per_q',
+      plainMeaning: '单比特门错误率，反映基础控制脉冲是否干净。',
+      goodRange: '<= 0.0005 为优秀区',
+      riskSignal: '错误率上升会推高 energy_drift_per_q，并压低 peak_ratio。',
+    },
+    gate2q_error: {
+      unit: 'ratio',
+      direction: 'lower_is_better',
+      hfcdGate: 'energy_drift_per_q',
+      plainMeaning: '双比特门错误率，是量子芯片最敏感的核心性能窗口之一。',
+      goodRange: '<= 0.005 为优秀区',
+      riskSignal: '2Q error 上升会同时推高能量漂移并压低核心峰值。',
+    },
+    readout_error: {
+      unit: 'ratio',
+      direction: 'lower_is_better',
+      hfcdGate: 'cavity_peak_ratio',
+      plainMeaning: '读出错误率，反映测量链路是否能承载并识别核心状态。',
+      goodRange: '<= 0.01 为优秀区',
+      riskSignal: '读出错误上升会削弱 cavity_peak_ratio，并拖累显化结果。',
+    },
+    assignment_fidelity: {
+      unit: 'ratio',
+      direction: 'higher_is_better',
+      hfcdGate: 'cavity_peak_ratio',
+      plainMeaning: '读出 assignment fidelity 越高，说明承载腔越能准确接住核心状态。',
+      goodRange: '>= 0.95 更稳',
+      riskSignal: 'fidelity 下滑会触发 cavity_underfill 风险。',
+    },
+    leakage_rate: {
+      unit: 'ratio',
+      direction: 'lower_is_better',
+      hfcdGate: 'Q_error',
+      plainMeaning: '泄漏率反映量子态是否逃出计算子空间，是 Q 核身份破损的强信号。',
+      goodRange: '<= 0.001 为优秀区',
+      riskSignal: '泄漏上升会同时推高 Q_error 与 energy_drift_per_q。',
+    },
+    zz_crosstalk_khz: {
+      unit: 'kHz',
+      direction: 'lower_is_better',
+      hfcdGate: 'radius_ratio',
+      plainMeaning: 'ZZ 串扰越高，说明相邻比特之间的影响半径正在扩散。',
+      goodRange: '越接近 0 越好',
+      riskSignal: '串扰过高会推高 radius_ratio，触发 de_localized。',
+    },
+    parallel_gate_error: {
+      unit: 'ratio',
+      direction: 'lower_is_better',
+      hfcdGate: 'energy_drift_per_q',
+      plainMeaning: '并行门错误率反映多比特同时运行时是否出现系统级过载。',
+      goodRange: '<= 0.01 更稳',
+      riskSignal: '并行错误率上升通常说明 drive、串扰或调度窗口需要收敛。',
+    },
+    resonator_drift_mhz: {
+      unit: 'MHz',
+      direction: 'lower_is_better',
+      hfcdGate: 'cavity_peak_ratio',
+      plainMeaning: '读出谐振腔漂移，直接影响测量链路能否稳定接住核心状态。',
+      goodRange: '越接近 0 越好',
+      riskSignal: '漂移增大会削弱 cavity_peak_ratio，触发 cavity_underfill。',
+    },
+    calibration_age_hours: {
+      unit: 'hours',
+      direction: 'lower_is_better',
+      hfcdGate: 'buffer_score',
+      plainMeaning: '距离上次校准越久，系统缓冲余量越容易被消耗。',
+      goodRange: '<= 24 小时较稳',
+      riskSignal: '校准年龄过高会压低 buffer_score，进入 buffer_decay。',
+    },
+    job_success_rate: {
+      unit: 'ratio',
+      direction: 'higher_is_better',
+      hfcdGate: 'manifest_fraction',
+      plainMeaning: '任务成功率是系统是否真正落盘交付的显化指标。',
+      goodRange: '>= 0.80 为显化门安全线',
+      riskSignal: '成功率低于 0.80 会触发 manifest_underthreshold。',
+    },
+    actual_failure: {
+      unit: '0/1',
+      direction: 'label',
+      hfcdGate: 'blind_label',
+      plainMeaning: '历史真实失效标签，只用于盲测验证，不参与当前风险分调参。',
+      goodRange: '0=未失效，1=已失效',
+      riskSignal: '有这个字段才能计算 AUC 和 precision@top10%。',
+    },
+  },
+  materials: {
+    sample_id: { unit: '-', direction: 'label', hfcdGate: 'identity', plainMeaning: '材料批次或样本编号。', goodRange: '唯一且不为空', riskSignal: '缺失会导致风险样本不可追踪。' },
+    phase_purity: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'Q_error', plainMeaning: '目标相纯度，决定材料 Q 核身份是否稳定。', goodRange: '>= 0.95 更稳', riskSignal: '相纯度下降会触发 Q_loss。' },
+    defect_density_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'radius_ratio', plainMeaning: '缺陷密度，越高越容易让失效半径外扩。', goodRange: '<= 0.10 更稳', riskSignal: '缺陷扩散会触发 de_localized。' },
+    crack_length_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'radius_ratio', plainMeaning: '裂纹长度，反映结构风险是否已经传播。', goodRange: '<= 0.10 更稳', riskSignal: '裂纹扩展会推高 radius_ratio。' },
+    stress_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'energy_drift_per_q', plainMeaning: '热/机械应力，反映工艺是否过驱动。', goodRange: '<= 0.30 更稳', riskSignal: '应力过高会触发 energy_surplus_overflow。' },
+    microstructure_support: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'cavity_peak_ratio', plainMeaning: '微结构承载支持度，决定性能峰值能不能被结构接住。', goodRange: '>= 0.85 更稳', riskSignal: '承载不足会触发 cavity_underfill。' },
+    property_retention: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'peak_ratio', plainMeaning: '性能保持率，反映核心峰值是否保住。', goodRange: '>= 0.90 更稳', riskSignal: '保持率下降会触发 core_decay 或 manifest_underthreshold。' },
+    process_margin: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'buffer_score', plainMeaning: '工艺余量，决定系统抗扰动能力。', goodRange: '>= 0.50 为安全线', riskSignal: '余量不足会触发 buffer_decay。' },
+    actual_failure: { unit: '0/1', direction: 'label', hfcdGate: 'blind_label', plainMeaning: '历史真实失效标签，用于盲测验证。', goodRange: '0=未失效，1=已失效', riskSignal: '有标签才能证明 HFCD 是否提前预警。' },
+  },
+  energy: {
+    sample_id: { unit: '-', direction: 'label', hfcdGate: 'identity', plainMeaning: '电芯、模组或设备编号。', goodRange: '唯一且不为空', riskSignal: '缺失会导致风险样本不可追踪。' },
+    SOH: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'Q_error', plainMeaning: '健康状态，决定电芯身份是否还稳定。', goodRange: '>= 0.90 更稳', riskSignal: 'SOH 下滑会触发 Q_loss。' },
+    capacity_retention: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'peak_ratio', plainMeaning: '容量保持率，反映核心输出能力是否还保住。', goodRange: '>= 0.90 更稳', riskSignal: '容量下降会压低 peak_ratio。' },
+    impedance_growth_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'energy_drift_per_q', plainMeaning: '阻抗增长，反映能量通道是否变窄、发热是否增加。', goodRange: '<= 0.20 更稳', riskSignal: '阻抗增长会推高 energy_drift_per_q。' },
+    thermal_risk_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'energy_drift_per_q', plainMeaning: '热风险，反映系统是否正在接近热失控边界。', goodRange: '<= 0.20 更稳', riskSignal: '热风险上升会触发 energy_surplus_overflow。' },
+    coulombic_efficiency: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'manifest_fraction', plainMeaning: '库伦效率，反映充放电过程是否真正闭合。', goodRange: '>= 0.995 更稳', riskSignal: '效率下降会触发 manifest_underthreshold。' },
+    interface_stability: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'cavity_peak_ratio', plainMeaning: '界面稳定度，决定能量交换界面能否承载循环。', goodRange: '>= 0.85 更稳', riskSignal: '界面失稳会触发 cavity_underfill。' },
+    degradation_spread_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'radius_ratio', plainMeaning: '退化扩散程度，反映风险是否从局部扩散到整体。', goodRange: '<= 0.15 更稳', riskSignal: '扩散上升会触发 de_localized。' },
+    reserve_margin: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'buffer_score', plainMeaning: '安全余量，决定系统还有多少抗扰动空间。', goodRange: '>= 0.50 为安全线', riskSignal: '余量下降会触发 buffer_decay。' },
+    actual_failure: { unit: '0/1', direction: 'label', hfcdGate: 'blind_label', plainMeaning: '历史真实失效标签，用于盲测验证。', goodRange: '0=未失效，1=已失效', riskSignal: '有标签才能验证预测命中率。' },
+  },
+  bio: {
+    sample_id: { unit: '-', direction: 'label', hfcdGate: 'identity', plainMeaning: '批次、反应器或样本编号。', goodRange: '唯一且不为空', riskSignal: '缺失会导致风险样本不可追踪。' },
+    cell_identity: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'Q_error', plainMeaning: '细胞身份保持度，决定生物系统 Q 核是否还稳定。', goodRange: '>= 0.95 更稳', riskSignal: '身份漂移会触发 Q_loss。' },
+    viability: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'peak_ratio', plainMeaning: '活率，反映系统还能不能维持有效输出。', goodRange: '>= 0.90 更稳', riskSignal: '活率下降会触发 core_decay。' },
+    productivity_retention: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'peak_ratio', plainMeaning: '产量保持率，反映核心输出是否持续。', goodRange: '>= 0.90 更稳', riskSignal: '产量下滑会压低 peak_ratio 和 manifest_fraction。' },
+    metabolic_load_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'energy_drift_per_q', plainMeaning: '代谢负载，反映系统是否被过度喂养或压力过高。', goodRange: '<= 0.25 更稳', riskSignal: '代谢负载过高会触发 energy_surplus_overflow。' },
+    heterogeneity_norm: { unit: '0-1', direction: 'lower_is_better', hfcdGate: 'radius_ratio', plainMeaning: '异质性扩散，反映细胞状态是否分叉外溢。', goodRange: '<= 0.15 更稳', riskSignal: '异质性上升会触发 de_localized。' },
+    culture_support: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'cavity_peak_ratio', plainMeaning: '培养环境支持度，决定细胞系统能否被环境稳定承载。', goodRange: '>= 0.85 更稳', riskSignal: '培养支持不足会触发 cavity_underfill。' },
+    stress_reserve: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'buffer_score', plainMeaning: '压力恢复余量，决定系统被扰动后能不能回到稳定窗。', goodRange: '>= 0.50 为安全线', riskSignal: '余量不足会触发 buffer_decay。' },
+    CQA_pass_fraction: { unit: 'ratio', direction: 'higher_is_better', hfcdGate: 'manifest_fraction', plainMeaning: '关键质量属性达标比例，反映最终质量是否真正显化。', goodRange: '>= 0.80 为安全线', riskSignal: 'CQA 不达标会触发 manifest_underthreshold。' },
+    actual_failure: { unit: '0/1', direction: 'label', hfcdGate: 'blind_label', plainMeaning: '历史真实失效标签，用于盲测验证。', goodRange: '0=未失效，1=已失效', riskSignal: '有标签才能验证 HFCD 命中率。' },
+  },
+};
+
+export function getFieldProfile(industry: HFCDIndustry, key: string): HFCDTemplateField {
+  const base = HFCD_INDUSTRIES[industry].fields.find((field) => field.key === key) || {
+    key,
+    label: key,
+    required: false,
+    description: 'CSV 中的额外字段。',
+  };
+  return {
+    ...base,
+    ...(FIELD_PROFILES[industry][key] || {}),
+  };
+}
+
+export function getIndustryFieldProfiles(industry: HFCDIndustry) {
+  return HFCD_INDUSTRIES[industry].fields.map((field) => getFieldProfile(industry, field.key));
+}
 
 export const FAILURE_MODE_LABELS: Record<HFCDFailureMode, string> = {
   stable: 'stable',
@@ -546,12 +814,41 @@ export function validateRows(rows: Array<Record<string, unknown>>, industry: HFC
   const availableFields = spec.fields.filter((field) => presentFields.has(field.key)).map((field) => field.key);
   const computableFields = spec.fields.filter((field) => presentFields.has(field.key) && field.key !== 'actual_failure').map((field) => field.key);
   const suggestedFields = spec.fields.filter((field) => !presentFields.has(field.key) && !field.required).map((field) => field.key);
+  const fieldHealth: HFCDFieldHealth[] = spec.fields.map((field) => {
+    const profile = getFieldProfile(industry, field.key);
+    const present = presentFields.has(field.key);
+    const gate =
+      profile.hfcdGate && profile.hfcdGate !== 'identity' && profile.hfcdGate !== 'blind_label'
+        ? HFCD_GATE_EXPLANATIONS[profile.hfcdGate]
+        : null;
+    return {
+      key: profile.key,
+      label: profile.label,
+      present,
+      required: profile.required,
+      hfcdGate: profile.hfcdGate,
+      effect:
+        profile.hfcdGate === 'identity'
+          ? '用于样本追踪，不参与风险分。'
+          : profile.hfcdGate === 'blind_label'
+            ? '用于盲测验证，不参与当前风险分调参。'
+            : gate
+              ? `影响 ${gate.label}（${profile.hfcdGate}）。`
+              : '用于辅助解释和后续扩展。',
+      guidance: present
+        ? `已检测。${profile.plainMeaning || profile.description}`
+        : profile.required
+          ? `缺少必填字段。${profile.description}`
+          : `建议补充。${profile.riskSignal || profile.description}`,
+    };
+  });
 
   return {
     missingRequired,
     availableFields,
     computableFields,
     suggestedFields,
+    fieldHealth,
     isValid: rows.length > 0 && missingRequired.length === 0,
   };
 }
@@ -606,20 +903,116 @@ export function planRepair(industry: HFCDIndustry, failureMode: HFCDFailureMode)
   return `${BASE_REPAIR_PLANS[failureMode]} ${INDUSTRY_APPENDIX[industry][failureMode] || ''}`.trim();
 }
 
+const STATUS_TO_GATE: Record<keyof HFCDGateStatus, keyof HFCDGates> = {
+  Q_safe: 'Q_error',
+  E_safe: 'energy_drift_per_q',
+  C_safe: 'cavity_peak_ratio',
+  P_safe: 'peak_ratio',
+  R_safe: 'radius_ratio',
+  M_safe: 'manifest_fraction',
+  B_safe: 'buffer_score',
+};
+
+const FAILURE_BUSINESS_MEANING: Record<HFCDFailureMode, string> = {
+  stable: '该样本处于严格稳定窗内，可作为当前批次的基准窗口继续 replay、复测或盲测确认。',
+  Q_loss: '核心身份已经出现退化。系统不是单点参数小波动，而是 Q 核本身正在丢失稳定性。',
+  radius_induced_Q_loss: '风险半径外扩已经反向拖垮 Q 核身份。先收半径，再修核心。',
+  manifest_underthreshold: '系统能量和结构看似还在，但实际交付/达标比例不足，已经卡在显化门。',
+  cavity_underfill: '承载腔不足。核心输出没有被环境或结构接住，继续加能量只会提高失稳概率。',
+  core_decay: '核心峰值不足。系统还没完全崩，但关键性能已经低于稳定输出线。',
+  de_localized: '风险正在外扩。局部问题已经变成半径扩散问题，需要做局域化收束。',
+  high_peak_radius_outlier: '核心峰值很强但半径被撑大，属于高输出带来的外溢风险。',
+  energy_surplus_overflow: '能量账本过热或过驱动。系统不是缺能量，而是能量没有闭合。',
+  ultra_micro_energy_surplus: '系统已经接近稳定窗，只剩极微能量盈余，需要微调而不是重做。',
+  buffer_decay: '缓冲余量不足。当前状态可能还能跑，但抗扰动能力已经被消耗。',
+  unknown_boundary: '该样本落在未知边界，需要人工复核并沉淀新的 FailureMode 子类。',
+};
+
+function failedGateKeys(status: HFCDGateStatus) {
+  return (Object.keys(status) as Array<keyof HFCDGateStatus>)
+    .filter((key) => !status[key])
+    .map((key) => STATUS_TO_GATE[key]);
+}
+
+function formatGateValue(gates: HFCDGates, gate: keyof HFCDGates) {
+  const explanation = HFCD_GATE_EXPLANATIONS[gate];
+  return `${explanation.label} ${gate}=${gates[gate]}（安全线：${explanation.safeRule}）`;
+}
+
+function getSeverity(strictStable: boolean, looseStable: boolean, riskScore: number): HFCDReadableDiagnosis['severity'] {
+  if (strictStable) return '稳定';
+  if (looseStable && riskScore < 0.43) return '临界';
+  return '高风险';
+}
+
+export function buildReadableDiagnosis(params: {
+  industry: HFCDIndustry;
+  gates: HFCDGates;
+  status: HFCDGateStatus;
+  failureMode: HFCDFailureMode;
+  strictStable: boolean;
+  looseStable: boolean;
+  riskScore: number;
+  repairPlan: string;
+}): HFCDReadableDiagnosis {
+  const { gates, status, failureMode, strictStable, looseStable, riskScore, repairPlan } = params;
+  const failedGates = failedGateKeys(status);
+  const severity = getSeverity(strictStable, looseStable, riskScore);
+  const primaryDrivers =
+    failedGates.length > 0
+      ? failedGates.map((gate) => HFCD_GATE_EXPLANATIONS[gate].label)
+      : ['七门全部通过'];
+  const failedText = failedGates.length
+    ? failedGates.map((gate) => formatGateValue(gates, gate)).join('；')
+    : '七个稳定门全部通过。';
+  const businessSummary =
+    failureMode === 'stable'
+      ? FAILURE_BUSINESS_MEANING.stable
+      : `${FAILURE_BUSINESS_MEANING[failureMode]} 当前风险分 ${riskScore}，严重度判定为“${severity}”。`;
+  const hfcdSummary = `HFCD 判定：${failedText}`;
+  const repairSummary =
+    failureMode === 'stable'
+      ? '保持当前窗口，不做大幅参数改动；把该样本作为稳定参照，进入 replay、盲测确认或下一轮更长程验证。'
+      : repairPlan;
+
+  return {
+    severity,
+    businessSummary,
+    hfcdSummary,
+    repairSummary,
+    failedGates: failedGates.map((gate) => `${gate}: ${HFCD_GATE_EXPLANATIONS[gate].label}`),
+    primaryDrivers,
+  };
+}
+
 export function auditRecord(row: Record<string, unknown>, industry: HFCDIndustry): HFCDAuditResult {
   const gates = ADAPTERS[industry](row);
   const status = evaluateGates(gates);
   const failureMode = classifyFailure(gates, status);
+  const strictStable = isStrictStable(status);
+  const looseStable = isLooseStable(status);
+  const riskScore = round(1 - Object.values(status).filter(Boolean).length / 7);
+  const repairPlan = planRepair(industry, failureMode);
   const actualFailure = safeNumber(row, 'actual_failure');
   return {
     sample_id: String(row.sample_id || 'unknown_sample'),
     gates,
     gate_status: status,
-    strict_stable: isStrictStable(status),
-    loose_stable: isLooseStable(status),
+    strict_stable: strictStable,
+    loose_stable: looseStable,
     failure_mode: failureMode,
-    risk_score: round(1 - Object.values(status).filter(Boolean).length / 7),
-    repair_plan: planRepair(industry, failureMode),
+    risk_score: riskScore,
+    repair_plan: repairPlan,
+    readable: buildReadableDiagnosis({
+      industry,
+      gates,
+      status,
+      failureMode,
+      strictStable,
+      looseStable,
+      riskScore,
+      repairPlan,
+    }),
     actual_failure: actualFailure === undefined ? null : actualFailure,
   };
 }
@@ -634,6 +1027,10 @@ export function flattenAuditResult(result: HFCDAuditResult) {
     failure_mode: result.failure_mode,
     risk_score: result.risk_score,
     actual_failure: result.actual_failure ?? '',
+    severity: result.readable.severity,
+    business_summary: result.readable.businessSummary,
+    hfcd_summary: result.readable.hfcdSummary,
+    primary_drivers: result.readable.primaryDrivers.join('; '),
     repair_plan: result.repair_plan,
   };
 }
@@ -710,15 +1107,35 @@ export function generateMarkdownReport(params: {
   const spec = HFCD_INDUSTRIES[industry];
   const summary = summarizeAudit(results);
   const validation = validateBlindMetrics(results);
+  const fieldProfiles = getIndustryFieldProfiles(industry);
   const topRisk = [...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10);
+  const tableCell = (value: unknown) => String(value ?? '').replace(/\|/g, '/').replace(/\n/g, ' ');
+  const executiveConclusion =
+    summary.highRiskCount > 0
+      ? `本批数据已经出现 ${summary.highRiskCount} 个高风险样本，主失效模式为 ${summary.primaryFailureMode}。建议先处理 Top Risk 样本，再做全批次参数收束。`
+      : summary.strictStableCount === summary.sampleCount && summary.sampleCount > 0
+        ? '本批数据整体处于严格稳定窗，可作为当前阶段的基准窗口进入 replay、盲测或更长程验证。'
+        : `本批数据处于临界状态，主失效模式为 ${summary.primaryFailureMode}。建议优先修复未通过的稳定门，再扩大样本验证。`;
   const failureRows = Object.entries(summary.failureModeCounts)
     .sort((a, b) => b[1] - a[1])
-    .map(([mode, count]) => `| ${mode} | ${count} |`)
+    .map(([mode, count]) => `| ${tableCell(mode)} | ${count} |`)
+    .join('\n');
+  const fieldRows = fieldProfiles
+    .map(
+      (field) =>
+        `| ${field.key} | ${tableCell(field.label)} | ${tableCell(field.unit || '-')} | ${tableCell(field.goodRange || '-')} | ${tableCell(field.hfcdGate || '-')} | ${tableCell(field.plainMeaning || field.description)} | ${tableCell(field.riskSignal || '-')} |`,
+    )
+    .join('\n');
+  const gateRows = (Object.keys(HFCD_GATE_EXPLANATIONS) as Array<keyof HFCDGates>)
+    .map((gate) => {
+      const explanation = HFCD_GATE_EXPLANATIONS[gate];
+      return `| ${gate} | ${explanation.label} | ${tableCell(explanation.safeRule)} | ${tableCell(explanation.businessMeaning)} |`;
+    })
     .join('\n');
   const topRows = topRisk
     .map(
       (result) =>
-        `| ${result.sample_id} | ${result.risk_score} | ${result.failure_mode} | ${result.strict_stable ? 'yes' : 'no'} | ${result.repair_plan} |`,
+        `| ${tableCell(result.sample_id)} | ${result.readable.severity} | ${result.risk_score} | ${result.failure_mode} | ${tableCell(result.readable.businessSummary)} | ${tableCell(result.readable.hfcdSummary)} | ${tableCell(result.readable.repairSummary)} |`,
     )
     .join('\n');
 
@@ -727,7 +1144,13 @@ export function generateMarkdownReport(params: {
     '',
     `行业：${spec.title}`,
     '',
-    '## 总览',
+    '## Executive Summary',
+    '',
+    executiveConclusion,
+    '',
+    '本报告采用 HFCD Stability-Window Audit：把行业数据映射到七个稳定门，输出业务风险解释、HFCD 变量证据和研发修复方案。它适合客户初筛、历史数据盲测和研发复盘。',
+    '',
+    '## 关键指标',
     '',
     `- 样本数：${summary.sampleCount}`,
     `- strict stable：${summary.strictStableCount}`,
@@ -735,6 +1158,18 @@ export function generateMarkdownReport(params: {
     `- 高风险样本：${summary.highRiskCount}`,
     `- 主要 FailureMode：${summary.primaryFailureMode}`,
     `- 平均风险分：${summary.averageRiskScore}`,
+    '',
+    '## 七门稳定窗解释',
+    '',
+    '| HFCD Gate | 人话名称 | 安全线 | 业务意义 |',
+    '|---|---|---|---|',
+    gateRows,
+    '',
+    '## 字段体检与解释',
+    '',
+    '| 字段 | 名称 | 单位 | 推荐区间 | 影响 HFCD 门 | 用户要怎么理解 | 风险信号 |',
+    '|---|---|---|---|---|---|---|',
+    fieldRows,
     '',
     '## 盲测指标',
     '',
@@ -748,11 +1183,18 @@ export function generateMarkdownReport(params: {
     '|---|---:|',
     failureRows || '| none | 0 |',
     '',
-    '## Top Risk 样本',
+    '## 样本诊断：业务解释 / HFCD 变量 / 修复方案',
     '',
-    '| sample_id | risk_score | FailureMode | strict stable | repair_plan |',
-    '|---|---:|---|---|---|',
-    topRows || '| none | 0 | stable | yes | N/A |',
+    '| sample_id | 严重度 | risk_score | FailureMode | 业务解释 | HFCD 变量 | 修复方案 |',
+    '|---|---|---:|---|---|---|---|',
+    topRows || '| none | 稳定 | 0 | stable | 当前无风险样本 | 七门通过 | 保持当前窗口 |',
+    '',
+    '## 交付建议',
+    '',
+    '- 先用 Top Risk 样本开研发复盘会，不要从全量平均值开始。',
+    '- 对主 FailureMode 建立专项修复路径，并保留修复前后的同口径数据。',
+    '- 如果提供 actual_failure 标签，下一步进入冻结参数盲测，验证 HFCD 对历史失效的提前预警能力。',
+    '- 如果客户能提供物理参数、工艺参数、边界条件和数字孪生空间，再进入 HFCD Simulation Mode。',
     '',
     '## 运行边界',
     '',

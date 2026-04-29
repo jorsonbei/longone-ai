@@ -7,6 +7,7 @@ import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternal
 import { normalizeMessageOrder } from '../src/lib/messageOrdering';
 import {
   auditRecords,
+  generateMarkdownReport,
   HFCD_INDUSTRIES,
   parseCsv,
   summarizeAudit,
@@ -110,15 +111,25 @@ async function main() {
   const quantumRows = parseCsv(templateToCsv('quantum'));
   const quantumValidation = validateRows(quantumRows, 'quantum');
   assert(quantumValidation.isValid, 'HFCD quantum template should pass required-field validation.');
+  assert(
+    quantumValidation.fieldHealth.some((field) => field.key === 'T1_us' && field.present && field.hfcdGate === 'Q_error'),
+    'HFCD field health should explain T1_us as a Q_error driver.',
+  );
   assert(HFCD_INDUSTRIES.quantum.fields.some((field) => field.key === 'actual_failure'), 'HFCD quantum template missing actual_failure field.');
   const quantumResults = auditRecords(quantumRows, 'quantum');
   assert(quantumResults.length === 1, 'HFCD audit should return one result for one template row.');
   assert(quantumResults[0].failure_mode, 'HFCD audit result should classify a FailureMode.');
   assert(quantumResults[0].repair_plan.length > 0, 'HFCD audit result should generate a repair plan.');
+  assert(quantumResults[0].readable.businessSummary.length > 0, 'HFCD audit result should generate a readable business diagnosis.');
+  assert(quantumResults[0].readable.hfcdSummary.includes('HFCD 判定'), 'HFCD audit result should generate readable HFCD variable evidence.');
   const quantumSummary = summarizeAudit(quantumResults);
   assert(quantumSummary.sampleCount === 1, 'HFCD summary sample count mismatch.');
   const blindMetrics = validateBlindMetrics(quantumResults);
   assert(blindMetrics.hasActualFailure, 'HFCD blind metrics should detect actual_failure labels.');
+  const hfcdReport = generateMarkdownReport({ projectName: 'HFCD 自测报告', industry: 'quantum', results: quantumResults });
+  assert(hfcdReport.includes('Executive Summary'), 'HFCD report should include an executive summary.');
+  assert(hfcdReport.includes('字段体检与解释'), 'HFCD report should include field explanations.');
+  assert(hfcdReport.includes('样本诊断：业务解释 / HFCD 变量 / 修复方案'), 'HFCD report should include three-layer sample diagnosis.');
   console.log('[self-test] HFCD audit core OK');
 
   const nameCase = analyzeWuxingInput(
