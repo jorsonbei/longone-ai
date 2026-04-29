@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -17,6 +17,7 @@ interface SidebarProps {
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
   onOpenOfficialSite: () => void;
+  onOpenHFCD: () => void;
   onOpenAdmin: () => void;
   canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
@@ -28,7 +29,7 @@ interface SidebarProps {
   onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -43,6 +44,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     ja: '言語',
   };
   const currentLocaleOption = LOCALE_OPTIONS.find((option) => option.value === locale) || LOCALE_OPTIONS[0];
+  const hfcdLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
+    en: { title: 'HFCD Audit', subtitle: 'Stability-window industry engine' },
+    zh: { title: 'HFCD 工具', subtitle: '稳定窗审计与研发方案' },
+    fr: { title: 'Audit HFCD', subtitle: 'Moteur de stabilite industrielle' },
+    es: { title: 'Auditoria HFCD', subtitle: 'Motor de ventanas estables' },
+    vi: { title: 'Kiem dinh HFCD', subtitle: 'Dong co cua so on dinh' },
+    de: { title: 'HFCD Audit', subtitle: 'Stabilitaetsfenster fuer Industrie' },
+    ja: { title: 'HFCD監査', subtitle: '安定窓の産業エンジン' },
+  };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -85,6 +95,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-slate-100">{ui.sidebar.officialSiteTitle}</span>
             <span className="text-[11px] text-slate-500">{ui.sidebar.officialSiteSubtitle}</span>
+          </div>
+        </button>
+        <button onClick={onOpenHFCD} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(251,191,36,0.12),rgba(251,191,36,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(251,191,36,0.18),rgba(251,191,36,0.08))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-300/15 text-amber-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Activity className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{hfcdLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{hfcdLabelByLocale[locale].subtitle}</span>
           </div>
         </button>
         {canAccessAdmin ? (

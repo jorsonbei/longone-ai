@@ -19,6 +19,7 @@ import { X as CloseIcon, Sparkles } from 'lucide-react';
 import { OfficialSite } from './components/OfficialSite';
 import { useAdminContent } from './hooks/useAdminContent';
 import { AdminDashboard } from './components/AdminDashboard';
+import { HFCDWorkbench } from './components/HFCDWorkbench';
 import { analyzeWuxingInput } from './lib/wuxingKernel';
 import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
@@ -135,7 +136,7 @@ export default function App() {
   } = useChats();
 
   const [model, setModel] = useState<string>(MODELS.FLASH);
-  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin' | 'hfcd'>('chat');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -521,6 +522,7 @@ export default function App() {
             await createNewChat(ui.sidebar.newChatTitle);
           }}
           onOpenOfficialSite={() => setActiveView('official-site')}
+          onOpenHFCD={() => setActiveView('hfcd')}
           onOpenAdmin={() => setActiveView('admin')}
           canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
@@ -557,14 +559,7 @@ export default function App() {
             ) : <div />}
             
             <div className="flex items-center gap-2 w-auto justify-end">
-              {activeView === 'official-site' ? (
-                <button
-                  onClick={() => setActiveView('chat')}
-                  className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] hover:text-white"
-                >
-                  {ui.common.backToChat}
-                </button>
-              ) : activeView === 'admin' ? (
+              {activeView !== 'chat' ? (
                 <button
                   onClick={() => setActiveView('chat')}
                   className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] hover:text-white"
@@ -775,7 +770,15 @@ export default function App() {
             </Dialog>
 
           {activeView === 'official-site' ? (
-            <OfficialSite onBackToChat={() => setActiveView('chat')} content={localizedOfficialSiteContent} ui={ui} />
+            <OfficialSite
+              onBackToChat={() => setActiveView('chat')}
+              onOpenHFCD={() => setActiveView('hfcd')}
+              content={localizedOfficialSiteContent}
+              ui={ui}
+              locale={locale}
+            />
+          ) : activeView === 'hfcd' ? (
+            <HFCDWorkbench />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}

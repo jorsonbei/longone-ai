@@ -5,6 +5,15 @@ import { MODELS } from '../src/services/geminiService';
 import { analyzeWuxingInput, DEFAULT_WUXING_CONFIG } from '../src/lib/wuxingKernel';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 import { normalizeMessageOrder } from '../src/lib/messageOrdering';
+import {
+  auditRecords,
+  HFCD_INDUSTRIES,
+  parseCsv,
+  summarizeAudit,
+  templateToCsv,
+  validateBlindMetrics,
+  validateRows,
+} from '../src/lib/hfcdCore';
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -97,6 +106,20 @@ async function main() {
     'Message ordering should keep each user question above its model answer.',
   );
   console.log('[self-test] message ordering OK');
+
+  const quantumRows = parseCsv(templateToCsv('quantum'));
+  const quantumValidation = validateRows(quantumRows, 'quantum');
+  assert(quantumValidation.isValid, 'HFCD quantum template should pass required-field validation.');
+  assert(HFCD_INDUSTRIES.quantum.fields.some((field) => field.key === 'actual_failure'), 'HFCD quantum template missing actual_failure field.');
+  const quantumResults = auditRecords(quantumRows, 'quantum');
+  assert(quantumResults.length === 1, 'HFCD audit should return one result for one template row.');
+  assert(quantumResults[0].failure_mode, 'HFCD audit result should classify a FailureMode.');
+  assert(quantumResults[0].repair_plan.length > 0, 'HFCD audit result should generate a repair plan.');
+  const quantumSummary = summarizeAudit(quantumResults);
+  assert(quantumSummary.sampleCount === 1, 'HFCD summary sample count mismatch.');
+  const blindMetrics = validateBlindMetrics(quantumResults);
+  assert(blindMetrics.hasActualFailure, 'HFCD blind metrics should detect actual_failure labels.');
+  console.log('[self-test] HFCD audit core OK');
 
   const nameCase = analyzeWuxingInput(
     '帮我给阮氏兰惠这个名字做结构解析，并说明她在物性论里的角色。',

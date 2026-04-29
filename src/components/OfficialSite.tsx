@@ -1,8 +1,9 @@
 import React from 'react';
-import { ArrowRight, BookOpen, Cpu, Microscope, Orbit, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { Activity, ArrowRight, BookOpen, Cpu, Microscope, Orbit, ShieldCheck, Sparkles, Upload, Zap } from 'lucide-react';
 import { ThingNatureBrand } from './ThingNatureBrand';
 import { officialSiteContent, OfficialSiteContent } from '../content/officialSiteContent';
 import type { UiText } from '../content/uiText';
+import type { Locale } from '../lib/locale';
 
 const industryIcons = {
   chips: Cpu,
@@ -18,9 +19,112 @@ const industryIcons = {
 
 interface OfficialSiteProps {
   onBackToChat: () => void;
+  onOpenHFCD: () => void;
   content?: OfficialSiteContent;
   ui: UiText;
+  locale: Locale;
 }
+
+const hfcdSectionCopy: Record<Locale, {
+  eyebrow: string;
+  title: string;
+  body: string;
+  primary: string;
+  secondary: string;
+  gates: string[];
+}> = {
+  en: {
+    eyebrow: 'Industry Intelligence Tool',
+    title: 'HFCD Stability-Window Audit',
+    body: 'A cross-industry stability diagnosis and R&D repair-plan system for quantum chips, advanced materials, new energy, and life sciences. Upload experimental or production data; HFCD identifies stability windows, failure modes, risk samples, and repair routes.',
+    primary: 'Enter HFCD Tool',
+    secondary: 'View Industry Mapping',
+    gates: [
+      'Q core: protect system identity before capability drifts into noise.',
+      'Energy: detect energy_surplus_overflow and ultra-micro surplus.',
+      'Cavity and radius: judge support capacity and boundary diffusion.',
+      'Manifestation and buffer: catch the edge between usable and unstable.',
+    ],
+  },
+  zh: {
+    eyebrow: '产业智能工具',
+    title: 'HFCD 稳定窗审计',
+    body: '面向量子芯片、新材料、新能源、生命科学的跨行业稳定性诊断与研发方案生成系统。上传实验或生产数据，HFCD 自动识别稳定窗、失效模式、风险样本，并生成研发修复方案。',
+    primary: '进入 HFCD 工具',
+    secondary: '查看产业映射',
+    gates: [
+      'Q 核：守住系统身份，不让能力漂移成噪声。',
+      '能量：识别 energy_surplus_overflow 和微溢出。',
+      '腔体与半径：判断结构是否承载、扩散是否越界。',
+      '显化与缓冲：判断看似可用的系统是否正在进入失稳边界。',
+    ],
+  },
+  fr: {
+    eyebrow: 'Outil d intelligence industrielle',
+    title: 'Audit HFCD de fenetre de stabilite',
+    body: 'Un systeme de diagnostic de stabilite et de plans de correction R&D pour puces quantiques, materiaux avances, energie nouvelle et sciences du vivant. Importez des donnees; HFCD detecte fenetres stables, modes de defaillance, echantillons a risque et pistes de reparation.',
+    primary: 'Ouvrir HFCD',
+    secondary: 'Voir la carte industrielle',
+    gates: [
+      'Noyau Q : proteger l identite du systeme avant que la capacite ne devienne bruit.',
+      'Energie : detecter energy_surplus_overflow et les micro-surplus.',
+      'Cavite et rayon : juger la capacite de support et la diffusion des frontieres.',
+      'Manifestation et tampon : voir la limite entre utilisable et instable.',
+    ],
+  },
+  es: {
+    eyebrow: 'Herramienta de inteligencia industrial',
+    title: 'Auditoria HFCD de ventana estable',
+    body: 'Sistema transversal de diagnostico de estabilidad y generacion de planes de I+D para chips cuanticos, nuevos materiales, nueva energia y ciencias de la vida. Sube datos experimentales o productivos; HFCD identifica ventanas estables, modos de fallo, muestras de riesgo y rutas de reparacion.',
+    primary: 'Entrar a HFCD',
+    secondary: 'Ver mapeo industrial',
+    gates: [
+      'Nucleo Q: proteger la identidad del sistema antes de que la capacidad derive en ruido.',
+      'Energia: detectar energy_surplus_overflow y microexcesos.',
+      'Cavidad y radio: juzgar soporte estructural y difusion de frontera.',
+      'Manifestacion y buffer: detectar el borde entre utilizable e inestable.',
+    ],
+  },
+  vi: {
+    eyebrow: 'Cong cu tri tue cong nghiep',
+    title: 'Kiem dinh cua so on dinh HFCD',
+    body: 'He thong chan doan on dinh va tao phuong an sua chua R&D cho chip luong tu, vat lieu moi, nang luong moi va khoa hoc su song. Tai du lieu thi nghiem hoac san xuat; HFCD tu dong nhan dien cua so on dinh, failure mode, mau rui ro va huong sua chua.',
+    primary: 'Vao cong cu HFCD',
+    secondary: 'Xem ban do nganh',
+    gates: [
+      'Loi Q: giu danh tinh he thong truoc khi nang luc tro thanh nhieu.',
+      'Nang luong: phat hien energy_surplus_overflow va vi du thua.',
+      'Khoang chua va ban kinh: do kha nang nang do va khu ech bien.',
+      'Hien hoa va dem: bat ranh gioi giua dung duoc va bat on.',
+    ],
+  },
+  de: {
+    eyebrow: 'Industrielles Intelligenzwerkzeug',
+    title: 'HFCD Stabilitaetsfenster-Audit',
+    body: 'Ein branchenuebergreifendes System fuer Stabilitaetsdiagnose und F&E-Reparaturplaene fuer Quantenchips, neue Materialien, neue Energie und Lebenswissenschaften. Laden Sie Daten hoch; HFCD erkennt Stabilitaetsfenster, FailureModes, Risikoproben und Reparaturpfade.',
+    primary: 'HFCD oeffnen',
+    secondary: 'Branchenmapping ansehen',
+    gates: [
+      'Q-Kern: Systemidentitaet schuetzen, bevor Faehigkeit zu Rauschen driftet.',
+      'Energie: energy_surplus_overflow und Mikroueberschuss erkennen.',
+      'Kavitaet und Radius: Tragfaehigkeit und Grenzdiffusion beurteilen.',
+      'Manifestation und Puffer: die Kante zwischen nutzbar und instabil erkennen.',
+    ],
+  },
+  ja: {
+    eyebrow: '産業インテリジェンスツール',
+    title: 'HFCD 安定窓監査',
+    body: '量子チップ、新素材、新エネルギー、生命科学に向けた横断的な安定性診断と研究開発修復案生成システムです。実験または生産データをアップロードすると、HFCD が安定窓、FailureMode、リスクサンプル、修復ルートを識別します。',
+    primary: 'HFCD ツールへ',
+    secondary: '産業マッピングを見る',
+    gates: [
+      'Q核：能力がノイズへ漂流する前にシステムの同一性を守る。',
+      'エネルギー：energy_surplus_overflow と微小過剰を検出する。',
+      '空洞と半径：構造の受容力と境界拡散を判定する。',
+      '顕化とバッファ：使用可能と不安定の境界を捉える。',
+    ],
+  },
+};
 
 function SectionTitle({ eyebrow, title, description }: { eyebrow: string; title: string; description?: string }) {
   return (
@@ -32,9 +136,10 @@ function SectionTitle({ eyebrow, title, description }: { eyebrow: string; title:
   );
 }
 
-export function OfficialSite({ onBackToChat, content = officialSiteContent, ui }: OfficialSiteProps) {
+export function OfficialSite({ onBackToChat, onOpenHFCD, content = officialSiteContent, ui, locale }: OfficialSiteProps) {
   const { hero, definition, whyNow, evidence, industries, experiment, book, faq } = content;
   const overviewIndustry = industries.find((industry) => industry.id === 'overview');
+  const hfcdCopy = hfcdSectionCopy[locale] || hfcdSectionCopy.en;
 
   return (
     <div className="h-full overflow-y-auto bg-[#0f1117] text-slate-100">
@@ -197,6 +302,47 @@ export function OfficialSite({ onBackToChat, content = officialSiteContent, ui }
                 </article>
               );
             })}
+          </div>
+        </section>
+
+        <section className="mt-20">
+          <div className="overflow-hidden rounded-[34px] border border-amber-300/14 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.18),transparent_28%),radial-gradient(circle_at_top_right,rgba(82,219,169,0.16),transparent_24%),linear-gradient(180deg,#181923_0%,#10131b_100%)] p-6 md:p-8">
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.24em] text-amber-100">
+                  <Activity className="h-3.5 w-3.5" />
+                  {hfcdCopy.eyebrow}
+                </div>
+                <h2 className="mt-5 text-3xl font-black tracking-tight text-white md:text-4xl">{hfcdCopy.title}</h2>
+                <p className="mt-4 max-w-4xl text-base leading-8 text-slate-300 md:text-lg">
+                  {hfcdCopy.body}
+                </p>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <button
+                    onClick={onOpenHFCD}
+                    className="inline-flex items-center gap-2 rounded-full bg-amber-200 px-6 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-amber-100"
+                  >
+                    <Upload className="h-4 w-4" />
+                    {hfcdCopy.primary}
+                  </button>
+                  <a
+                    href="#industries"
+                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-6 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/[0.08]"
+                  >
+                    {hfcdCopy.secondary}
+                    <ArrowRight className="h-4 w-4" />
+                  </a>
+                </div>
+              </div>
+              <div className="rounded-[28px] border border-white/8 bg-black/15 p-5">
+                <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Seven Gates</div>
+                <div className="mt-4 grid gap-3 text-sm leading-7 text-slate-300">
+                  {hfcdCopy.gates.map((gate) => (
+                    <div key={gate}>{gate}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
