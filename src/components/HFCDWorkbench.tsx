@@ -344,6 +344,39 @@ function splitBlindSets(results: HFCDAuditResult[]) {
   };
 }
 
+function buildBlindValidationRows(industry: HFCDIndustry) {
+  const rowsByIndustry: Record<HFCDIndustry, Array<Record<string, unknown>>> = {
+    quantum: [
+      { sample_id: 'qpu_stable_001', T1_us: 92, T2_us: 84, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.0004, gate2q_error: 0.004, assignment_fidelity: 0.985, leakage_rate: 0.0008, zz_crosstalk_khz: 28, job_success_rate: 0.98, calibration_age_hours: 4, actual_failure: 0, baseline_score: 0.38, lead_time_days: 0 },
+      { sample_id: 'qpu_risk_002', T1_us: 48, T2_us: 38, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.004, gate2q_error: 0.038, readout_error: 0.08, assignment_fidelity: 0.82, leakage_rate: 0.012, zz_crosstalk_khz: 260, job_success_rate: 0.58, calibration_age_hours: 64, actual_failure: 1, baseline_score: 0.44, lead_time_days: 18 },
+      { sample_id: 'qpu_warning_003', T1_us: 63, T2_us: 55, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.0018, gate2q_error: 0.022, readout_error: 0.046, assignment_fidelity: 0.89, leakage_rate: 0.006, zz_crosstalk_khz: 150, job_success_rate: 0.76, calibration_age_hours: 42, actual_failure: 1, baseline_score: 0.36, lead_time_days: 11 },
+      { sample_id: 'qpu_stable_004', T1_us: 88, T2_us: 79, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.0006, gate2q_error: 0.006, assignment_fidelity: 0.97, leakage_rate: 0.0012, zz_crosstalk_khz: 55, job_success_rate: 0.95, calibration_age_hours: 10, actual_failure: 0, baseline_score: 0.42, lead_time_days: 0 },
+      { sample_id: 'qpu_risk_005', T1_us: 44, T2_us: 35, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.005, gate2q_error: 0.046, readout_error: 0.095, assignment_fidelity: 0.79, leakage_rate: 0.016, zz_crosstalk_khz: 310, job_success_rate: 0.52, calibration_age_hours: 70, actual_failure: 1, baseline_score: 0.52, lead_time_days: 23 },
+      { sample_id: 'qpu_ok_006', T1_us: 81, T2_us: 73, T1_ref_us: 90, T2_ref_us: 80, gate1q_error: 0.0008, gate2q_error: 0.008, assignment_fidelity: 0.95, leakage_rate: 0.0015, zz_crosstalk_khz: 70, job_success_rate: 0.93, calibration_age_hours: 16, actual_failure: 0, baseline_score: 0.41, lead_time_days: 0 },
+    ],
+    materials: [
+      { sample_id: 'mat_ok_001', phase_purity: 0.97, defect_density_norm: 0.08, crack_length_norm: 0.02, stress_norm: 0.2, microstructure_support: 0.93, property_retention: 0.96, process_margin: 0.82, actual_failure: 0, baseline_score: 0.32, lead_time_days: 0 },
+      { sample_id: 'mat_risk_002', phase_purity: 0.72, defect_density_norm: 0.66, crack_length_norm: 0.58, stress_norm: 0.82, microstructure_support: 0.62, property_retention: 0.64, process_margin: 0.28, actual_failure: 1, baseline_score: 0.46, lead_time_days: 16 },
+      { sample_id: 'mat_warn_003', phase_purity: 0.86, defect_density_norm: 0.38, crack_length_norm: 0.34, stress_norm: 0.56, microstructure_support: 0.78, property_retention: 0.79, process_margin: 0.46, actual_failure: 1, baseline_score: 0.37, lead_time_days: 9 },
+      { sample_id: 'mat_ok_004', phase_purity: 0.95, defect_density_norm: 0.12, crack_length_norm: 0.04, stress_norm: 0.28, microstructure_support: 0.9, property_retention: 0.93, process_margin: 0.76, actual_failure: 0, baseline_score: 0.34, lead_time_days: 0 },
+    ],
+    energy: [
+      { sample_id: 'cell_ok_001', SOH: 0.96, capacity_retention: 0.95, impedance_growth_norm: 0.08, thermal_risk_norm: 0.1, coulombic_efficiency: 0.998, interface_stability: 0.94, degradation_spread_norm: 0.08, reserve_margin: 0.82, actual_failure: 0, baseline_score: 0.3, lead_time_days: 0 },
+      { sample_id: 'cell_risk_002', SOH: 0.69, capacity_retention: 0.68, impedance_growth_norm: 0.76, thermal_risk_norm: 0.82, coulombic_efficiency: 0.972, interface_stability: 0.58, degradation_spread_norm: 0.74, reserve_margin: 0.24, actual_failure: 1, baseline_score: 0.43, lead_time_days: 21 },
+      { sample_id: 'cell_warn_003', SOH: 0.82, capacity_retention: 0.81, impedance_growth_norm: 0.44, thermal_risk_norm: 0.48, coulombic_efficiency: 0.989, interface_stability: 0.76, degradation_spread_norm: 0.42, reserve_margin: 0.44, actual_failure: 1, baseline_score: 0.36, lead_time_days: 13 },
+      { sample_id: 'cell_ok_004', SOH: 0.93, capacity_retention: 0.92, impedance_growth_norm: 0.16, thermal_risk_norm: 0.18, coulombic_efficiency: 0.996, interface_stability: 0.9, degradation_spread_norm: 0.14, reserve_margin: 0.72, actual_failure: 0, baseline_score: 0.35, lead_time_days: 0 },
+    ],
+    bio: [
+      { sample_id: 'bio_ok_001', cell_identity: 0.96, viability: 0.95, productivity_retention: 0.93, metabolic_load_norm: 0.18, heterogeneity_norm: 0.08, culture_support: 0.94, stress_reserve: 0.8, CQA_pass_fraction: 0.95, actual_failure: 0, baseline_score: 0.31, lead_time_days: 0 },
+      { sample_id: 'bio_risk_002', cell_identity: 0.71, viability: 0.66, productivity_retention: 0.58, metabolic_load_norm: 0.82, heterogeneity_norm: 0.72, culture_support: 0.56, stress_reserve: 0.24, CQA_pass_fraction: 0.62, actual_failure: 1, baseline_score: 0.45, lead_time_days: 12 },
+      { sample_id: 'bio_warn_003', cell_identity: 0.84, viability: 0.8, productivity_retention: 0.78, metabolic_load_norm: 0.52, heterogeneity_norm: 0.44, culture_support: 0.76, stress_reserve: 0.43, CQA_pass_fraction: 0.78, actual_failure: 1, baseline_score: 0.39, lead_time_days: 8 },
+      { sample_id: 'bio_ok_004', cell_identity: 0.94, viability: 0.93, productivity_retention: 0.9, metabolic_load_norm: 0.22, heterogeneity_norm: 0.12, culture_support: 0.91, stress_reserve: 0.73, CQA_pass_fraction: 0.93, actual_failure: 0, baseline_score: 0.34, lead_time_days: 0 },
+    ],
+  };
+
+  return rowsByIndustry[industry];
+}
+
 function FailureModeChart({ results }: { results: HFCDAuditResult[] }) {
   const summary = summarizeAudit(results);
   const entries = Object.entries(summary.failureModeCounts).sort((a, b) => b[1] - a[1]);
@@ -621,6 +654,7 @@ export function HFCDWorkbench() {
   const [activeProjectId, setActiveProjectId] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [apiTestResult, setApiTestResult] = useState<string | null>(null);
+  const [apiResponsePreview, setApiResponsePreview] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -795,6 +829,18 @@ export function HFCDWorkbench() {
     setActiveTab('upload');
   };
 
+  const handleLoadBlindValidationSample = (targetIndustry = industry) => {
+    const nextRows = buildBlindValidationRows(targetIndustry);
+    const nextResults = auditRecords(nextRows, targetIndustry);
+    setIndustry(targetIndustry);
+    setRows(nextRows as Array<Record<string, string>>);
+    setResults(nextResults);
+    setFileName(`hfcd_${targetIndustry}_blind_validation_example.csv`);
+    setProjectName(`${HFCD_INDUSTRIES[targetIndustry].title} 盲测验证示例`);
+    setUploadError(null);
+    setActiveTab('blind');
+  };
+
   const downloadCurrentCsv = () => {
     if (!flatResults.length) return;
     downloadText(`${projectName || 'hfcd_audit'}_results.csv`, toCsv(flatResults), 'text/csv;charset=utf-8');
@@ -852,6 +898,7 @@ export function HFCDWorkbench() {
 
   const handleTestApiCall = async () => {
     setApiTestResult('调用中...');
+    setApiResponsePreview(null);
     const rowsForApi = rows.length ? rows : parseCsv(templateToCsv(industry));
     try {
       const response = await fetch('/api/hfcd/audit', {
@@ -863,8 +910,14 @@ export function HFCDWorkbench() {
         body: JSON.stringify({ model: 'hfcd-v1', industry, rows: rowsForApi }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || 'API call failed.');
-      setApiTestResult(`调用成功：${payload.summary.sampleCount} 个样本，${payload.summary.highRiskCount} 个高风险。`);
+      setApiResponsePreview(JSON.stringify(payload, null, 2));
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('API 鉴权失败：生产环境已启用 HFCD_API_KEYS，请使用 Worker 后台配置过的密钥。');
+        }
+        throw new Error(payload?.error || 'API call failed.');
+      }
+      setApiTestResult(`调用成功：${payload.summary.sampleCount} 个样本，${payload.summary.highRiskCount} 个高风险，主要风险 ${compactFailureMode(payload.summary.primaryFailureMode)}。`);
       if (apiKeys[0]) {
         setApiKeys((current) =>
           current.map((item, index) =>
@@ -1241,7 +1294,30 @@ export function HFCDWorkbench() {
 
         {activeTab === 'blind' ? (
           <section className="mt-8">
-            <SectionTitle title="盲测验证" description="上传带 actual_failure=0/1、可选 baseline_score、可选 lead_time_days 的历史数据后，系统自动计算 HFCD 相对 baseline 的排序能力、Top 风险命中率和提前预警窗口。" />
+            <SectionTitle title="盲测验证" description="用客户历史数据验证系统是否真的能提前发现风险。上传包含真实失效标签的 CSV 后，系统会自动对比客户原有模型，输出命中率、提升幅度和提前预警天数。" />
+            <div className="mb-6 rounded-[28px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-white">怎么让这一页有结果？</h3>
+                  <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-300">
+                    CSV 至少需要 `actual_failure` 字段：真实失效填 1，未失效填 0。可选补充 `baseline_score` 用于和客户现有模型对比，补充 `lead_time_days` 用于统计提前预警天数。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
+                    加载盲测示例
+                  </button>
+                  <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
+                    上传客户数据
+                  </button>
+                </div>
+              </div>
+              {!results.length || !blindMetrics.hasActualFailure ? (
+                <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-7 text-amber-100">
+                  当前没有可验证的真实失效标签，所以 AUC、Top10 命中率、提前预警都会显示 N/A。这不是计算失败，是缺少验证标签。
+                </div>
+              ) : null}
+            </div>
             <div className="grid gap-4 md:grid-cols-4">
               <MetricCard label="标签状态" value={blindMetrics.hasActualFailure ? '已检测' : '未提供'} note="CSV 是否包含 actual_failure。" />
               <MetricCard label="AUC" value={blindMetrics.auc ?? 'N/A'} note="风险分对真实失效排序能力。" />
@@ -1249,9 +1325,9 @@ export function HFCDWorkbench() {
               <MetricCard label="高风险数" value={blindMetrics.highRiskCount} note="当前结果中高风险样本。" />
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <MetricCard label="baseline AUC" value={blindMetrics.baselineAuc ?? 'N/A'} note="如 CSV 提供 baseline_score，则自动对比。" />
-              <MetricCard label="baseline top10" value={blindMetrics.baselinePrecisionTop10 ?? 'N/A'} note="客户现有模型 Top 风险命中率。" />
-              <MetricCard label="HFCD lift" value={blindMetrics.precisionLift ?? 'N/A'} note="HFCD precision@top10% 减 baseline。" />
+              <MetricCard label="客户原模型 AUC" value={blindMetrics.baselineAuc ?? 'N/A'} note="如 CSV 提供 baseline_score，则自动对比。" />
+              <MetricCard label="客户原模型 Top10" value={blindMetrics.baselinePrecisionTop10 ?? 'N/A'} note="客户现有模型 Top 风险命中率。" />
+              <MetricCard label="命中率提升" value={blindMetrics.precisionLift ?? 'N/A'} note="本系统 Top10 命中率减客户原模型。" />
               <MetricCard label="提前预警" value={blindMetrics.warningLeadTimeAvg ?? 'N/A'} note="高风险且真实失效样本的平均提前天数。" />
             </div>
             <div className="mt-6 grid gap-4 md:grid-cols-3">
@@ -1274,6 +1350,37 @@ export function HFCDWorkbench() {
               </p>
               <div className="mt-5">
                 <ReportAnalyticsPanel industry={industry} results={results} />
+              </div>
+              <div className="mt-5 overflow-x-auto rounded-[24px] border border-white/8">
+                <table className="min-w-[920px] w-full border-collapse text-left text-sm">
+                  <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.18em] text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">样本</th>
+                      <th className="px-4 py-3">真实失效</th>
+                      <th className="px-4 py-3">风险分</th>
+                      <th className="px-4 py-3">客户原模型分</th>
+                      <th className="px-4 py-3">提前天数</th>
+                      <th className="px-4 py-3">主要风险</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 12).map((result) => (
+                      <tr key={result.sample_id} className="border-t border-white/8 text-slate-300">
+                        <td className="px-4 py-3 font-semibold text-white">{result.sample_id}</td>
+                        <td className="px-4 py-3">{result.actual_failure === null || result.actual_failure === undefined ? '未提供' : result.actual_failure === 1 ? '是' : '否'}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{result.risk_score}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{result.baseline_score ?? 'N/A'}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{result.warning_lead_time ?? 'N/A'}</td>
+                        <td className="px-4 py-3">{compactFailureMode(result.failure_mode)}</td>
+                      </tr>
+                    ))}
+                    {!results.length ? (
+                      <tr className="border-t border-white/8">
+                        <td colSpan={6} className="px-4 py-6 text-slate-500">还没有验证数据。点击“加载盲测示例”或上传带 actual_failure 的 CSV。</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
               </div>
               <div className="mt-5">{renderResultsTable([...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 20))}</div>
             </div>
@@ -1390,12 +1497,24 @@ export function HFCDWorkbench() {
 
         {activeTab === 'api' ? (
           <section className="mt-8">
-            <SectionTitle title="API 商业版" description="HFCD API 面向企业系统集成：API Key、调用台账、模型名称、行业参数版本、异步报告设计和结果回调口径已经就位。" />
+            <SectionTitle title="API 商业版" description="把研发风险诊断接入企业系统。客户可以把实验数据、生产数据或质检数据通过 API 提交，系统返回字段检查、风险排序、修复建议和报告结构。" />
+            <div className="mb-6 grid gap-4 md:grid-cols-3">
+              {[
+                ['1. 提交数据', '通过 POST /api/hfcd/audit 提交行业类型和 rows/csv。'],
+                ['2. 自动审计', '系统完成字段检查、风险评分、真实标签验证和修复建议生成。'],
+                ['3. 回写客户系统', '同步返回结果；后续可扩展 job_id、异步报告和 callback_url。'],
+              ].map(([title, body]) => (
+                <div key={title} className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="font-bold text-white">{title}</div>
+                  <p className="mt-2 text-sm leading-7 text-slate-400">{body}</p>
+                </div>
+              ))}
+            </div>
             <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
                   <h3 className="text-xl font-black text-white">API Key</h3>
-                  <p className="mt-2 text-sm leading-7 text-slate-400">前端生成本地商用台账；生产环境可在 Worker 配置 `HFCD_API_KEYS` 后启用服务端校验。</p>
+                  <p className="mt-2 text-sm leading-7 text-slate-400">这里先生成本地商用台账，便于演示调用次数和客户密钥管理。生产环境如需强制鉴权，需要在 Cloudflare Worker 环境变量中配置 `HFCD_API_KEYS`。</p>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <button onClick={handleGenerateApiKey} className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b]">
                       生成 API Key
@@ -1405,6 +1524,12 @@ export function HFCDWorkbench() {
                     </button>
                   </div>
                   {apiTestResult ? <div className="mt-3 rounded-2xl border border-white/8 bg-black/10 px-4 py-3 text-sm text-slate-300">{apiTestResult}</div> : null}
+                  {apiResponsePreview ? (
+                    <details className="mt-3 rounded-2xl border border-white/8 bg-black/10 p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-white">查看最近一次返回结果</summary>
+                      <pre className="mt-3 max-h-[360px] overflow-auto text-xs leading-6 text-slate-300"><code>{apiResponsePreview}</code></pre>
+                    </details>
+                  ) : null}
                   <div className="mt-4 space-y-3">
                     {apiKeys.map((item) => (
                       <div key={item.id} className="rounded-2xl border border-white/8 bg-black/10 p-4">
@@ -1423,7 +1548,7 @@ export function HFCDWorkbench() {
                   <h3 className="text-xl font-black text-white">商业化参数</h3>
                   <div className="mt-4 space-y-3 text-sm leading-7 text-slate-300">
                     <div>Endpoint：<span className="font-mono text-[#9df4d7]">POST /api/hfcd/audit</span></div>
-                    <div>模型名称：<span className="font-mono text-[#9df4d7]">hfcd-v1</span></div>
+                    <div>模型名称：<span className="font-mono text-[#9df4d7]">研发增强模型 v1</span></div>
                     <div>行业参数版本：<span className="font-mono text-[#9df4d7]">quantum/materials/energy/bio@v1.2-core</span></div>
                     <div>回调字段：<span className="font-mono text-[#9df4d7]">callback_url</span> 已预留给异步报告生成。</div>
                   </div>
@@ -1444,7 +1569,7 @@ export function HFCDWorkbench() {
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     {[
                       ['validation', '字段完整性、可计算字段、字段体检。'],
-                      ['summary', '样本数、全部达标/核心达标、高风险数、主要风险类型。'],
+                      ['summary', '样本数、全部达标、核心达标、高风险数、主要风险类型。'],
                       ['gateSafety', '七类指标通过/未通过统计，可直接画图。'],
                       ['blindMetrics', 'AUC、precision@top10%、baseline 对比、提前预警。'],
                       ['results', '每个样本的指标数值、通过状态、风险分和可读诊断。'],

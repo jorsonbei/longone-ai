@@ -789,6 +789,7 @@ export default function App() {
               activeChat={activeChat}
               onSelectChat={setActiveChatId}
               onDeleteChat={deleteChat}
+              onOpenHFCD={() => setActiveView('hfcd')}
               updateField={updateField}
               updateListField={updateListField}
               addListFieldItem={addListFieldItem}

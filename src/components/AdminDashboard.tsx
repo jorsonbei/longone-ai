@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, FileText, MessagesSquare, Plus, Settings2, Shield, Trash2 } from 'lucide-react';
+import { Activity, BarChart3, ClipboardCheck, Database, FileText, KeyRound, MessagesSquare, Plus, Settings2, Shield, Trash2, Upload } from 'lucide-react';
 import { ChatSession, WuxingRecord } from '../types';
 import { OfficialSiteContent } from '../content/officialSiteContent';
 import { AdminContentDraft } from '../hooks/useAdminContent';
 import { WuxingConfig } from '../lib/wuxingKernel';
+import { FAILURE_MODE_LABELS, HFCD_GATE_EXPLANATIONS, HFCD_INDUSTRIES } from '../lib/hfcdCore';
 
 interface AdminDashboardProps {
   userEmail?: string | null;
@@ -14,6 +15,7 @@ interface AdminDashboardProps {
   activeChat: ChatSession | null;
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
+  onOpenHFCD: () => void;
   updateField: (field: keyof Omit<AdminContentDraft, 'industries' | 'definitionParagraphs' | 'whyNowBullets' | 'evidenceHighlights' | 'evidenceMetrics' | 'faq'>, value: string) => void;
   updateListField: (field: 'definitionParagraphs' | 'whyNowBullets', index: number, value: string) => void;
   addListFieldItem: (field: 'definitionParagraphs' | 'whyNowBullets') => void;
@@ -40,6 +42,7 @@ interface AdminDashboardProps {
 
 const TABS = [
   { id: 'overview', label: '仪表盘', icon: BarChart3 },
+  { id: 'rnd', label: '研发增强模型', icon: Activity },
   { id: 'content', label: '内容管理', icon: FileText },
   { id: 'chats', label: '会话管理', icon: MessagesSquare },
   { id: 'system', label: '系统设置', icon: Settings2 },
@@ -147,6 +150,16 @@ function ToggleRow({
   );
 }
 
+function AdminMetricCard({ label, value, note }: { label: string; value: React.ReactNode; note: string }) {
+  return (
+    <div className="rounded-[26px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-5">
+      <div className="text-xs font-bold uppercase tracking-[0.22em] text-slate-500">{label}</div>
+      <div className="mt-4 text-4xl font-black tracking-tight text-white">{value}</div>
+      <p className="mt-3 text-sm leading-7 text-slate-400">{note}</p>
+    </div>
+  );
+}
+
 export function AdminDashboard({
   userEmail,
   content,
@@ -156,6 +169,7 @@ export function AdminDashboard({
   activeChat,
   onSelectChat,
   onDeleteChat,
+  onOpenHFCD,
   updateField,
   updateListField,
   addListFieldItem,
@@ -286,6 +300,110 @@ export function AdminDashboard({
                   <p className="mt-3 text-sm leading-7 text-slate-400">{item.note}</p>
                 </div>
               ))}
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === 'rnd' ? (
+          <section className="mt-8">
+            <PanelTitle
+              title="芯片、材料、能源研发增强模型"
+              description="这里是研发增强模型的后台管理入口：查看模块能力、生产配置、API 接入状态和客户演示路径。完整数据上传与报告生成仍进入专用工作台执行。"
+            />
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <AdminMetricCard label="覆盖行业" value={Object.keys(HFCD_INDUSTRIES).length} note="量子芯片、新材料、新能源、生命科学。" />
+              <AdminMetricCard label="关键指标" value={Object.keys(HFCD_GATE_EXPLANATIONS).length} note="核心状态、运行负荷、支撑条件、关键性能、风险扩散、交付达标率、安全余量。" />
+              <AdminMetricCard label="风险类型" value={Object.keys(FAILURE_MODE_LABELS).length} note="用于把高风险样本转成可解释的研发动作。" />
+              <AdminMetricCard label="API Endpoint" value={<span className="text-xl">/api/hfcd/audit</span>} note="企业系统集成入口，支持 rows 或 csv 输入。" />
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,1.05fr)]">
+              <div className="space-y-5">
+                <SectionCard title="前台入口与工作台" description="用户在侧边栏看到的是“芯片、材料、能源 / 研发增强模型”。管理后台负责看状态和配置，工作台负责跑数据。">
+                  <div className="rounded-2xl border border-[#52DBA9]/16 bg-[#52DBA9]/8 p-4">
+                    <div className="text-sm font-black text-white">前台入口文案</div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-500">标题</div>
+                        <div className="mt-2 text-2xl font-black text-white">芯片、材料、能源</div>
+                      </div>
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-4">
+                        <div className="text-xs uppercase tracking-[0.2em] text-slate-500">副标题</div>
+                        <div className="mt-2 text-2xl font-black text-white">研发增强模型</div>
+                      </div>
+                    </div>
+                    <button onClick={onOpenHFCD} className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]">
+                      <Activity className="h-4 w-4" />
+                      打开完整工作台
+                    </button>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {[
+                      [Upload, '数据上传', '上传 CSV，检查字段，运行审计，生成样本级诊断。'],
+                      [ClipboardCheck, '盲测验证', '用 actual_failure 标签验证风险排序、Top10 命中率和提前预警。'],
+                      [Database, '项目空间', '按企业项目管理数据集、报告、成员和多轮趋势。'],
+                      [KeyRound, 'API 商业版', '提供企业集成接口、API Key 台账、调用示例和返回结构。'],
+                    ].map(([Icon, title, body]) => {
+                      const IconComponent = Icon as React.ElementType;
+                      return (
+                        <div key={title as string} className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                          <div className="flex items-center gap-2 text-sm font-bold text-white">
+                            <IconComponent className="h-4 w-4 text-[#8dffdf]" />
+                            {title as string}
+                          </div>
+                          <p className="mt-2 text-xs leading-6 text-slate-400">{body as string}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="生产配置清单" description="这些配置决定它是否能从演示工具变成企业可接入服务。">
+                  <div className="space-y-3">
+                    {[
+                      ['Cloudflare Worker', '已部署 longone-ai，前端和 /api/hfcd/audit 共用同一个 Worker。'],
+                      ['HFCD_API_KEYS', '如需强制鉴权，在 Worker 环境变量中配置逗号分隔的生产 API Key。'],
+                      ['报告存储', '当前报告历史为浏览器本地优先；企业版应迁移到 Firestore 或对象存储。'],
+                      ['异步报告', '当前 API 为同步返回；大文件或 PDF 报告建议升级为 job_id + callback_url。'],
+                    ].map(([label, body]) => (
+                      <div key={label} className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
+                        <div className="text-sm font-semibold text-white">{label}</div>
+                        <div className="mt-1 text-xs leading-6 text-slate-500">{body}</div>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+              </div>
+
+              <div className="space-y-5">
+                <SectionCard title="行业模板与客户解释" description="后台需要保证客户拿到模板后知道每个字段为什么重要，而不是只看到一堆代码名。">
+                  <div className="grid gap-3">
+                    {Object.values(HFCD_INDUSTRIES).map((industry) => (
+                      <div key={industry.id} className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-black text-white">{industry.title}</div>
+                            <div className="mt-1 text-xs text-slate-500">{industry.fields.length} 个字段 · 模板 {industry.templateFileName}</div>
+                          </div>
+                          <span className="rounded-full bg-[#52DBA9]/12 px-3 py-1 text-[11px] font-bold text-[#9df4d7]">{industry.shortTitle}</span>
+                        </div>
+                        <p className="mt-3 text-xs leading-6 text-slate-400">{industry.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="对客户怎么讲" description="用于销售、演示和客户培训的统一口径。">
+                  <div className="space-y-3 text-sm leading-8 text-slate-300">
+                    <p>1. 先不用客户改系统，只让客户上传一份脱敏 CSV。</p>
+                    <p>2. 系统自动找出高风险样本、主要风险原因和优先修复动作。</p>
+                    <p>3. 如果客户提供历史真实失效标签，就用盲测验证证明它是否比客户原模型更早发现风险。</p>
+                    <p>4. 如果客户要接入生产系统，再进入 API 商业版和企业项目空间。</p>
+                  </div>
+                </SectionCard>
+              </div>
             </div>
           </section>
         ) : null}
