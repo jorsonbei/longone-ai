@@ -367,15 +367,17 @@ function FailureModeChart({ results }: { results: HFCDAuditResult[] }) {
 function GateSafetyChart({ results }: { results: HFCDAuditResult[] }) {
   const gates = summarizeGateSafety(results);
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3">
       {gates.map((gate) => (
-        <div key={gate.gate} className="rounded-2xl border border-white/8 bg-black/10 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-mono text-xs text-[#9df4d7]">{gate.gate}</div>
-              <div className="mt-1 text-sm font-bold text-white">{gate.label}</div>
+        <div key={gate.gate} className="relative overflow-hidden rounded-2xl border border-white/8 bg-black/10 p-4">
+          <div className="pr-20">
+            <div className="min-w-0">
+              <div className="truncate font-mono text-xs text-[#9df4d7]" title={gate.gate}>{gate.gate}</div>
+              <div className="mt-1 text-sm font-bold leading-6 text-white">{gate.label}</div>
             </div>
-            <div className="text-right text-sm font-black text-white">{Math.round(gate.safeRate * 100)}%</div>
+          </div>
+          <div className="absolute right-4 top-4 rounded-full bg-white/8 px-2.5 py-1 text-sm font-black text-white">
+            {Math.round(gate.safeRate * 100)}%
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-red-500/16">
             <div className="h-full rounded-full bg-[#52DBA9]" style={{ width: `${gate.safeRate * 100}%` }} />
