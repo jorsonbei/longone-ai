@@ -150,10 +150,10 @@ function buildClientHtmlReport({
   const topRisk = [...results].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10);
   const conclusion =
     summary.highRiskCount > 0
-      ? `本批数据出现 ${summary.highRiskCount} 个高风险样本，主失效模式为 ${summary.primaryFailureMode}。建议先锁定 Top Risk 样本做研发复盘。`
+      ? `本批数据出现 ${summary.highRiskCount} 个高风险样本，主要风险为 ${compactFailureMode(summary.primaryFailureMode)}。建议先锁定风险最高的样本做研发复盘。`
       : summary.strictStableCount === summary.sampleCount && summary.sampleCount > 0
-        ? '本批数据整体处于严格稳定窗，可作为当前阶段的基准窗口。'
-        : `本批数据处于临界状态，主失效模式为 ${summary.primaryFailureMode}，建议先修复未通过的稳定门。`;
+        ? '本批数据整体处于全部达标状态，可作为当前阶段的参考样本。'
+        : `本批数据处于临界状态，主要风险为 ${compactFailureMode(summary.primaryFailureMode)}，建议先修复未通过的关键指标。`;
 
   return `<!doctype html>
 <html lang="zh">
@@ -189,8 +189,8 @@ function buildClientHtmlReport({
     <p class="muted">行业：${escapeHtml(spec.title)}。${escapeHtml(conclusion)}</p>
     <div class="grid metrics">
       <div class="metric"><b>${summary.sampleCount}</b><span>样本数</span></div>
-      <div class="metric"><b>${summary.strictStableCount}</b><span>strict stable</span></div>
-      <div class="metric"><b>${summary.looseStableCount}</b><span>loose stable</span></div>
+      <div class="metric"><b>${summary.strictStableCount}</b><span>全部达标</span></div>
+      <div class="metric"><b>${summary.looseStableCount}</b><span>核心达标</span></div>
       <div class="metric"><b>${summary.highRiskCount}</b><span>高风险样本</span></div>
       <div class="metric"><b>${summary.averageRiskScore}</b><span>平均风险分</span></div>
     </div>
@@ -198,12 +198,12 @@ function buildClientHtmlReport({
 
   <h2>字段解释</h2>
   <table>
-    <thead><tr><th>字段</th><th>业务含义</th><th>影响门</th><th>推荐区间</th><th>风险信号</th></tr></thead>
+    <thead><tr><th>字段</th><th>业务含义</th><th>推荐区间</th><th>风险信号</th></tr></thead>
     <tbody>
       ${fields
         .map(
           (field) =>
-            `<tr><td><code>${escapeHtml(field.key)}</code><br />${escapeHtml(field.label)}</td><td>${escapeHtml(field.plainMeaning || field.description)}</td><td>${escapeHtml(field.hfcdGate || '-')}</td><td>${escapeHtml(field.goodRange || '-')}</td><td>${escapeHtml(field.riskSignal || '-')}</td></tr>`,
+            `<tr><td><code>${escapeHtml(field.key)}</code><br />${escapeHtml(field.label)}</td><td>${escapeHtml(field.plainMeaning || field.description)}</td><td>${escapeHtml(field.goodRange || '-')}</td><td>${escapeHtml(field.riskSignal || '-')}</td></tr>`,
         )
         .join('')}
     </tbody>
@@ -214,11 +214,11 @@ function buildClientHtmlReport({
     .map((result) => {
       const severityClass = result.readable.severity === '高风险' ? 'high' : result.readable.severity === '临界' ? 'risk' : '';
       return `<article class="card">
-        <span class="pill ${severityClass}">${escapeHtml(result.readable.severity)} · risk ${result.risk_score}</span>
-        <h3>${escapeHtml(result.sample_id)} · ${escapeHtml(result.failure_mode)}</h3>
+        <span class="pill ${severityClass}">${escapeHtml(result.readable.severity)} · 风险分 ${result.risk_score}</span>
+        <h3>${escapeHtml(result.sample_id)} · ${escapeHtml(compactFailureMode(result.failure_mode))}</h3>
         <div class="grid cols">
           <div><b>业务解释</b><p class="small">${escapeHtml(result.readable.businessSummary)}</p></div>
-          <div><b>HFCD 变量</b><p class="small">${escapeHtml(result.readable.hfcdSummary)}</p></div>
+          <div><b>关键指标</b><p class="small">${escapeHtml(result.readable.hfcdSummary)}</p></div>
           <div><b>修复方案</b><p class="small">${escapeHtml(result.readable.repairSummary)}</p></div>
         </div>
       </article>`;
@@ -228,7 +228,7 @@ function buildClientHtmlReport({
   <h2>盲测指标</h2>
   <div class="card">
     <p>actual_failure 标签：${validation.hasActualFailure ? '已检测' : '未提供'}；AUC：${validation.auc ?? 'N/A'}；precision@top10%：${validation.precisionTop10 ?? 'N/A'}。</p>
-    <p class="small">运行边界：当前为 HFCD Stability-Window Audit，不是完整 V12.x 场动力学仿真。深度仿真需要更多物理参数、工艺参数、边界条件和数字孪生输入。</p>
+    <p class="small">说明：当前报告用于快速审计历史实验、生产、寿命或质检数据；如需深度仿真，可在下一阶段补充物理参数、工艺参数、边界条件和数字孪生输入。</p>
   </div>
 </main>
 </body>
@@ -295,7 +295,12 @@ function IndustryCard({
 }
 
 function compactFailureMode(mode: string) {
-  return mode.replace(/_/g, ' ');
+  if (mode === 'none') return '无明显主要风险';
+  return FAILURE_MODE_LABELS[mode as HFCDFailureMode] || mode.replace(/_/g, ' ');
+}
+
+function compactGateLabel(gate: (typeof gateLabels)[number]) {
+  return HFCD_GATE_EXPLANATIONS[gate]?.label || gate;
 }
 
 function createId(prefix: string) {
@@ -342,7 +347,7 @@ function splitBlindSets(results: HFCDAuditResult[]) {
 function FailureModeChart({ results }: { results: HFCDAuditResult[] }) {
   const summary = summarizeAudit(results);
   const entries = Object.entries(summary.failureModeCounts).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return <div className="rounded-2xl border border-white/8 bg-black/10 p-4 text-sm text-slate-500">暂无 FailureMode 分布。</div>;
+  if (!entries.length) return <div className="rounded-2xl border border-white/8 bg-black/10 p-4 text-sm text-slate-500">暂无风险类型分布。</div>;
 
   return (
     <div className="space-y-3">
@@ -351,7 +356,7 @@ function FailureModeChart({ results }: { results: HFCDAuditResult[] }) {
         return (
           <div key={mode}>
             <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="font-mono text-slate-300">{mode}</span>
+              <span className="text-slate-300">{compactFailureMode(mode)}</span>
               <span className="text-slate-500">{count}</span>
             </div>
             <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/8">
@@ -372,8 +377,8 @@ function GateSafetyChart({ results }: { results: HFCDAuditResult[] }) {
         <div key={gate.gate} className="relative overflow-hidden rounded-2xl border border-white/8 bg-black/10 p-4">
           <div className="pr-20">
             <div className="min-w-0">
-              <div className="truncate font-mono text-xs text-[#9df4d7]" title={gate.gate}>{gate.gate}</div>
-              <div className="mt-1 text-sm font-bold leading-6 text-white">{gate.label}</div>
+              <div className="text-sm font-bold leading-6 text-white">{gate.label}</div>
+              <div className="mt-1 text-[11px] text-slate-500" title={gate.gate}>指标代码：{gate.gate}</div>
             </div>
           </div>
           <div className="absolute right-4 top-4 rounded-full bg-white/8 px-2.5 py-1 text-sm font-black text-white">
@@ -382,7 +387,7 @@ function GateSafetyChart({ results }: { results: HFCDAuditResult[] }) {
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-red-500/16">
             <div className="h-full rounded-full bg-[#52DBA9]" style={{ width: `${gate.safeRate * 100}%` }} />
           </div>
-          <div className="mt-2 text-[11px] text-slate-500">Safe {gate.safeCount} · Fail {gate.failCount}</div>
+          <div className="mt-2 text-[11px] text-slate-500">通过 {gate.safeCount} · 未通过 {gate.failCount}</div>
         </div>
       ))}
     </div>
@@ -407,8 +412,8 @@ function RiskHeatmap({ results }: { results: HFCDAuditResult[] }) {
     <div className="overflow-x-auto rounded-2xl border border-white/8 bg-black/10 p-4">
       <div className="min-w-[720px]">
         <div className="grid grid-cols-[170px_repeat(7,minmax(0,1fr))] gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-          <div>sample</div>
-          {gateLabels.map((gate) => <div key={gate}>{gate}</div>)}
+          <div>样本</div>
+          {gateLabels.map((gate) => <div key={gate}>{compactGateLabel(gate)}</div>)}
         </div>
         <div className="mt-3 space-y-2">
           {rows.map((result) => (
@@ -419,7 +424,7 @@ function RiskHeatmap({ results }: { results: HFCDAuditResult[] }) {
                 return (
                   <div
                     key={gate}
-                    title={`${gate}: ${result.gates[gate]}`}
+                    title={`${compactGateLabel(gate)}: ${result.gates[gate]}`}
                     className={`h-7 rounded-lg border ${safe ? 'border-[#52DBA9]/20 bg-[#52DBA9]/22' : 'border-red-400/20 bg-red-500/24'}`}
                   />
                 );
@@ -438,29 +443,29 @@ function IndustryRepairAdvice({ industry, results }: { industry: HFCDIndustry; r
   const adviceByIndustry: Record<HFCDIndustry, string[]> = {
     quantum: [
       '先按 Top Risk 样本复核 T1/T2、2Q error、readout error、leakage 与串扰窗口。',
-      '如果主病灶是 energy_surplus_overflow，优先做 pulse/drive 微闭合，不要直接全局重校准。',
-      '如果主病灶是 de_localized，先处理 ZZ crosstalk、frequency crowding 和 coupler avoid list。',
+      '如果主要风险是运行负荷过载，优先做 pulse/drive 小步收敛，不要直接全局重校准。',
+      '如果主要风险是风险外扩，先处理 ZZ crosstalk、frequency crowding 和 coupler avoid list。',
     ],
     materials: [
       '先锁定缺陷密度、裂纹长度和应力窗口最高的批次。',
-      '如果主病灶是 Q_loss，优先复核相纯度、成分偏析和晶相转变。',
-      '如果主病灶是 de_localized，优先压回缺陷扩散和裂纹扩展半径。',
+      '如果主要风险是核心状态退化，优先复核相纯度、成分偏析和晶相转变。',
+      '如果主要风险是风险外扩，优先压回缺陷扩散和裂纹扩展范围。',
     ],
     energy: [
       '先锁定阻抗增长、热风险和退化扩散最高的电芯/模组。',
-      '如果主病灶是 energy_surplus_overflow，优先收敛倍率、热管理和局部电化学过载。',
-      '如果主病灶是 buffer_decay，优先扩大 reserve_margin 而不是追求短期输出。',
+      '如果主要风险是运行负荷过载，优先收敛倍率、热管理和局部电化学过载。',
+      '如果主要风险是安全余量不足，优先扩大 reserve_margin 而不是追求短期输出。',
     ],
     bio: [
       '先锁定 cell identity、viability、metabolic load 和 heterogeneity 的异常批次。',
-      '如果主病灶是 cavity_underfill，优先修复培养环境、营养供给和气体交换。',
-      '如果主病灶是 de_localized，优先处理细胞状态分叉和亚群漂移。',
+      '如果主要风险是支撑条件不足，优先修复培养环境、营养供给和气体交换。',
+      '如果主要风险是风险外扩，优先处理细胞状态分叉和亚群漂移。',
     ],
   };
 
   return (
     <div className="rounded-[24px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
-      <div className="text-sm font-black text-white">行业化研发建议 · 主病灶 {primary}</div>
+      <div className="text-sm font-black text-white">行业化研发建议 · 主要风险 {compactFailureMode(primary)}</div>
       <div className="mt-3 grid gap-2">
         {adviceByIndustry[industry].map((item) => (
           <p key={item} className="text-sm leading-7 text-slate-300">{item}</p>
@@ -476,17 +481,17 @@ function ReportAnalyticsPanel({ industry, results }: { industry: HFCDIndustry; r
     <div className="space-y-5">
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-          <h3 className="text-lg font-black text-white">FailureMode 分布</h3>
+          <h3 className="text-lg font-black text-white">风险类型分布</h3>
           <div className="mt-4"><FailureModeChart results={results} /></div>
         </div>
         <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-          <h3 className="text-lg font-black text-white">Gate 安全统计</h3>
+          <h3 className="text-lg font-black text-white">稳定性指标通过率</h3>
           <div className="mt-4"><GateSafetyChart results={results} /></div>
         </div>
       </div>
       <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
         <h3 className="text-lg font-black text-white">风险热图</h3>
-        <p className="mt-1 text-sm text-slate-500">绿色为通过，红色为失效。按 risk_score 从高到低展示前 24 个样本。</p>
+        <p className="mt-1 text-sm text-slate-500">绿色为通过，红色为未通过。按风险分从高到低展示前 24 个样本。</p>
         <div className="mt-4"><RiskHeatmap results={results} /></div>
       </div>
       <IndustryRepairAdvice industry={industry} results={results} />
@@ -501,8 +506,8 @@ function GateLegendPanel() {
         ([key, gate]) => (
           <div key={key} className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs text-[#9df4d7]">{key}</span>
               <span className="text-sm font-bold text-white">{gate.label}</span>
+              <span className="rounded-full bg-white/6 px-2 py-0.5 text-[10px] text-slate-500">{key}</span>
             </div>
             <p className="mt-2 text-xs leading-6 text-slate-500">{gate.businessMeaning}</p>
             <div className="mt-2 text-[11px] font-semibold text-slate-400">安全线：{gate.safeRule}</div>
@@ -551,7 +556,7 @@ function ResultDiagnosisPanel({ results }: { results: HFCDAuditResult[] }) {
   if (!results.length) {
     return (
       <div className="rounded-[24px] border border-white/8 bg-black/10 p-6 text-sm text-slate-500">
-        运行分析后，这里会按“业务解释 / HFCD 变量 / 修复方案”三层展示每个样本。
+        运行分析后，这里会按“业务解释 / 关键指标 / 修复方案”三层展示每个样本。
       </div>
     );
   }
@@ -578,7 +583,7 @@ function ResultDiagnosisPanel({ results }: { results: HFCDAuditResult[] }) {
               >
                 {result.readable.severity}
               </span>
-              <span className="rounded-full bg-white/8 px-3 py-1 text-xs font-bold text-slate-300">risk {result.risk_score}</span>
+              <span className="rounded-full bg-white/8 px-3 py-1 text-xs font-bold text-slate-300">风险分 {result.risk_score}</span>
             </div>
           </div>
           <div className="mt-4 grid gap-3 lg:grid-cols-3">
@@ -587,7 +592,7 @@ function ResultDiagnosisPanel({ results }: { results: HFCDAuditResult[] }) {
               <p className="mt-3 text-sm leading-7 text-slate-300">{result.readable.businessSummary}</p>
             </div>
             <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
-              <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">HFCD 变量</div>
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">关键指标</div>
               <p className="mt-3 text-sm leading-7 text-slate-300">{result.readable.hfcdSummary}</p>
               <p className="mt-2 text-xs leading-6 text-slate-500">主驱动：{result.readable.primaryDrivers.join(' / ')}</p>
             </div>
@@ -736,8 +741,12 @@ export function HFCDWorkbench() {
   };
 
   const handleRunAudit = () => {
+    if (!rows.length) {
+      setUploadError('请先上传 CSV 文件，再运行分析。');
+      return;
+    }
     if (!validation.isValid) {
-      setUploadError(validation.missingRequired.length ? `缺少必填字段：${validation.missingRequired.join(', ')}` : '请先上传 CSV 数据。');
+      setUploadError(validation.missingRequired.length ? `缺少必填字段：${validation.missingRequired.join(', ')}` : '请先上传 CSV 文件，再运行分析。');
       return;
     }
     const nextResults = auditRecords(rows, industry);
@@ -877,14 +886,14 @@ export function HFCDWorkbench() {
         <table className="min-w-[1180px] w-full border-collapse text-left text-sm">
           <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.18em] text-slate-500">
             <tr>
-              <th className="px-4 py-3">sample</th>
+              <th className="px-4 py-3">样本</th>
               {gateLabels.map((gate) => (
-                <th key={gate} className="px-4 py-3">{gate}</th>
+                <th key={gate} className="px-4 py-3">{compactGateLabel(gate)}</th>
               ))}
-              <th className="px-4 py-3">strict</th>
-              <th className="px-4 py-3">loose</th>
-              <th className="px-4 py-3">FailureMode</th>
-              <th className="px-4 py-3">risk</th>
+              <th className="px-4 py-3">全部达标</th>
+              <th className="px-4 py-3">核心达标</th>
+              <th className="px-4 py-3">风险类型</th>
+              <th className="px-4 py-3">风险分</th>
             </tr>
           </thead>
           <tbody>
@@ -894,11 +903,11 @@ export function HFCDWorkbench() {
                 {gateLabels.map((gate) => (
                   <td key={gate} className="px-4 py-3 font-mono text-xs">{result.gates[gate]}</td>
                 ))}
-                <td className="px-4 py-3">{result.strict_stable ? 'yes' : 'no'}</td>
-                <td className="px-4 py-3">{result.loose_stable ? 'yes' : 'no'}</td>
+                <td className="px-4 py-3">{result.strict_stable ? '是' : '否'}</td>
+                <td className="px-4 py-3">{result.loose_stable ? '是' : '否'}</td>
                 <td className="px-4 py-3">
                   <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${result.failure_mode === 'stable' ? 'bg-[#52DBA9]/14 text-[#9df4d7]' : 'bg-amber-500/12 text-amber-200'}`}>
-                    {result.failure_mode}
+                    {compactFailureMode(result.failure_mode)}
                   </span>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{result.risk_score}</td>
@@ -920,9 +929,9 @@ export function HFCDWorkbench() {
                 <Activity className="h-3.5 w-3.5" />
                 HFCD Stability-Window Audit
               </div>
-              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">HFCD 稳定窗审计系统</h1>
+              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">HFCD 稳定性审计系统</h1>
               <p className="mt-4 max-w-4xl text-base leading-8 text-slate-300 md:text-lg">
-                上传行业数据，系统自动映射 Q 核、能量、腔体、核心峰值、半径局域、显化门与缓冲七个稳定门，识别稳定窗、失效模式、风险样本，并输出研发修复方案。
+                上传实验、生产或质检数据，系统会自动检查核心状态、运行负荷、支撑条件、关键性能、风险扩散、交付达标率和安全余量，找出高风险样本，并生成可执行的研发修复建议。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
@@ -931,24 +940,12 @@ export function HFCDWorkbench() {
                 >
                   进入数据上传
                 </button>
-                <button
-                  onClick={() => setActiveTab('templates')}
-                  className="rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/[0.08]"
-                >
-                  下载行业模板
-                </button>
-                <button
-                  onClick={handleCreateProject}
-                  className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-5 py-3 text-sm font-semibold text-[#9df4d7] transition-colors hover:bg-[#52DBA9]/16"
-                >
-                  创建项目空间
-                </button>
               </div>
             </div>
             <div className="rounded-[28px] border border-white/8 bg-black/15 p-5">
-              <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">运行边界</div>
+              <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">产品价值</div>
               <p className="mt-3 text-sm leading-7 text-slate-300">
-                第一阶段运行的是 HFCD Audit Engine，不是完整 V12.x 场仿真。它先把客户数据转成稳定窗审计结果；深度客户再进入 Simulation Mode。
+                让研发团队不用再从海量表格里人工找问题。上传一份 CSV，就能快速定位最危险的样本、主要失效原因和优先修复动作，把研发复盘从“凭经验讨论”推进到“按证据决策”。
               </p>
             </div>
           </div>
@@ -981,8 +978,8 @@ export function HFCDWorkbench() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="已分析项目数" value={dashboardStats.projectCount} note="本机报告中心记录的项目数。" />
               <MetricCard label="总样本数" value={dashboardStats.sampleCount} note="所有报告累计样本。" />
-              <MetricCard label="strict stable" value={dashboardStats.strictStableCount} note="七门全部通过的样本。" />
-              <MetricCard label="高风险样本" value={dashboardStats.highRiskCount} note="risk_score >= 0.43。" />
+              <MetricCard label="全部达标样本" value={dashboardStats.strictStableCount} note="七类关键指标全部通过的样本。" />
+              <MetricCard label="高风险样本" value={dashboardStats.highRiskCount} note="风险分进入高位的样本。" />
             </div>
             <div className="mt-8 grid gap-5 lg:grid-cols-2">
               {(Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((item) => (
@@ -1002,7 +999,7 @@ export function HFCDWorkbench() {
 
         {activeTab === 'upload' ? (
           <section className="mt-8">
-            <SectionTitle title="数据上传与 HFCD 分析" description="选择行业、上传 CSV、检查字段完整性，然后运行七门稳定窗审计。第一期重点是可演示、可下载、可交付。" />
+            <SectionTitle title="数据上传与风险分析" description="选择行业、上传 CSV，系统会检查字段是否完整，并自动识别高风险样本、主要问题和研发修复建议。" />
             <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
@@ -1085,8 +1082,8 @@ export function HFCDWorkbench() {
               <div className="space-y-6">
                 <div className="grid gap-4 md:grid-cols-4">
                   <MetricCard label="样本数" value={summary.sampleCount} note="当前分析结果。" />
-                  <MetricCard label="strict" value={summary.strictStableCount} note="七门全通过。" />
-                  <MetricCard label="loose" value={summary.looseStableCount} note="核心四门通过。" />
+                  <MetricCard label="全部达标" value={summary.strictStableCount} note="七类关键指标全部通过。" />
+                  <MetricCard label="核心达标" value={summary.looseStableCount} note="核心指标通过。" />
                   <MetricCard label="高风险" value={summary.highRiskCount} note="风险分进入高位。" />
                 </div>
 
@@ -1094,7 +1091,7 @@ export function HFCDWorkbench() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="text-xl font-black tracking-tight text-white">结果表</h3>
-                      <p className="mt-1 text-sm text-slate-500">先看样本诊断，再看变量明细。结果按“业务解释 / HFCD 变量 / 修复方案”三层输出。</p>
+                      <p className="mt-1 text-sm text-slate-500">先看样本诊断，再看指标明细。结果按“业务解释 / 关键指标 / 修复方案”三层输出。</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button disabled={!results.length} onClick={downloadCurrentCsv} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 disabled:opacity-40">下载 CSV</button>
@@ -1179,12 +1176,12 @@ export function HFCDWorkbench() {
 
         {activeTab === 'reports' ? (
           <section className="mt-8">
-            <SectionTitle title="报告中心" description="报告中心已经进入咨询交付形态：趋势对比、风险热图、Gate 安全统计、FailureMode 分布、HTML 与打印/PDF 都在这里完成。" />
+            <SectionTitle title="报告中心" description="报告中心已经进入咨询交付形态：趋势对比、风险热图、稳定性指标通过率、风险类型分布、HTML 与打印/PDF 都在这里完成。" />
             <div className="mb-5 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-xl font-black text-white">多轮报告对比</h3>
-                  <p className="mt-1 text-sm text-slate-500">当前项目空间：{activeProject?.name || '未选择'}。按时间线追踪 strict stable、高风险样本和平均风险分。</p>
+                  <p className="mt-1 text-sm text-slate-500">当前项目空间：{activeProject?.name || '未选择'}。按时间线追踪全部达标样本、高风险样本和平均风险分。</p>
                 </div>
                 <button onClick={() => setActiveTab('projects')} className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-4 py-2 text-xs font-semibold text-[#9df4d7]">进入项目空间</button>
               </div>
@@ -1196,8 +1193,8 @@ export function HFCDWorkbench() {
                       <div className="truncate text-sm font-bold text-white">{report.projectName}</div>
                       <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">{formatDate(report.createdAt)}</div>
                       <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                        <div><div className="text-lg font-black text-[#9df4d7]">{reportSummary.strictStableCount}</div><div className="text-slate-500">strict</div></div>
-                        <div><div className="text-lg font-black text-red-200">{reportSummary.highRiskCount}</div><div className="text-slate-500">risk</div></div>
+                        <div><div className="text-lg font-black text-[#9df4d7]">{reportSummary.strictStableCount}</div><div className="text-slate-500">达标</div></div>
+                        <div><div className="text-lg font-black text-red-200">{reportSummary.highRiskCount}</div><div className="text-slate-500">风险</div></div>
                         <div><div className="text-lg font-black text-white">{reportSummary.averageRiskScore}</div><div className="text-slate-500">avg</div></div>
                       </div>
                     </div>
@@ -1227,9 +1224,9 @@ export function HFCDWorkbench() {
                     </div>
                     <div className="mt-5 grid gap-3 md:grid-cols-5">
                       <MetricCard label="样本" value={reportSummary.sampleCount} note="本报告样本数。" />
-                      <MetricCard label="strict" value={reportSummary.strictStableCount} note="严格稳定。" />
+                      <MetricCard label="全部达标" value={reportSummary.strictStableCount} note="全部关键指标通过。" />
                       <MetricCard label="高风险" value={reportSummary.highRiskCount} note="风险窗口。" />
-                      <MetricCard label="主失效" value={<span className="text-xl">{compactFailureMode(reportSummary.primaryFailureMode)}</span>} note="非 stable 第一病灶。" />
+                      <MetricCard label="主要风险" value={<span className="text-xl">{compactFailureMode(reportSummary.primaryFailureMode)}</span>} note="最主要的问题类型。" />
                       <MetricCard label="平均风险" value={reportSummary.averageRiskScore} note="整体风险面。" />
                     </div>
                     <div className="mt-5">
@@ -1379,7 +1376,7 @@ export function HFCDWorkbench() {
                               style={{ width: `${reportSummary.sampleCount ? (reportSummary.strictStableCount / reportSummary.sampleCount) * 100 : 0}%` }}
                             />
                           </div>
-                          <div className="mt-2 text-xs text-slate-500">strict {reportSummary.strictStableCount}/{reportSummary.sampleCount} · high risk {reportSummary.highRiskCount} · avg {reportSummary.averageRiskScore}</div>
+                          <div className="mt-2 text-xs text-slate-500">达标 {reportSummary.strictStableCount}/{reportSummary.sampleCount} · 高风险 {reportSummary.highRiskCount} · 平均 {reportSummary.averageRiskScore}</div>
                         </div>
                       );
                     })}
@@ -1447,10 +1444,10 @@ export function HFCDWorkbench() {
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     {[
                       ['validation', '字段完整性、可计算字段、字段体检。'],
-                      ['summary', '样本数、strict/loose、高风险数、主 FailureMode。'],
-                      ['gateSafety', '七门 safe/fail 统计，可直接画图。'],
+                      ['summary', '样本数、全部达标/核心达标、高风险数、主要风险类型。'],
+                      ['gateSafety', '七类指标通过/未通过统计，可直接画图。'],
                       ['blindMetrics', 'AUC、precision@top10%、baseline 对比、提前预警。'],
-                      ['results', '每个样本的 gates、gate_status、risk_score、readable diagnosis。'],
+                      ['results', '每个样本的指标数值、通过状态、风险分和可读诊断。'],
                       ['callback', '后续异步报告生成后回调客户系统。'],
                     ].map(([key, body]) => (
                       <div key={key} className="rounded-2xl border border-white/8 bg-black/10 p-4">
@@ -1477,9 +1474,9 @@ export function HFCDWorkbench() {
 
         {activeTab === 'knowledge' ? (
           <section className="mt-8">
-            <SectionTitle title="HFCD 知识库" description="把内部 V12.x 规则沉淀成客户看得懂的 FailureMode 字典。系统不是黑箱分类器，而是有物理机制和研发动作的诊断引擎。" />
+            <SectionTitle title="诊断规则库" description="把研发规则沉淀成客户看得懂的风险类型字典。系统不是黑箱分类器，而是能解释原因并给出研发动作的诊断引擎。" />
             <div className="mb-8 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-              <h3 className="mb-4 text-xl font-black tracking-tight text-white">七门稳定窗</h3>
+              <h3 className="mb-4 text-xl font-black tracking-tight text-white">七类稳定性指标</h3>
               <GateLegendPanel />
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
@@ -1489,7 +1486,7 @@ export function HFCDWorkbench() {
                     <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#52DBA9]/16 bg-[#52DBA9]/10 text-[#9df4d7]">
                       <Gauge className="h-4 w-4" />
                     </div>
-                    <h3 className="text-xl font-black text-white">{mode}</h3>
+                    <h3 className="text-xl font-black text-white">{compactFailureMode(mode)}</h3>
                   </div>
                   <p className="mt-4 text-sm leading-8 text-slate-300">{BASE_REPAIR_PLANS[mode]}</p>
                 </div>
@@ -1502,7 +1499,7 @@ export function HFCDWorkbench() {
               </div>
               <div className="mt-5 grid gap-4 md:grid-cols-3">
                 {[
-                  ['快速审计模式', '默认 SaaS 模式：上传历史实验/生产/寿命/批次数据，输出风险评分、FailureMode、稳定窗、修复建议和报告。'],
+                  ['快速审计模式', '默认 SaaS 模式：上传历史实验/生产/寿命/批次数据，输出风险评分、风险类型、稳定状态、修复建议和报告。'],
                   ['冻结参数盲测模式', '客户提供历史数据和 actual_failure 标签，系统冻结 HFCD 参数并输出 AUC、precision@top10% 和提前预警能力。'],
                   ['深度仿真模式', '高级合作模式：输入物理参数、工艺参数、边界条件和数字孪生空间，生成候选研发路线。'],
                 ].map(([title, body]) => (

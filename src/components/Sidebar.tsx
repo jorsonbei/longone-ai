@@ -45,13 +45,13 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
   };
   const currentLocaleOption = LOCALE_OPTIONS.find((option) => option.value === locale) || LOCALE_OPTIONS[0];
   const hfcdLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
-    en: { title: 'HFCD Audit', subtitle: 'Stability-window industry engine' },
-    zh: { title: 'HFCD 工具', subtitle: '稳定窗审计与研发方案' },
-    fr: { title: 'Audit HFCD', subtitle: 'Moteur de stabilite industrielle' },
-    es: { title: 'Auditoria HFCD', subtitle: 'Motor de ventanas estables' },
-    vi: { title: 'Kiem dinh HFCD', subtitle: 'Dong co cua so on dinh' },
-    de: { title: 'HFCD Audit', subtitle: 'Stabilitaetsfenster fuer Industrie' },
-    ja: { title: 'HFCD監査', subtitle: '安定窓の産業エンジン' },
+    en: { title: 'Risk Diagnosis', subtitle: 'Upload data, get repair actions' },
+    zh: { title: '芯片、材料、能源', subtitle: '研发增强模型' },
+    fr: { title: 'Diagnostic risque', subtitle: 'Importez les donnees, obtenez les actions' },
+    es: { title: 'Diagnostico de riesgo', subtitle: 'Sube datos y recibe acciones' },
+    vi: { title: 'Chan doan rui ro', subtitle: 'Tai du lieu, nhan cach sua' },
+    de: { title: 'Risikodiagnose', subtitle: 'Daten hochladen, Massnahmen erhalten' },
+    ja: { title: 'リスク診断', subtitle: 'データから修復案を生成' },
   };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {

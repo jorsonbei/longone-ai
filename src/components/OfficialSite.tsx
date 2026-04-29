@@ -35,28 +35,28 @@ const hfcdSectionCopy: Record<Locale, {
 }> = {
   en: {
     eyebrow: 'Industry Intelligence Tool',
-    title: 'HFCD Stability-Window Audit',
-    body: 'A cross-industry stability diagnosis and R&D repair-plan system for quantum chips, advanced materials, new energy, and life sciences. Upload experimental or production data; HFCD identifies stability windows, failure modes, risk samples, and repair routes.',
-    primary: 'Enter HFCD Tool',
+    title: 'Risk Diagnosis for R&D Data',
+    body: 'Upload experimental, production, lifetime, or QA data. The system identifies high-risk samples, likely failure causes, and practical repair actions for quantum chips, advanced materials, new energy, and life sciences.',
+    primary: 'Start Risk Diagnosis',
     secondary: 'View Industry Mapping',
     gates: [
-      'Q core: protect system identity before capability drifts into noise.',
-      'Energy: detect energy_surplus_overflow and ultra-micro surplus.',
-      'Cavity and radius: judge support capacity and boundary diffusion.',
-      'Manifestation and buffer: catch the edge between usable and unstable.',
+      'Core state: detect whether key identity indicators are drifting.',
+      'Operating load: identify overload, overheating, or overdrive risks.',
+      'Support and spread: judge whether structure can carry output and contain risk.',
+      'Delivery and margin: show whether a seemingly usable system is approaching failure.',
     ],
   },
   zh: {
     eyebrow: '产业智能工具',
-    title: 'HFCD 稳定窗审计',
-    body: '面向量子芯片、新材料、新能源、生命科学的跨行业稳定性诊断与研发方案生成系统。上传实验或生产数据，HFCD 自动识别稳定窗、失效模式、风险样本，并生成研发修复方案。',
-    primary: '进入 HFCD 工具',
+    title: '研发数据风险诊断',
+    body: '上传实验、生产、寿命或质检数据，系统自动找出高风险样本、主要失效原因和优先修复动作，帮助量子芯片、新材料、新能源、生命科学团队更快做研发决策。',
+    primary: '开始风险诊断',
     secondary: '查看产业映射',
     gates: [
-      'Q 核：守住系统身份，不让能力漂移成噪声。',
-      '能量：识别 energy_surplus_overflow 和微溢出。',
-      '腔体与半径：判断结构是否承载、扩散是否越界。',
-      '显化与缓冲：判断看似可用的系统是否正在进入失稳边界。',
+      '核心状态：识别关键指标是否漂移。',
+      '运行负荷：识别过载、过热、过驱动和小幅超标。',
+      '支撑与扩散：判断结构是否承载、风险是否外扩。',
+      '达标率与安全余量：判断看似可用的系统是否正在接近失稳边界。',
     ],
   },
   fr: {
@@ -101,7 +101,7 @@ const hfcdSectionCopy: Record<Locale, {
   de: {
     eyebrow: 'Industrielles Intelligenzwerkzeug',
     title: 'HFCD Stabilitaetsfenster-Audit',
-    body: 'Ein branchenuebergreifendes System fuer Stabilitaetsdiagnose und F&E-Reparaturplaene fuer Quantenchips, neue Materialien, neue Energie und Lebenswissenschaften. Laden Sie Daten hoch; HFCD erkennt Stabilitaetsfenster, FailureModes, Risikoproben und Reparaturpfade.',
+    body: 'Ein branchenuebergreifendes System fuer Stabilitaetsdiagnose und F&E-Reparaturplaene fuer Quantenchips, neue Materialien, neue Energie und Lebenswissenschaften. Laden Sie Daten hoch; HFCD erkennt Stabilitaetsfenster, Risikomuster, Risikoproben und Reparaturpfade.',
     primary: 'HFCD oeffnen',
     secondary: 'Branchenmapping ansehen',
     gates: [
@@ -114,7 +114,7 @@ const hfcdSectionCopy: Record<Locale, {
   ja: {
     eyebrow: '産業インテリジェンスツール',
     title: 'HFCD 安定窓監査',
-    body: '量子チップ、新素材、新エネルギー、生命科学に向けた横断的な安定性診断と研究開発修復案生成システムです。実験または生産データをアップロードすると、HFCD が安定窓、FailureMode、リスクサンプル、修復ルートを識別します。',
+    body: '量子チップ、新素材、新エネルギー、生命科学に向けた横断的な安定性診断と研究開発修復案生成システムです。実験または生産データをアップロードすると、HFCD が安定窓、リスク要因、リスクサンプル、修復ルートを識別します。',
     primary: 'HFCD ツールへ',
     secondary: '産業マッピングを見る',
     gates: [
