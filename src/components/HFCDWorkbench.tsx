@@ -26,9 +26,13 @@ import {
   HFCD_GATE_EXPLANATIONS,
   HFCD_INDUSTRIES,
   HFCDIndustry,
+  HFCDParameterProfile,
+  HFCDSimulationReport,
   HFCDAuditResult,
   HFCDFailureMode,
+  learnHFCDParameters,
   parseCsv,
+  simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
   templateToCsv,
@@ -37,7 +41,17 @@ import {
   validateRows,
 } from '../lib/hfcdCore';
 
-type WorkbenchTab = 'dashboard' | 'upload' | 'templates' | 'reports' | 'blind' | 'projects' | 'api' | 'knowledge';
+type WorkbenchTab =
+  | 'dashboard'
+  | 'upload'
+  | 'templates'
+  | 'reports'
+  | 'blind'
+  | 'calibration'
+  | 'simulation'
+  | 'projects'
+  | 'api'
+  | 'knowledge';
 
 interface HFCDReportRecord {
   id: string;
@@ -90,6 +104,8 @@ const TABS: Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }> 
   { id: 'templates', label: '模板中心', icon: FileDown },
   { id: 'reports', label: '报告中心', icon: FileText },
   { id: 'blind', label: '盲测验证', icon: ShieldAlert },
+  { id: 'calibration', label: '参数学习', icon: Gauge },
+  { id: 'simulation', label: '深度仿真', icon: Layers3 },
   { id: 'projects', label: '项目空间', icon: Database },
   { id: 'api', label: 'API 商业版', icon: FlaskConical },
   { id: 'knowledge', label: 'HFCD 知识库', icon: BookOpen },
@@ -551,6 +567,187 @@ function GateLegendPanel() {
   );
 }
 
+function formatThresholdSource(source: HFCDParameterProfile['learnedFrom']) {
+  if (source === 'actual_failure_0') return '历史未失效样本';
+  if (source === 'baseline_stable') return '当前稳定样本';
+  if (source === 'all_samples') return '全量样本分布';
+  return '默认参数';
+}
+
+function ParameterLearningPanel({
+  profile,
+  onApply,
+}: {
+  profile: HFCDParameterProfile | null;
+  onApply: () => void;
+}) {
+  if (!profile) {
+    return (
+      <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-8 text-sm leading-7 text-slate-400">
+        上传客户历史数据后，系统会自动学习这一批数据的候选安全线。带 actual_failure=0/1 的数据越多，学习结果越适合进入冻结参数盲测。
+      </div>
+    );
+  }
+
+  const thresholdRows = gateLabels.map((gate) => ({
+    gate,
+    label: compactGateLabel(gate),
+    baseline: profile.baselineThresholds[gate],
+    learned: profile.thresholds[gate],
+    p25: profile.gateStats[gate].p25,
+    median: profile.gateStats[gate].median,
+    p75: profile.gateStats[gate].p75,
+  }));
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-4">
+        <MetricCard label="样本数" value={profile.sampleCount} note="本次用于学习的客户数据。" />
+        <MetricCard label="带标签样本" value={profile.labeledCount} note="actual_failure=0/1 的样本。" />
+        <MetricCard label="未失效样本" value={profile.stableLabelCount} note="用于拟合安全线的主要参考。" />
+        <MetricCard label="学习来源" value={<span className="text-xl">{formatThresholdSource(profile.learnedFrom)}</span>} note="系统选择的参数学习依据。" />
+      </div>
+      <div className="rounded-[28px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
+        <h3 className="text-xl font-black text-white">自动学习结论</h3>
+        <p className="mt-3 text-sm leading-7 text-slate-300">{profile.recommendedUse}</p>
+        {profile.warnings.length ? (
+          <div className="mt-4 grid gap-2">
+            {profile.warnings.map((warning) => (
+              <div key={warning} className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-7 text-amber-100">
+                {warning}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <button
+          onClick={onApply}
+          className="mt-5 rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
+        >
+          用学习参数重跑分析
+        </button>
+      </div>
+      <div className="overflow-x-auto rounded-[28px] border border-white/8 bg-white/[0.03]">
+        <table className="min-w-[760px] w-full border-collapse text-left text-sm">
+          <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.18em] text-slate-500">
+            <tr>
+              <th className="px-4 py-3">指标</th>
+              <th className="px-4 py-3">默认安全线</th>
+              <th className="px-4 py-3">学习后安全线</th>
+              <th className="px-4 py-3">P25</th>
+              <th className="px-4 py-3">中位数</th>
+              <th className="px-4 py-3">P75</th>
+            </tr>
+          </thead>
+          <tbody>
+            {thresholdRows.map((row) => (
+              <tr key={row.gate} className="border-t border-white/8">
+                <td className="px-4 py-3">
+                  <div className="font-semibold text-white">{row.label}</div>
+                  <div className="mt-1 font-mono text-[11px] text-slate-500">{row.gate}</div>
+                </td>
+                <td className="px-4 py-3 font-mono text-slate-300">{row.baseline}</td>
+                <td className="px-4 py-3 font-mono text-[#9df4d7]">{row.learned}</td>
+                <td className="px-4 py-3 font-mono text-slate-400">{row.p25}</td>
+                <td className="px-4 py-3 font-mono text-slate-400">{row.median}</td>
+                <td className="px-4 py-3 font-mono text-slate-400">{row.p75}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SimulationPanel({ report }: { report: HFCDSimulationReport | null }) {
+  if (!report) {
+    return (
+      <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-8 text-sm leading-7 text-slate-400">
+        上传数据后，系统会基于当前样本生成多条研发候选方案：核心回中、降负荷、增强支撑、收窄风险、补安全余量和稳定交付。这里是轻量研发方案仿真，不是完整 V12.x 场动力学仿真。
+      </div>
+    );
+  }
+
+  const recommended = report.scenarios.find((item) => item.scenario.id === report.recommendedScenarioId);
+  const downloadScenarioSummary = () => {
+    downloadText(
+      `hfcd_simulation_${report.industry}.csv`,
+      toCsv(
+        report.scenarios.map((item) => ({
+          scenario: item.scenario.name,
+          target: item.scenario.target,
+          strict_stable: item.summary.strictStableCount,
+          high_risk: item.summary.highRiskCount,
+          average_risk_score: item.summary.averageRiskScore,
+          strict_stable_gain: item.strictStableGain,
+          high_risk_reduction: item.highRiskReduction,
+          risk_score_delta: item.averageRiskScoreDelta,
+          improvement_score: item.improvementScore,
+        })),
+      ),
+      'text/csv;charset=utf-8',
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-[30px] border border-[#52DBA9]/16 bg-[radial-gradient(circle_at_top_left,rgba(82,219,169,0.16),transparent_34%),rgba(82,219,169,0.06)] p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.24em] text-[#91ffe1]">Recommended R&D Path</div>
+            <h3 className="mt-3 text-2xl font-black text-white">{recommended?.scenario.name || '暂无推荐方案'}</h3>
+            <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-300">{recommended?.scenario.description || '需要先上传数据。'}</p>
+          </div>
+          <button onClick={downloadScenarioSummary} className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b]">
+            下载仿真结果
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        {report.scenarios.map((item) => {
+          const active = item.scenario.id === report.recommendedScenarioId;
+          return (
+            <article
+              key={item.scenario.id}
+              className={`rounded-[28px] border p-5 ${
+                active ? 'border-[#52DBA9]/30 bg-[#52DBA9]/10' : 'border-white/8 bg-white/[0.03]'
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">{item.scenario.shortName}</div>
+                  <h3 className="mt-2 text-xl font-black text-white">{item.scenario.name}</h3>
+                </div>
+                {active ? <span className="rounded-full bg-[#52DBA9]/16 px-3 py-1 text-xs font-bold text-[#9df4d7]">推荐</span> : null}
+              </div>
+              <p className="mt-3 text-sm leading-7 text-slate-400">{item.scenario.target}</p>
+              <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+                <div className="rounded-2xl bg-black/14 p-3">
+                  <div className="text-lg font-black text-white">{item.summary.strictStableCount}</div>
+                  <div className="mt-1 text-[10px] text-slate-500">达标</div>
+                </div>
+                <div className="rounded-2xl bg-black/14 p-3">
+                  <div className="text-lg font-black text-red-200">{item.summary.highRiskCount}</div>
+                  <div className="mt-1 text-[10px] text-slate-500">高风险</div>
+                </div>
+                <div className="rounded-2xl bg-black/14 p-3">
+                  <div className="text-lg font-black text-[#9df4d7]">{item.highRiskReduction}</div>
+                  <div className="mt-1 text-[10px] text-slate-500">风险减少</div>
+                </div>
+                <div className="rounded-2xl bg-black/14 p-3">
+                  <div className="text-lg font-black text-white">{item.improvementScore}</div>
+                  <div className="mt-1 text-[10px] text-slate-500">提升分</div>
+                </div>
+              </div>
+              <p className="mt-4 text-xs leading-6 text-slate-500">{item.scenario.description}</p>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FieldHealthPanel({ fieldHealth }: { fieldHealth: ReturnType<typeof validateRows>['fieldHealth'] }) {
   return (
     <div className="mt-5 space-y-2">
@@ -727,6 +924,14 @@ export function HFCDWorkbench() {
     () => generateMarkdownReport({ projectName, industry, results }),
     [projectName, industry, results],
   );
+  const parameterProfile = useMemo(
+    () => (rows.length ? learnHFCDParameters(rows, industry) : null),
+    [industry, rows],
+  );
+  const simulationReport = useMemo(
+    () => (rows.length && parameterProfile ? simulateHFCDScenarios(rows, industry, parameterProfile) : null),
+    [industry, parameterProfile, rows],
+  );
 
   const dashboardStats = useMemo(() => {
     const allResults = reports.flatMap((report) => report.results);
@@ -818,6 +1023,17 @@ export function HFCDWorkbench() {
     setActiveTab('upload');
   };
 
+  const handleRunLearnedAudit = () => {
+    if (!rows.length || !parameterProfile) {
+      setUploadError('请先上传 CSV 文件，再运行参数学习。');
+      setActiveTab('upload');
+      return;
+    }
+    const nextResults = auditRecords(rows, industry, { thresholds: parameterProfile.thresholds });
+    setResults(nextResults);
+    setActiveTab('calibration');
+  };
+
   const handleLoadSample = (targetIndustry = industry) => {
     const csv = templateToCsv(targetIndustry);
     setIndustry(targetIndustry);
@@ -894,7 +1110,7 @@ export function HFCDWorkbench() {
   const apiExample = `curl -X POST https://longone.ai/api/hfcd/audit \\
   -H "content-type: application/json" \\
   -H "x-api-key: ${apiKeys[0]?.key || 'hfcd_live_xxx'}" \\
-  -d '{"model":"hfcd-v1","industry":"quantum","rows":[{"sample_id":"qpu_cal_001","T1_us":82,"T2_us":71,"gate2q_error":0.009,"assignment_fidelity":0.94,"job_success_rate":0.94}]}'`;
+  -d '{"model":"hfcd-v1","mode":"advanced","industry":"quantum","rows":[{"sample_id":"qpu_cal_001","T1_us":82,"T2_us":71,"gate2q_error":0.009,"assignment_fidelity":0.94,"job_success_rate":0.94,"actual_failure":0}]}'`;
 
   const handleTestApiCall = async () => {
     setApiTestResult('调用中...');
@@ -907,7 +1123,7 @@ export function HFCDWorkbench() {
           'content-type': 'application/json',
           ...(apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : {}),
         },
-        body: JSON.stringify({ model: 'hfcd-v1', industry, rows: rowsForApi }),
+        body: JSON.stringify({ model: 'hfcd-v1', mode: 'advanced', industry, rows: rowsForApi }),
       });
       const payload = await response.json();
       setApiResponsePreview(JSON.stringify(payload, null, 2));
@@ -1387,6 +1603,50 @@ export function HFCDWorkbench() {
           </section>
         ) : null}
 
+        {activeTab === 'calibration' ? (
+          <section className="mt-8">
+            <SectionTitle
+              title="客户行业参数学习"
+              description="把客户历史数据转成行业专属候选安全线。它不是训练大模型，而是根据客户自己的未失效样本、稳定样本和全量分布，自动校准下一轮审计参数。"
+            />
+            <div className="mb-6 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-white">使用方式</h3>
+                  <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-300">
+                    最好上传历史数据并包含 actual_failure：未失效样本填 0，已失效样本填 1。系统会优先从未失效样本里学习行业安全线，再用学习后的参数重跑审计和盲测。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
+                    加载学习示例
+                  </button>
+                  <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
+                    上传客户数据
+                  </button>
+                </div>
+              </div>
+            </div>
+            <ParameterLearningPanel profile={parameterProfile} onApply={handleRunLearnedAudit} />
+          </section>
+        ) : null}
+
+        {activeTab === 'simulation' ? (
+          <section className="mt-8">
+            <SectionTitle
+              title="研发方案仿真"
+              description="基于当前客户数据和学习后的行业参数，自动扫描多条研发修复路径，比较哪条路径最可能减少高风险样本、提升达标样本，并输出可下载的候选方案表。"
+            />
+            <div className="mb-6 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+              <h3 className="text-xl font-black text-white">运行边界</h3>
+              <p className="mt-3 text-sm leading-8 text-slate-300">
+                当前上线的是轻量研发方案仿真：系统会在七类关键指标上做参数扫描，比较不同修复路径的风险改善幅度。完整 V12.x 场动力学仿真仍需要客户提供物理参数、工艺参数、边界条件和数字孪生输入。
+              </p>
+            </div>
+            <SimulationPanel report={simulationReport} />
+          </section>
+        ) : null}
+
         {activeTab === 'projects' ? (
           <section className="mt-8">
             <SectionTitle title="企业项目空间" description="项目空间把客户、数据集、报告、团队权限和多轮趋势放在一起。当前为本地优先实现，后续可以平滑迁移到 Firestore 企业空间。" />
@@ -1500,9 +1760,9 @@ export function HFCDWorkbench() {
             <SectionTitle title="API 商业版" description="把研发风险诊断接入企业系统。客户可以把实验数据、生产数据或质检数据通过 API 提交，系统返回字段检查、风险排序、修复建议和报告结构。" />
             <div className="mb-6 grid gap-4 md:grid-cols-3">
               {[
-                ['1. 提交数据', '通过 POST /api/hfcd/audit 提交行业类型和 rows/csv。'],
-                ['2. 自动审计', '系统完成字段检查、风险评分、真实标签验证和修复建议生成。'],
-                ['3. 回写客户系统', '同步返回结果；后续可扩展 job_id、异步报告和 callback_url。'],
+                ['1. 提交数据', '通过 POST /api/hfcd/audit 提交行业类型、mode 和 rows/csv。mode 支持 audit、calibrate、simulate、advanced。'],
+                ['2. 自动计算', '系统完成字段检查、风险评分、参数学习、盲测验证和研发方案仿真。'],
+                ['3. 回写客户系统', '同步返回结果；后续可扩展 job_id、异步报告、callback_url 和企业账单。'],
               ].map(([title, body]) => (
                 <div key={title} className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                   <div className="font-bold text-white">{title}</div>
@@ -1549,7 +1809,8 @@ export function HFCDWorkbench() {
                   <div className="mt-4 space-y-3 text-sm leading-7 text-slate-300">
                     <div>Endpoint：<span className="font-mono text-[#9df4d7]">POST /api/hfcd/audit</span></div>
                     <div>模型名称：<span className="font-mono text-[#9df4d7]">研发增强模型 v1</span></div>
-                    <div>行业参数版本：<span className="font-mono text-[#9df4d7]">quantum/materials/energy/bio@v1.2-core</span></div>
+                    <div>行业参数版本：<span className="font-mono text-[#9df4d7]">quantum/materials/energy/bio@v1.3-advanced</span></div>
+                    <div>运行模式：<span className="font-mono text-[#9df4d7]">audit / calibrate / simulate / advanced</span></div>
                     <div>回调字段：<span className="font-mono text-[#9df4d7]">callback_url</span> 已预留给异步报告生成。</div>
                   </div>
                 </div>
@@ -1572,6 +1833,8 @@ export function HFCDWorkbench() {
                       ['summary', '样本数、全部达标、核心达标、高风险数、主要风险类型。'],
                       ['gateSafety', '七类指标通过/未通过统计，可直接画图。'],
                       ['blindMetrics', 'AUC、precision@top10%、baseline 对比、提前预警。'],
+                      ['parameterProfile', '客户行业参数学习结果：默认安全线、学习后安全线、样本统计和使用建议。'],
+                      ['simulation', '研发候选方案仿真：不同修复路径的达标增益、高风险减少和推荐方案。'],
                       ['results', '每个样本的指标数值、通过状态、风险分和可读诊断。'],
                       ['callback', '后续异步报告生成后回调客户系统。'],
                     ].map(([key, body]) => (
@@ -1589,7 +1852,7 @@ export function HFCDWorkbench() {
                     异步报告流程
                   </div>
                   <p className="mt-3 text-sm leading-8 text-slate-300">
-                    当前 API 已支持同步审计；商业版异步流程为：提交数据 → 返回 job_id → Worker 后台生成 Markdown/HTML/PDF-ready 报告 → callback_url 推送结果 → 调用次数计入企业账单。
+                    当前 API 已支持同步审计、参数学习和轻量研发仿真；商业版异步流程为：提交数据 → 返回 job_id → Worker 后台生成 Markdown/HTML/PDF-ready 报告 → callback_url 推送结果 → 调用次数计入企业账单。
                   </p>
                 </div>
               </div>
@@ -1626,7 +1889,7 @@ export function HFCDWorkbench() {
                 {[
                   ['快速审计模式', '默认 SaaS 模式：上传历史实验/生产/寿命/批次数据，输出风险评分、风险类型、稳定状态、修复建议和报告。'],
                   ['冻结参数盲测模式', '客户提供历史数据和 actual_failure 标签，系统冻结 HFCD 参数并输出 AUC、precision@top10% 和提前预警能力。'],
-                  ['深度仿真模式', '高级合作模式：输入物理参数、工艺参数、边界条件和数字孪生空间，生成候选研发路线。'],
+                  ['深度仿真模式', '当前已上线轻量研发方案仿真：在七类指标上扫描候选修复路径；完整 V12.x 场动力学仿真需要客户提供物理参数、工艺参数、边界条件和数字孪生空间。'],
                 ].map(([title, body]) => (
                   <div key={title} className="rounded-[24px] border border-white/8 bg-black/10 p-5">
                     <div className="text-sm font-bold text-white">{title}</div>

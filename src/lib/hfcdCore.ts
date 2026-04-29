@@ -122,6 +122,70 @@ export interface HFCDGateSafetySummary {
   safeRate: number;
 }
 
+export interface HFCDGateStats {
+  min: number;
+  p25: number;
+  median: number;
+  p75: number;
+  p90: number;
+  max: number;
+  mean: number;
+}
+
+export interface HFCDParameterProfile {
+  id: string;
+  industry: HFCDIndustry;
+  sampleCount: number;
+  labeledCount: number;
+  stableLabelCount: number;
+  failureLabelCount: number;
+  generatedAt: number;
+  thresholds: HFCDGates;
+  baselineThresholds: HFCDGates;
+  gateStats: Record<keyof HFCDGates, HFCDGateStats>;
+  learnedFrom: 'actual_failure_0' | 'baseline_stable' | 'all_samples' | 'empty';
+  recommendedUse: string;
+  warnings: string[];
+}
+
+export type HFCDSimulationScenarioId =
+  | 'baseline'
+  | 'core_recenter'
+  | 'load_trim'
+  | 'support_upgrade'
+  | 'risk_relocalize'
+  | 'buffer_restore'
+  | 'delivery_stabilize';
+
+export interface HFCDSimulationScenario {
+  id: HFCDSimulationScenarioId;
+  name: string;
+  shortName: string;
+  description: string;
+  target: string;
+  multipliers: Partial<Record<keyof HFCDGates, number>>;
+  offsets?: Partial<Record<keyof HFCDGates, number>>;
+}
+
+export interface HFCDSimulationScenarioResult {
+  scenario: HFCDSimulationScenario;
+  summary: HFCDAuditSummary;
+  results: HFCDAuditResult[];
+  strictStableGain: number;
+  highRiskReduction: number;
+  averageRiskScoreDelta: number;
+  improvementScore: number;
+}
+
+export interface HFCDSimulationReport {
+  industry: HFCDIndustry;
+  generatedAt: number;
+  profile: HFCDParameterProfile;
+  baselineSummary: HFCDAuditSummary;
+  scenarios: HFCDSimulationScenarioResult[];
+  recommendedScenarioId: HFCDSimulationScenarioId;
+}
+
 export const HFCD_THRESHOLDS: HFCDGates = {
   Q_error: 0.01,
   energy_drift_per_q: 0.05,
@@ -131,6 +195,87 @@ export const HFCD_THRESHOLDS: HFCDGates = {
   manifest_fraction: 0.8,
   buffer_score: 0.5,
 };
+
+const HFCD_GATE_KEYS = [
+  'Q_error',
+  'energy_drift_per_q',
+  'cavity_peak_ratio',
+  'peak_ratio',
+  'radius_ratio',
+  'manifest_fraction',
+  'buffer_score',
+] as const;
+
+const HFCD_UPPER_LIMIT_GATES = new Set<keyof HFCDGates>(['Q_error', 'energy_drift_per_q', 'radius_ratio']);
+
+const HFCD_THRESHOLD_LIMITS: Record<keyof HFCDGates, [number, number]> = {
+  Q_error: [0.004, 0.03],
+  energy_drift_per_q: [0.02, 0.09],
+  cavity_peak_ratio: [0.65, 1.05],
+  peak_ratio: [0.72, 1.16],
+  radius_ratio: [1.05, 1.6],
+  manifest_fraction: [0.55, 0.98],
+  buffer_score: [0.25, 0.95],
+};
+
+export const HFCD_SIMULATION_SCENARIOS: HFCDSimulationScenario[] = [
+  {
+    id: 'baseline',
+    name: '当前方案',
+    shortName: '当前',
+    description: '不改变参数，用当前数据作为对照组。',
+    target: '对照当前风险面',
+    multipliers: {},
+  },
+  {
+    id: 'core_recenter',
+    name: '核心状态回中',
+    shortName: '回中',
+    description: '优先修复核心状态漂移，让芯片相干、材料相身份、电芯 SOH 或细胞身份回到稳定区。',
+    target: '降低核心状态误差，保护关键性能',
+    multipliers: { Q_error: 0.72, peak_ratio: 1.025, buffer_score: 1.04 },
+  },
+  {
+    id: 'load_trim',
+    name: '运行负荷收敛',
+    shortName: '降负荷',
+    description: '收敛过驱动、过热、过载或代谢负担，减少系统内部消化不了的负荷。',
+    target: '降低运行负荷漂移，避免过载型失稳',
+    multipliers: { energy_drift_per_q: 0.68, peak_ratio: 0.99, buffer_score: 1.06 },
+  },
+  {
+    id: 'support_upgrade',
+    name: '支撑条件增强',
+    shortName: '强支撑',
+    description: '增强读出、微结构、界面或培养环境，让关键输出被稳定承接。',
+    target: '提高支撑条件和交付达标率',
+    multipliers: { cavity_peak_ratio: 1.09, manifest_fraction: 1.05, buffer_score: 1.04 },
+  },
+  {
+    id: 'risk_relocalize',
+    name: '风险范围收窄',
+    shortName: '收风险',
+    description: '压回串扰、裂纹、退化扩散或异质性外溢，先阻止风险从局部扩散到全局。',
+    target: '降低风险扩散范围，恢复局部可控性',
+    multipliers: { radius_ratio: 0.84, Q_error: 0.9, buffer_score: 1.08 },
+  },
+  {
+    id: 'buffer_restore',
+    name: '安全余量恢复',
+    shortName: '补余量',
+    description: '恢复校准、工艺、热管理、压力恢复等余量，增强抗扰动能力。',
+    target: '提高安全余量，降低临界样本被扰动击穿的概率',
+    multipliers: { buffer_score: 1.24, energy_drift_per_q: 0.9, manifest_fraction: 1.025 },
+  },
+  {
+    id: 'delivery_stabilize',
+    name: '交付达标稳定',
+    shortName: '稳交付',
+    description: '优先提升任务成功率、性能保持、库伦效率或 CQA 达标比例。',
+    target: '提升真实交付比例，不只优化单个实验指标',
+    multipliers: { manifest_fraction: 1.12, peak_ratio: 1.04, cavity_peak_ratio: 1.03 },
+  },
+];
 
 export const HFCD_GATE_EXPLANATIONS: Record<
   keyof HFCDGates,
@@ -208,6 +353,57 @@ function mean(values: number[]) {
 function round(value: number, digits = 6) {
   const base = 10 ** digits;
   return Math.round(value * base) / base;
+}
+
+function percentile(values: number[], ratio: number) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const index = (sorted.length - 1) * ratio;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+function readActualFailure(row: Record<string, unknown>) {
+  const value = safeNumber(row, 'actual_failure');
+  if (value === 1) return 1;
+  if (value === 0) return 0;
+  return null;
+}
+
+function mergeThresholds(thresholds?: Partial<HFCDGates>): HFCDGates {
+  const merged = { ...HFCD_THRESHOLDS, ...(thresholds || {}) };
+  return HFCD_GATE_KEYS.reduce((next, gate) => {
+    const [lo, hi] = HFCD_THRESHOLD_LIMITS[gate];
+    next[gate] = round(clamp(merged[gate], lo, hi));
+    return next;
+  }, {} as HFCDGates);
+}
+
+export function normalizeHFCDThresholds(thresholds?: Partial<HFCDGates>) {
+  return mergeThresholds(thresholds);
+}
+
+function calculateGateStats(gateSets: HFCDGates[]): Record<keyof HFCDGates, HFCDGateStats> {
+  return HFCD_GATE_KEYS.reduce((stats, gate) => {
+    const values = gateSets.map((gates) => gates[gate]).filter(Number.isFinite);
+    stats[gate] = {
+      min: round(values.length ? Math.min(...values) : 0),
+      p25: round(percentile(values, 0.25)),
+      median: round(percentile(values, 0.5)),
+      p75: round(percentile(values, 0.75)),
+      p90: round(percentile(values, 0.9)),
+      max: round(values.length ? Math.max(...values) : 0),
+      mean: round(mean(values)),
+    };
+    return stats;
+  }, {} as Record<keyof HFCDGates, HFCDGateStats>);
+}
+
+function clampGateValue(gate: keyof HFCDGates, value: number) {
+  const [lo, hi] = gate === 'radius_ratio' ? [0.9, 1.8] : gate === 'energy_drift_per_q' || gate === 'Q_error' ? [0, 0.12] : [0, 1.3];
+  return round(clamp(value, lo, hi));
 }
 
 export const HFCD_INDUSTRIES: Record<HFCDIndustry, HFCDIndustrySpec> = {
@@ -867,15 +1063,16 @@ export function validateRows(rows: Array<Record<string, unknown>>, industry: HFC
   };
 }
 
-export function evaluateGates(gates: HFCDGates): HFCDGateStatus {
+export function evaluateGates(gates: HFCDGates, thresholds: Partial<HFCDGates> = HFCD_THRESHOLDS): HFCDGateStatus {
+  const safeThresholds = mergeThresholds(thresholds);
   return {
-    Q_safe: gates.Q_error <= HFCD_THRESHOLDS.Q_error,
-    E_safe: gates.energy_drift_per_q <= HFCD_THRESHOLDS.energy_drift_per_q,
-    C_safe: gates.cavity_peak_ratio >= HFCD_THRESHOLDS.cavity_peak_ratio,
-    P_safe: gates.peak_ratio >= HFCD_THRESHOLDS.peak_ratio,
-    R_safe: gates.radius_ratio <= HFCD_THRESHOLDS.radius_ratio,
-    M_safe: gates.manifest_fraction >= HFCD_THRESHOLDS.manifest_fraction,
-    B_safe: gates.buffer_score >= HFCD_THRESHOLDS.buffer_score,
+    Q_safe: gates.Q_error <= safeThresholds.Q_error,
+    E_safe: gates.energy_drift_per_q <= safeThresholds.energy_drift_per_q,
+    C_safe: gates.cavity_peak_ratio >= safeThresholds.cavity_peak_ratio,
+    P_safe: gates.peak_ratio >= safeThresholds.peak_ratio,
+    R_safe: gates.radius_ratio <= safeThresholds.radius_ratio,
+    M_safe: gates.manifest_fraction >= safeThresholds.manifest_fraction,
+    B_safe: gates.buffer_score >= safeThresholds.buffer_score,
   };
 }
 
@@ -887,10 +1084,15 @@ export function isLooseStable(status: HFCDGateStatus) {
   return status.Q_safe && status.C_safe && status.P_safe && status.M_safe;
 }
 
-export function classifyFailure(gates: HFCDGates, status: HFCDGateStatus): HFCDFailureMode {
+export function classifyFailure(
+  gates: HFCDGates,
+  status: HFCDGateStatus,
+  thresholds: Partial<HFCDGates> = HFCD_THRESHOLDS,
+): HFCDFailureMode {
+  const safeThresholds = mergeThresholds(thresholds);
   if (isStrictStable(status)) return 'stable';
   if (!status.Q_safe) {
-    return gates.radius_ratio > HFCD_THRESHOLDS.radius_ratio ? 'radius_induced_Q_loss' : 'Q_loss';
+    return gates.radius_ratio > safeThresholds.radius_ratio ? 'radius_induced_Q_loss' : 'Q_loss';
   }
   if (!status.M_safe) return 'manifest_underthreshold';
   if (!status.C_safe) return 'cavity_underfill';
@@ -898,7 +1100,7 @@ export function classifyFailure(gates: HFCDGates, status: HFCDGateStatus): HFCDF
   if (!status.R_safe) return gates.peak_ratio > 1.45 ? 'high_peak_radius_outlier' : 'de_localized';
   if (!status.E_safe) {
     if (
-      gates.energy_drift_per_q <= 0.053 &&
+      gates.energy_drift_per_q <= safeThresholds.energy_drift_per_q + 0.003 &&
       status.Q_safe &&
       status.C_safe &&
       status.P_safe &&
@@ -999,10 +1201,15 @@ export function buildReadableDiagnosis(params: {
   };
 }
 
-export function auditRecord(row: Record<string, unknown>, industry: HFCDIndustry): HFCDAuditResult {
-  const gates = ADAPTERS[industry](row);
-  const status = evaluateGates(gates);
-  const failureMode = classifyFailure(gates, status);
+function buildAuditResultFromGates(
+  row: Record<string, unknown>,
+  industry: HFCDIndustry,
+  gates: HFCDGates,
+  thresholds: Partial<HFCDGates> = HFCD_THRESHOLDS,
+): HFCDAuditResult {
+  const safeThresholds = mergeThresholds(thresholds);
+  const status = evaluateGates(gates, safeThresholds);
+  const failureMode = classifyFailure(gates, status, safeThresholds);
   const strictStable = isStrictStable(status);
   const looseStable = isLooseStable(status);
   const riskScore = round(1 - Object.values(status).filter(Boolean).length / 7);
@@ -1038,6 +1245,15 @@ export function auditRecord(row: Record<string, unknown>, industry: HFCDIndustry
   };
 }
 
+export function auditRecord(
+  row: Record<string, unknown>,
+  industry: HFCDIndustry,
+  options: { thresholds?: Partial<HFCDGates> } = {},
+): HFCDAuditResult {
+  const gates = ADAPTERS[industry](row);
+  return buildAuditResultFromGates(row, industry, gates, options.thresholds);
+}
+
 export function flattenAuditResult(result: HFCDAuditResult) {
   return {
     sample_id: result.sample_id,
@@ -1058,8 +1274,140 @@ export function flattenAuditResult(result: HFCDAuditResult) {
   };
 }
 
-export function auditRecords(rows: Array<Record<string, unknown>>, industry: HFCDIndustry) {
-  return rows.map((row) => auditRecord(row, industry));
+export function auditRecords(
+  rows: Array<Record<string, unknown>>,
+  industry: HFCDIndustry,
+  options: { thresholds?: Partial<HFCDGates> } = {},
+) {
+  return rows.map((row) => auditRecord(row, industry, options));
+}
+
+export function learnHFCDParameters(rows: Array<Record<string, unknown>>, industry: HFCDIndustry): HFCDParameterProfile {
+  const allGates = rows.map((row) => ADAPTERS[industry](row));
+  const baselineResults = auditRecords(rows, industry);
+  const labeledRows = rows.filter((row) => readActualFailure(row) !== null);
+  const stableLabelRows = rows.filter((row) => readActualFailure(row) === 0);
+  const failureLabelRows = rows.filter((row) => readActualFailure(row) === 1);
+  const baselineStableRows = rows.filter((_, index) => baselineResults[index]?.loose_stable || baselineResults[index]?.strict_stable);
+
+  const learningRows =
+    stableLabelRows.length > 0
+      ? stableLabelRows
+      : baselineStableRows.length > 0
+        ? baselineStableRows
+        : rows;
+  const learnedFrom: HFCDParameterProfile['learnedFrom'] =
+    rows.length === 0
+      ? 'empty'
+      : stableLabelRows.length > 0
+        ? 'actual_failure_0'
+        : baselineStableRows.length > 0
+          ? 'baseline_stable'
+          : 'all_samples';
+  const learningGates = learningRows.map((row) => ADAPTERS[industry](row));
+  const gateStats = calculateGateStats(allGates);
+  const learningStats = calculateGateStats(learningGates);
+  const thresholds = HFCD_GATE_KEYS.reduce((next, gate) => {
+    const base = HFCD_THRESHOLDS[gate];
+    const stats = learningStats[gate];
+    const [lo, hi] = HFCD_THRESHOLD_LIMITS[gate];
+    const candidate = HFCD_UPPER_LIMIT_GATES.has(gate)
+      ? Math.max(base * 0.78, Math.min(base * 1.22, stats.p75 * 1.08 || base))
+      : Math.max(base * 0.82, Math.min(base * 1.16, stats.p25 * 0.96 || base));
+    next[gate] = round(clamp(candidate, lo, hi));
+    return next;
+  }, {} as HFCDGates);
+
+  const warnings: string[] = [];
+  if (rows.length === 0) {
+    warnings.push('未检测到样本，已返回默认参数。');
+  }
+  if (labeledRows.length === 0) {
+    warnings.push('未提供 actual_failure 标签，本次只能从当前样本分布推断候选参数，建议补充历史失效标签后再校准。');
+  } else if (labeledRows.length < 8) {
+    warnings.push('带标签样本少于 8 条，当前参数适合试运行，不建议直接作为生产冻结参数。');
+  }
+  if (stableLabelRows.length === 0 && failureLabelRows.length > 0) {
+    warnings.push('只有失效样本，没有未失效样本，系统会保守使用当前稳定样本或全量样本估计安全线。');
+  }
+
+  return {
+    id: `profile_${industry}_${rows.length}_${Date.now()}`,
+    industry,
+    sampleCount: rows.length,
+    labeledCount: labeledRows.length,
+    stableLabelCount: stableLabelRows.length,
+    failureLabelCount: failureLabelRows.length,
+    generatedAt: Date.now(),
+    thresholds: rows.length ? thresholds : HFCD_THRESHOLDS,
+    baselineThresholds: HFCD_THRESHOLDS,
+    gateStats,
+    learnedFrom,
+    recommendedUse:
+      learnedFrom === 'actual_failure_0'
+        ? '已基于客户历史未失效样本校准候选安全线，可用于下一轮冻结参数盲测。'
+        : '当前为无标签或弱标签候选参数，适合研发探索和客户演示；正式上线前应补充 actual_failure 标签做盲测验证。',
+    warnings,
+  };
+}
+
+function applySimulationScenario(gates: HFCDGates, scenario: HFCDSimulationScenario): HFCDGates {
+  return HFCD_GATE_KEYS.reduce((next, gate) => {
+    const multiplier = scenario.multipliers[gate] ?? 1;
+    const offset = scenario.offsets?.[gate] ?? 0;
+    next[gate] = clampGateValue(gate, gates[gate] * multiplier + offset);
+    return next;
+  }, {} as HFCDGates);
+}
+
+export function simulateHFCDScenarios(
+  rows: Array<Record<string, unknown>>,
+  industry: HFCDIndustry,
+  profile = learnHFCDParameters(rows, industry),
+): HFCDSimulationReport {
+  const thresholds = profile.thresholds;
+  const baselineResults = auditRecords(rows, industry, { thresholds });
+  const baselineSummary = summarizeAudit(baselineResults);
+  const scenarios = HFCD_SIMULATION_SCENARIOS.map((scenario) => {
+    const scenarioResults =
+      scenario.id === 'baseline'
+        ? baselineResults
+        : rows.map((row) =>
+            buildAuditResultFromGates(
+              row,
+              industry,
+              applySimulationScenario(ADAPTERS[industry](row), scenario),
+              thresholds,
+            ),
+          );
+    const summary = summarizeAudit(scenarioResults);
+    const strictStableGain = summary.strictStableCount - baselineSummary.strictStableCount;
+    const highRiskReduction = baselineSummary.highRiskCount - summary.highRiskCount;
+    const averageRiskScoreDelta = round(baselineSummary.averageRiskScore - summary.averageRiskScore, 4);
+    const improvementScore = round(strictStableGain * 1.2 + highRiskReduction * 1.8 + averageRiskScoreDelta * 12, 4);
+    return {
+      scenario,
+      summary,
+      results: scenarioResults,
+      strictStableGain,
+      highRiskReduction,
+      averageRiskScoreDelta,
+      improvementScore,
+    };
+  });
+  const recommended =
+    scenarios
+      .filter((item) => item.scenario.id !== 'baseline')
+      .sort((a, b) => b.improvementScore - a.improvementScore)[0] || scenarios[0];
+
+  return {
+    industry,
+    generatedAt: Date.now(),
+    profile,
+    baselineSummary,
+    scenarios,
+    recommendedScenarioId: recommended.scenario.id,
+  };
 }
 
 export function summarizeAudit(results: HFCDAuditResult[]): HFCDAuditSummary {

@@ -9,7 +9,9 @@ import {
   auditRecords,
   generateMarkdownReport,
   HFCD_INDUSTRIES,
+  learnHFCDParameters,
   parseCsv,
+  simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
   templateToCsv,
@@ -138,6 +140,12 @@ async function main() {
   const enhancedBlindMetrics = validateBlindMetrics(blindResults);
   assert(enhancedBlindMetrics.baselineAuc !== undefined, 'HFCD blind metrics should include baseline comparison fields.');
   assert(enhancedBlindMetrics.warningLeadTimeAvg !== undefined, 'HFCD blind metrics should include warning lead-time fields.');
+  const learnedProfile = learnHFCDParameters(blindRows, 'quantum');
+  assert(learnedProfile.labeledCount === 2, 'HFCD parameter learning should detect labeled samples.');
+  assert(learnedProfile.thresholds.Q_error > 0, 'HFCD parameter learning should generate usable thresholds.');
+  const simulatedReport = simulateHFCDScenarios(blindRows, 'quantum', learnedProfile);
+  assert(simulatedReport.scenarios.length >= 6, 'HFCD simulation should generate multiple R&D scenarios.');
+  assert(simulatedReport.recommendedScenarioId !== 'baseline', 'HFCD simulation should recommend an actionable non-baseline scenario.');
   const hfcdReport = generateMarkdownReport({ projectName: 'HFCD 自测报告', industry: 'quantum', results: quantumResults });
   assert(hfcdReport.includes('Executive Summary'), 'HFCD report should include an executive summary.');
   assert(hfcdReport.includes('字段体检与解释'), 'HFCD report should include field explanations.');

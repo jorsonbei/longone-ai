@@ -9,7 +9,11 @@ import { resolvePreferredLocale } from '../src/lib/locale';
 import {
   auditRecords,
   HFCDIndustry,
+  HFCDGates,
+  learnHFCDParameters,
+  normalizeHFCDThresholds,
   parseCsv,
+  simulateHFCDScenarios,
   summarizeAudit,
   summarizeGateSafety,
   validateBlindMetrics,
@@ -200,6 +204,8 @@ app.post('/api/hfcd/audit', (req, res) => {
       records?: Array<Record<string, unknown>>;
       csv?: string;
       model?: string;
+      mode?: 'audit' | 'calibrate' | 'simulate' | 'advanced';
+      thresholds?: Partial<HFCDGates>;
     };
     const industry = body.industry || 'quantum';
     const rows = body.csv ? parseCsv(body.csv) : body.rows || body.records || [];
@@ -212,14 +218,27 @@ app.post('/api/hfcd/audit', (req, res) => {
       return;
     }
 
-    const results = auditRecords(rows, industry);
+    const mode = body.mode || 'audit';
+    const parameterProfile = mode === 'audit' && !body.thresholds ? undefined : learnHFCDParameters(rows, industry);
+    const activeThresholds = body.thresholds
+      ? normalizeHFCDThresholds(body.thresholds)
+      : parameterProfile?.thresholds;
+    const results = auditRecords(rows, industry, { thresholds: activeThresholds });
+    const simulation =
+      mode === 'simulate' || mode === 'advanced'
+        ? simulateHFCDScenarios(rows, industry, parameterProfile || learnHFCDParameters(rows, industry))
+        : undefined;
     res.json({
       model: body.model || 'hfcd-v1',
+      mode,
       industry,
       validation,
+      parameterProfile,
+      thresholds: activeThresholds,
       summary: summarizeAudit(results),
       gateSafety: summarizeGateSafety(results),
       blindMetrics: validateBlindMetrics(results),
+      simulation,
       results,
     });
   } catch (error) {

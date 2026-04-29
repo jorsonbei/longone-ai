@@ -315,7 +315,7 @@ export function AdminDashboard({
               <AdminMetricCard label="覆盖行业" value={Object.keys(HFCD_INDUSTRIES).length} note="量子芯片、新材料、新能源、生命科学。" />
               <AdminMetricCard label="关键指标" value={Object.keys(HFCD_GATE_EXPLANATIONS).length} note="核心状态、运行负荷、支撑条件、关键性能、风险扩散、交付达标率、安全余量。" />
               <AdminMetricCard label="风险类型" value={Object.keys(FAILURE_MODE_LABELS).length} note="用于把高风险样本转成可解释的研发动作。" />
-              <AdminMetricCard label="API Endpoint" value={<span className="text-xl">/api/hfcd/audit</span>} note="企业系统集成入口，支持 rows 或 csv 输入。" />
+              <AdminMetricCard label="API Endpoint" value={<span className="text-xl">/api/hfcd/audit</span>} note="支持审计、参数学习、研发仿真和高级模式。" />
             </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,1.05fr)]">
@@ -343,8 +343,10 @@ export function AdminDashboard({
                     {[
                       [Upload, '数据上传', '上传 CSV，检查字段，运行审计，生成样本级诊断。'],
                       [ClipboardCheck, '盲测验证', '用 actual_failure 标签验证风险排序、Top10 命中率和提前预警。'],
+                      [Activity, '参数学习', '从客户历史未失效样本学习行业候选安全线，支持下一轮冻结参数盲测。'],
+                      [BarChart3, '研发方案仿真', '扫描核心回中、降负荷、增强支撑、收窄风险等候选修复路径。'],
                       [Database, '项目空间', '按企业项目管理数据集、报告、成员和多轮趋势。'],
-                      [KeyRound, 'API 商业版', '提供企业集成接口、API Key 台账、调用示例和返回结构。'],
+                      [KeyRound, 'API 商业版', '提供企业集成接口、API Key 台账、mode 参数和返回结构。'],
                     ].map(([Icon, title, body]) => {
                       const IconComponent = Icon as React.ElementType;
                       return (
@@ -366,6 +368,7 @@ export function AdminDashboard({
                       ['Cloudflare Worker', '已部署 longone-ai，前端和 /api/hfcd/audit 共用同一个 Worker。'],
                       ['HFCD_API_KEYS', '如需强制鉴权，在 Worker 环境变量中配置逗号分隔的生产 API Key。'],
                       ['报告存储', '当前报告历史为浏览器本地优先；企业版应迁移到 Firestore 或对象存储。'],
+                      ['运行模式', 'API mode 支持 audit、calibrate、simulate、advanced；高级模式会返回参数学习和仿真结果。'],
                       ['异步报告', '当前 API 为同步返回；大文件或 PDF 报告建议升级为 job_id + callback_url。'],
                     ].map(([label, body]) => (
                       <div key={label} className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3">
