@@ -11,3 +11,8 @@ not_found_handling = "single-page-application"
 [vars]
 NODE_ENV = "production"
 VERTEX_TUNED_MODEL = "projects/1012420023845/locations/us-central1/endpoints/573558591361908736"
+HFCD_CLOUD_PROJECT_ID = "gen-lang-client-0488652785"
+HFCD_CLOUD_REGION = "us-central1"
+HFCD_CLOUD_RUN_JOB = "hfcd-research-runner"
+HFCD_GCS_BUCKET = "gen-lang-client-0488652785-hfcd-research"
+HFCD_SOURCE_GCS_PREFIX = "hfcd/source/current"

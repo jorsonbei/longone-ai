@@ -1,5 +1,6 @@
 import {
   buildContents,
+  getGoogleCloudAccessToken,
   geminiGenerateJson,
   normalizeSystemInstruction,
   streamGeminiToNdjson,
@@ -22,6 +23,11 @@ import {
   validateBlindMetrics,
   validateRows,
 } from '../src/lib/hfcdCore';
+import {
+  buildHFCDResearchCloudConfig,
+  buildHFCDResearchJobPlan,
+  HFCDResearchJobRequest,
+} from '../src/lib/hfcdResearchJobs';
 
 type Env = {
   ASSETS: {
@@ -33,6 +39,11 @@ type Env = {
   VERTEX_SERVICE_ACCOUNT_JSON?: string;
   VERTEX_SERVICE_ACCOUNT_JSON_BASE64?: string;
   HFCD_API_KEYS?: string;
+  HFCD_CLOUD_PROJECT_ID?: string;
+  HFCD_CLOUD_REGION?: string;
+  HFCD_CLOUD_RUN_JOB?: string;
+  HFCD_GCS_BUCKET?: string;
+  HFCD_SOURCE_GCS_PREFIX?: string;
   NODE_ENV?: string;
 };
 const instructionCache = new Map<string, string>();
@@ -85,6 +96,50 @@ function assertHfcdApiKey(request: Request, env: Env) {
   return configuredKeys.includes(key);
 }
 
+async function callGoogleApi(env: Env, url: string, init: RequestInit = {}) {
+  const token = await getGoogleCloudAccessToken({ env });
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || text || `Google API failed with status ${response.status}`);
+  }
+  return payload;
+}
+
+function operationToStatus(operation: any) {
+  if (!operation) return 'unknown';
+  if (operation.error) return 'failed';
+  if (operation.done) return 'succeeded';
+  return 'running';
+}
+
+async function fetchGcsJson(env: Env, bucket: string, objectName: string) {
+  try {
+    const token = await getGoogleCloudAccessToken({ env });
+    const response = await fetch(
+      `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}?alt=media`,
+      {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      },
+    );
+    if (response.status === 404) return undefined;
+    if (!response.ok) return undefined;
+    return response.json();
+  } catch {
+    return undefined;
+  }
+}
+
 async function handleApi(request: Request, env: Env) {
   const url = new URL(request.url);
 
@@ -104,6 +159,56 @@ async function handleApi(request: Request, env: Env) {
       locale,
       source: country ? 'ip-country' : 'accept-language',
     });
+  }
+
+  if (url.pathname === '/api/hfcd/research-jobs/status' && request.method === 'GET') {
+    if (!assertHfcdApiKey(request, env)) {
+      return json({ error: 'Invalid HFCD API key.' }, { status: 401 });
+    }
+
+    const cloud = buildHFCDResearchCloudConfig(env);
+    const operationName = url.searchParams.get('operationName') || undefined;
+    const artifactPrefix = url.searchParams.get('artifactPrefix') || undefined;
+    if (!cloud.enabled) {
+      return json(
+        {
+          ok: false,
+          status: 'not_configured',
+          cloud,
+          message: 'HFCD 云端长程仿真未配置。需要 HFCD_CLOUD_PROJECT_ID / HFCD_CLOUD_RUN_JOB / HFCD_GCS_BUCKET。',
+        },
+        { status: 503 },
+      );
+    }
+
+    try {
+      const operation = operationName
+        ? await callGoogleApi(env, `https://run.googleapis.com/v2/${operationName}`)
+        : undefined;
+      const manifest = artifactPrefix && cloud.bucket
+        ? await fetchGcsJson(env, cloud.bucket, `${artifactPrefix}/cloud_manifest.json`)
+        : undefined;
+      const status = (manifest as { status?: string } | undefined)?.status || operationToStatus(operation);
+      return json({
+        ok: status !== 'failed',
+        status,
+        operationName,
+        operation,
+        artifactPrefix,
+        manifest,
+      });
+    } catch (error) {
+      return json(
+        {
+          ok: false,
+          status: 'unknown',
+          operationName,
+          artifactPrefix,
+          message: error instanceof Error ? error.message : 'HFCD research status query failed.',
+        },
+        { status: 500 },
+      );
+    }
   }
 
   if (request.method !== 'POST') {
@@ -182,6 +287,68 @@ async function handleApi(request: Request, env: Env) {
       setInstructionCache(cacheKey, instruction);
       return json({
         instruction,
+      });
+    }
+
+    if (url.pathname === '/api/hfcd/research-jobs/submit') {
+      if (!assertHfcdApiKey(request, env)) {
+        return json({ error: 'Invalid HFCD API key.' }, { status: 401 });
+      }
+
+      const payload = (await request.json()) as HFCDResearchJobRequest;
+      const cloud = buildHFCDResearchCloudConfig(env);
+      const plan = buildHFCDResearchJobPlan(payload, env);
+      if (!cloud.enabled) {
+        return json(
+          {
+            ok: false,
+            status: 'not_configured',
+            plan,
+            cloud,
+            message: 'HFCD 云端长程仿真未配置。需要先部署 Cloud Run Job 与 GCS 源目录。',
+          },
+          { status: 503 },
+        );
+      }
+
+      const envVars = {
+        ...plan.env,
+        HFCD_JOB_ID: plan.jobId,
+        HFCD_GCS_BUCKET: cloud.bucket || '',
+        HFCD_SOURCE_GCS_PREFIX: plan.sourcePrefix,
+        HFCD_ARTIFACT_PREFIX: plan.artifactPrefix,
+        HFCD_EXPERIMENT_SCRIPT: plan.experimentScript,
+        HFCD_OUTPUT_GLOBS: plan.outputGlobs,
+      };
+      const operation = await callGoogleApi(
+        env,
+        `https://run.googleapis.com/v2/projects/${cloud.projectId}/locations/${cloud.region}/jobs/${cloud.cloudRunJob}:run`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            overrides: {
+              taskCount: 1,
+              timeout: '3600s',
+              containerOverrides: [
+                {
+                  env: Object.entries(envVars).map(([name, value]) => ({
+                    name,
+                    value: String(value),
+                  })),
+                },
+              ],
+            },
+          }),
+        },
+      );
+
+      return json({
+        ok: true,
+        status: 'queued',
+        plan,
+        cloud,
+        operationName: operation?.name,
+        operation,
       });
     }
 

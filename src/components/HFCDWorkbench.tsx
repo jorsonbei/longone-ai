@@ -45,6 +45,11 @@ import {
   validateBlindMetrics,
   validateRows,
 } from '../lib/hfcdCore';
+import {
+  HFCDResearchJobPlan,
+  HFCDResearchJobRequest,
+  HFCDResearchJobStatus,
+} from '../lib/hfcdResearchJobs';
 
 type WorkbenchTab =
   | 'dashboard'
@@ -54,6 +59,7 @@ type WorkbenchTab =
   | 'blind'
   | 'calibration'
   | 'simulation'
+  | 'research'
   | 'projects'
   | 'api'
   | 'knowledge';
@@ -98,10 +104,24 @@ interface HFCDApiKeyRecord {
   lastUsedAt?: number;
 }
 
+interface HFCDResearchJobRecord {
+  id: string;
+  projectName: string;
+  preset: HFCDResearchJobRequest['preset'];
+  status: HFCDResearchJobStatus;
+  createdAt: number;
+  operationName?: string;
+  artifactPrefix?: string;
+  message?: string;
+  plan?: HFCDResearchJobPlan;
+  manifest?: unknown;
+}
+
 const REPORT_STORAGE_KEY = 'hfcdAuditReportsV1';
 const PROJECT_STORAGE_KEY = 'hfcdProjectsV1';
 const DATASET_STORAGE_KEY = 'hfcdDatasetsV1';
 const API_KEYS_STORAGE_KEY = 'hfcdApiKeysV1';
+const RESEARCH_JOBS_STORAGE_KEY = 'hfcdResearchJobsV1';
 
 const TABS: Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }> = [
   { id: 'dashboard', label: '仪表盘', icon: BarChart3 },
@@ -111,6 +131,7 @@ const TABS: Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }> 
   { id: 'blind', label: '盲测验证', icon: ShieldAlert },
   { id: 'calibration', label: '参数学习', icon: Gauge },
   { id: 'simulation', label: '深度仿真', icon: Layers3 },
+  { id: 'research', label: '云端长程仿真', icon: Microscope },
   { id: 'projects', label: '项目空间', icon: Database },
   { id: 'api', label: 'API 商业版', icon: FlaskConical },
   { id: 'knowledge', label: 'HFCD 知识库', icon: BookOpen },
@@ -1133,6 +1154,26 @@ function ResultDiagnosisPanel({ results }: { results: HFCDAuditResult[] }) {
   );
 }
 
+function researchStatusLabel(status: HFCDResearchJobStatus) {
+  const labels: Record<HFCDResearchJobStatus, string> = {
+    planned: '已规划',
+    queued: '已提交',
+    running: '运行中',
+    succeeded: '已完成',
+    failed: '失败',
+    not_configured: '未配置',
+    unknown: '未知',
+  };
+  return labels[status] || status;
+}
+
+function researchStatusClass(status: HFCDResearchJobStatus) {
+  if (status === 'succeeded') return 'border-[#52DBA9]/25 bg-[#52DBA9]/12 text-[#9df4d7]';
+  if (status === 'failed' || status === 'not_configured') return 'border-red-400/25 bg-red-500/12 text-red-200';
+  if (status === 'running' || status === 'queued') return 'border-amber-300/25 bg-amber-300/12 text-amber-100';
+  return 'border-white/10 bg-white/[0.05] text-slate-300';
+}
+
 export function HFCDWorkbench() {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>('dashboard');
   const [industry, setIndustry] = useState<HFCDIndustry>('quantum');
@@ -1144,11 +1185,22 @@ export function HFCDWorkbench() {
   const [projects, setProjects] = useState<HFCDProjectRecord[]>([]);
   const [datasets, setDatasets] = useState<HFCDDatasetRecord[]>([]);
   const [apiKeys, setApiKeys] = useState<HFCDApiKeyRecord[]>([]);
+  const [researchJobs, setResearchJobs] = useState<HFCDResearchJobRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [apiTestResult, setApiTestResult] = useState<string | null>(null);
   const [apiResponsePreview, setApiResponsePreview] = useState<string | null>(null);
   const [fieldInput, setFieldInput] = useState<HFCDFieldSimulationInput>(() => defaultHFCDFieldSimulationInput('quantum'));
+  const [researchRequest, setResearchRequest] = useState<HFCDResearchJobRequest>({
+    preset: 'v12_38_me28800',
+    projectName: 'V12.38 研究级长程仿真',
+    sourceMode: 'best101',
+    maxVariants: 1,
+    topCheckpoints: 1,
+    logInterval: 60,
+    resume: true,
+    smoke: true,
+  });
 
   useEffect(() => {
     try {
@@ -1170,6 +1222,10 @@ export function HFCDWorkbench() {
       const rawApiKeys = localStorage.getItem(API_KEYS_STORAGE_KEY);
       const parsedApiKeys = rawApiKeys ? (JSON.parse(rawApiKeys) as HFCDApiKeyRecord[]) : [];
       setApiKeys(Array.isArray(parsedApiKeys) ? parsedApiKeys : []);
+
+      const rawResearchJobs = localStorage.getItem(RESEARCH_JOBS_STORAGE_KEY);
+      const parsedResearchJobs = rawResearchJobs ? (JSON.parse(rawResearchJobs) as HFCDResearchJobRecord[]) : [];
+      setResearchJobs(Array.isArray(parsedResearchJobs) ? parsedResearchJobs : []);
     } catch {
       setReports([]);
       const fallbackProject = createDefaultProject();
@@ -1177,6 +1233,7 @@ export function HFCDWorkbench() {
       setActiveProjectId(fallbackProject.id);
       setDatasets([]);
       setApiKeys([]);
+      setResearchJobs([]);
     }
   }, []);
 
@@ -1211,6 +1268,14 @@ export function HFCDWorkbench() {
       // API key ledger is local-first demo metadata.
     }
   }, [apiKeys]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RESEARCH_JOBS_STORAGE_KEY, JSON.stringify(researchJobs.slice(0, 40)));
+    } catch {
+      // Research job ledger should not block the workbench.
+    }
+  }, [researchJobs]);
 
   useEffect(() => {
     setFieldInput(defaultHFCDFieldSimulationInput(industry));
@@ -1454,6 +1519,109 @@ export function HFCDWorkbench() {
       }
     } catch (error) {
       setApiTestResult(error instanceof Error ? error.message : 'API 调用失败。');
+    }
+  };
+
+  const handleSubmitResearchJob = async () => {
+    const createdAt = Date.now();
+    const fallbackId = createId('research');
+    const projectTitle = researchRequest.projectName || 'HFCD 云端长程仿真';
+    setResearchJobs((current) => [
+      {
+        id: fallbackId,
+        projectName: projectTitle,
+        preset: researchRequest.preset || 'v12_38_me28800',
+        status: 'queued',
+        createdAt,
+        message: '正在提交到 Cloud Run...',
+      },
+      ...current,
+    ]);
+
+    try {
+      const response = await fetch('/api/hfcd/research-jobs/submit', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : {}),
+        },
+        body: JSON.stringify(researchRequest),
+      });
+      const payload = await response.json();
+      const jobId = payload?.plan?.jobId || fallbackId;
+      const status = (payload?.status || (response.ok ? 'queued' : 'failed')) as HFCDResearchJobStatus;
+      setResearchJobs((current) =>
+        current.map((job) =>
+          job.id === fallbackId
+            ? {
+                ...job,
+                id: jobId,
+                projectName: payload?.plan?.projectName || projectTitle,
+                preset: payload?.plan?.preset || job.preset,
+                status,
+                operationName: payload?.operationName,
+                artifactPrefix: payload?.plan?.artifactPrefix,
+                message: payload?.message || payload?.error || (response.ok ? '已提交 Cloud Run。' : '提交失败。'),
+                plan: payload?.plan,
+              }
+            : job,
+        ),
+      );
+    } catch (error) {
+      setResearchJobs((current) =>
+        current.map((job) =>
+          job.id === fallbackId
+            ? {
+                ...job,
+                status: 'failed',
+                message: error instanceof Error ? error.message : '提交云端长程仿真失败。',
+              }
+            : job,
+        ),
+      );
+    }
+  };
+
+  const handleRefreshResearchJob = async (job: HFCDResearchJobRecord) => {
+    if (!job.operationName && !job.artifactPrefix) {
+      setResearchJobs((current) =>
+        current.map((item) =>
+          item.id === job.id ? { ...item, message: '缺少 operationName 或 artifactPrefix，无法查询。' } : item,
+        ),
+      );
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (job.operationName) params.set('operationName', job.operationName);
+    if (job.artifactPrefix) params.set('artifactPrefix', job.artifactPrefix);
+    try {
+      const response = await fetch(`/api/hfcd/research-jobs/status?${params.toString()}`, {
+        headers: apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : undefined,
+      });
+      const payload = await response.json();
+      setResearchJobs((current) =>
+        current.map((item) =>
+          item.id === job.id
+            ? {
+                ...item,
+                status: (payload?.status || (response.ok ? item.status : 'unknown')) as HFCDResearchJobStatus,
+                operationName: payload?.operationName || item.operationName,
+                artifactPrefix: payload?.artifactPrefix || item.artifactPrefix,
+                manifest: payload?.manifest,
+                message: payload?.message || payload?.error || (payload?.manifest ? '已读取 GCS 结果清单。' : '已刷新 Cloud Run 状态。'),
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      setResearchJobs((current) =>
+        current.map((item) =>
+          item.id === job.id
+            ? { ...item, status: 'unknown', message: error instanceof Error ? error.message : '查询云端长程仿真状态失败。' }
+            : item,
+        ),
+      );
     }
   };
 
@@ -1978,6 +2146,227 @@ export function HFCDWorkbench() {
                   setActiveTab('upload');
                 }}
               />
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === 'research' ? (
+          <section className="mt-8">
+            <SectionTitle
+              title="云端研究级长程仿真"
+              description="把本地 HFCD V12.x Python 长程实验搬到云端真实运行。前端提交任务，Cloud Run 执行原始脚本，GCS 保存 CSV、JSON、Markdown、PNG、checkpoint 和运行日志。"
+            />
+            <div className="grid gap-6 xl:grid-cols-[430px_minmax(0,1fr)]">
+              <div className="space-y-5">
+                <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+                  <h3 className="text-xl font-black text-white">提交长程实验</h3>
+                  <p className="mt-2 text-sm leading-7 text-slate-400">
+                    这里启动的不是浏览器里的轻量计算，而是 Cloud Run 上的 Python 任务。建议先用 smoke 模式验证链路，再放大 max variants 和 checkpoint 数。
+                  </p>
+                  <label className="mt-5 block">
+                    <div className="text-sm font-semibold text-white">任务名称</div>
+                    <input
+                      value={researchRequest.projectName || ''}
+                      onChange={(event) => setResearchRequest((current) => ({ ...current, projectName: event.target.value }))}
+                      className="mt-3 h-12 w-full rounded-2xl border border-white/10 bg-[#141821] px-4 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                    />
+                  </label>
+                  <label className="mt-5 block">
+                    <div className="text-sm font-semibold text-white">实验版本</div>
+                    <select
+                      value={researchRequest.preset || 'v12_38_me28800'}
+                      onChange={(event) => setResearchRequest((current) => ({ ...current, preset: event.target.value as HFCDResearchJobRequest['preset'] }))}
+                      className="mt-3 h-12 w-full rounded-2xl border border-white/10 bg-[#141821] px-4 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                    >
+                      <option value="v12_38_me28800">V12.38 Post27000 ME28800</option>
+                      <option value="v12_37_meprc">V12.37 Post25200 MEPRC</option>
+                    </select>
+                  </label>
+                  <label className="mt-5 block">
+                    <div className="text-sm font-semibold text-white">数据源模式</div>
+                    <select
+                      value={researchRequest.sourceMode || 'best101'}
+                      onChange={(event) => setResearchRequest((current) => ({ ...current, sourceMode: event.target.value }))}
+                      className="mt-3 h-12 w-full rounded-2xl border border-white/10 bg-[#141821] px-4 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                    >
+                      <option value="best101">best101</option>
+                      <option value="repair">repair</option>
+                      <option value="all">all</option>
+                    </select>
+                  </label>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    <label className="block">
+                      <div className="text-xs font-semibold text-slate-400">max variants</div>
+                      <input
+                        type="number"
+                        min={0}
+                        max={64}
+                        value={researchRequest.maxVariants ?? 1}
+                        onChange={(event) => setResearchRequest((current) => ({ ...current, maxVariants: Number(event.target.value) }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-white/10 bg-[#141821] px-3 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <div className="text-xs font-semibold text-slate-400">top checkpoints</div>
+                      <input
+                        type="number"
+                        min={0}
+                        max={500}
+                        value={researchRequest.topCheckpoints ?? 1}
+                        onChange={(event) => setResearchRequest((current) => ({ ...current, topCheckpoints: Number(event.target.value) }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-white/10 bg-[#141821] px-3 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <div className="text-xs font-semibold text-slate-400">log interval</div>
+                      <input
+                        type="number"
+                        min={30}
+                        max={7200}
+                        value={researchRequest.logInterval ?? 60}
+                        onChange={(event) => setResearchRequest((current) => ({ ...current, logInterval: Number(event.target.value) }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-white/10 bg-[#141821] px-3 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-3 rounded-2xl border border-white/8 bg-black/10 px-4 py-3 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={researchRequest.resume !== false}
+                        onChange={(event) => setResearchRequest((current) => ({ ...current, resume: event.target.checked }))}
+                        className="accent-[#52DBA9]"
+                      />
+                      允许从 checkpoint 续跑
+                    </label>
+                    <label className="flex items-center gap-3 rounded-2xl border border-white/8 bg-black/10 px-4 py-3 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(researchRequest.smoke)}
+                        onChange={(event) => setResearchRequest((current) => ({ ...current, smoke: event.target.checked }))}
+                        className="accent-[#52DBA9]"
+                      />
+                      smoke 模式先测链路
+                    </label>
+                  </div>
+                  <button
+                    onClick={handleSubmitResearchJob}
+                    className="mt-5 w-full rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)] transition-colors hover:bg-[#67e5b7]"
+                  >
+                    提交到云端真实运行
+                  </button>
+                </div>
+
+                <div className="rounded-[28px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
+                  <h3 className="text-xl font-black text-white">云端资源要求</h3>
+                  <div className="mt-3 space-y-2 text-sm leading-7 text-slate-300">
+                    <div>Cloud Run Job：运行 `cloud/hfcd-runner` 容器。</div>
+                    <div>GCS Source：保存 `/Users/beijisheng/Desktop/codex_wxl` 的脚本、checkpoint 和历史输出。</div>
+                    <div>GCS Artifacts：每个任务独立保存 `cloud_manifest.json`、结果文件和 runner 日志。</div>
+                    <div>Worker 凭据：使用服务账号调用 Cloud Run 与读取 GCS。</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-xl font-black text-white">任务队列</h3>
+                      <p className="mt-1 text-sm text-slate-500">任务状态来自 Cloud Run operation；完成后再读取 GCS 的 cloud_manifest.json。</p>
+                    </div>
+                    <button
+                      onClick={() => researchJobs[0] && handleRefreshResearchJob(researchJobs[0])}
+                      disabled={!researchJobs.length}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 disabled:opacity-40"
+                    >
+                      刷新最新任务
+                    </button>
+                  </div>
+                  <div className="mt-5 space-y-4">
+                    {researchJobs.map((job) => {
+                      const manifest = job.manifest as { artifacts?: string[]; error?: string; returncode?: number; finished_at?: string } | undefined;
+                      return (
+                        <article key={job.id} className="rounded-[26px] border border-white/8 bg-black/10 p-5">
+                          <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                              <div className="text-lg font-black text-white">{job.projectName}</div>
+                              <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">{job.id} · {formatDate(job.createdAt)}</div>
+                            </div>
+                            <span className={`rounded-full border px-3 py-1 text-xs font-bold ${researchStatusClass(job.status)}`}>
+                              {researchStatusLabel(job.status)}
+                            </span>
+                          </div>
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                              <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Cloud Run Operation</div>
+                              <div className="mt-2 break-all font-mono text-xs leading-6 text-slate-300">{job.operationName || 'N/A'}</div>
+                            </div>
+                            <div className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                              <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">GCS Artifacts</div>
+                              <div className="mt-2 break-all font-mono text-xs leading-6 text-slate-300">{job.artifactPrefix || 'N/A'}</div>
+                            </div>
+                          </div>
+                          {job.message ? <p className="mt-4 text-sm leading-7 text-slate-400">{job.message}</p> : null}
+                          {manifest ? (
+                            <div className="mt-4 rounded-2xl border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-4">
+                              <div className="text-sm font-bold text-white">结果清单</div>
+                              <div className="mt-2 text-xs leading-6 text-slate-400">
+                                returncode：{manifest.returncode ?? 'N/A'} · finished：{manifest.finished_at || 'N/A'} · artifacts：{manifest.artifacts?.length || 0}
+                              </div>
+                              {manifest.artifacts?.length ? (
+                                <div className="mt-3 max-h-[180px] overflow-auto rounded-xl bg-black/20 p-3">
+                                  {manifest.artifacts.slice(0, 20).map((artifact) => (
+                                    <div key={artifact} className="break-all font-mono text-[11px] leading-5 text-[#9df4d7]">{artifact}</div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {manifest.error ? <pre className="mt-3 max-h-[180px] overflow-auto whitespace-pre-wrap text-xs leading-6 text-red-200">{manifest.error}</pre> : null}
+                            </div>
+                          ) : null}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => handleRefreshResearchJob(job)}
+                              className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]"
+                            >
+                              查询状态
+                            </button>
+                            {job.artifactPrefix ? (
+                              <button
+                                onClick={() => navigator.clipboard?.writeText(job.artifactPrefix || '')}
+                                className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200"
+                              >
+                                复制 GCS 前缀
+                              </button>
+                            ) : null}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {!researchJobs.length ? (
+                      <div className="rounded-[24px] border border-white/8 bg-black/10 p-6 text-sm leading-7 text-slate-500">
+                        还没有云端长程任务。先用 smoke 模式提交一次，确认 Cloud Run、GCS 和 Worker 凭据都通，再扩大运行规模。
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+                  <h3 className="text-xl font-black text-white">这和前面的快速分析有什么区别？</h3>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {[
+                      ['快速审计', '浏览器或 Worker 里对客户 CSV 做稳定性指标映射，秒级返回，适合客户初筛。'],
+                      ['参数化仿真', '基于客户数据和手动输入参数生成候选研发路线，多步轨迹是产品级模拟。'],
+                      ['研究级长程仿真', '运行原始 V12.x Python 脚本，吃 CPU、checkpoint 和磁盘输出，适合继续推进物质生成实验链。'],
+                    ].map(([title, body]) => (
+                      <div key={title} className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                        <div className="font-bold text-white">{title}</div>
+                        <p className="mt-2 text-sm leading-7 text-slate-400">{body}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         ) : null}

@@ -19,6 +19,10 @@ import {
   validateBlindMetrics,
   validateRows,
 } from '../src/lib/hfcdCore';
+import {
+  buildHFCDResearchCloudConfig,
+  buildHFCDResearchJobPlan,
+} from '../src/lib/hfcdResearchJobs';
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -165,6 +169,25 @@ async function main() {
   assert(hfcdReport.includes('字段体检与解释'), 'HFCD report should include field explanations.');
   assert(hfcdReport.includes('样本诊断：业务解释 / 关键指标 / 修复方案'), 'HFCD report should include three-layer sample diagnosis.');
   assert(hfcdReport.includes('稳定性指标通过率'), 'HFCD report should include stability-indicator statistics.');
+  const researchCloud = buildHFCDResearchCloudConfig({});
+  assert(!researchCloud.enabled, 'HFCD research cloud config should require explicit cloud settings.');
+  const researchPlan = buildHFCDResearchJobPlan({
+    preset: 'v12_38_me28800',
+    projectName: 'self-test',
+    smoke: true,
+    maxVariants: 3,
+    topCheckpoints: 4,
+  }, {
+    HFCD_CLOUD_PROJECT_ID: 'demo-project',
+    HFCD_CLOUD_REGION: 'us-central1',
+    HFCD_CLOUD_RUN_JOB: 'hfcd-research-runner',
+    HFCD_GCS_BUCKET: 'demo-bucket',
+    HFCD_SOURCE_GCS_PREFIX: 'hfcd/source/current',
+  }, 1_800_000_000_000);
+  assert(researchPlan.experimentScript.includes('v12_38'), 'HFCD research plan should select the V12.38 script.');
+  assert(researchPlan.artifactPrefix.includes('hfcd/research-jobs/'), 'HFCD research plan should create a GCS artifact prefix.');
+  assert(researchPlan.outputGlobs.includes('ME28800'), 'HFCD research plan should preserve V12.38 output globs.');
+  assert(researchPlan.env.HFCD_V1238_LOG_INTERVAL === '60', 'HFCD research smoke plan should shorten log interval.');
   console.log('[self-test] HFCD audit core OK');
 
   const nameCase = analyzeWuxingInput(

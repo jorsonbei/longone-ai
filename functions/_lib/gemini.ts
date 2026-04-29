@@ -172,6 +172,10 @@ async function getVertexAccessToken(context: { env?: Record<string, unknown> }) 
   return vertexTokenCache.token;
 }
 
+export async function getGoogleCloudAccessToken(context: { env?: Record<string, unknown> }) {
+  return getVertexAccessToken(context);
+}
+
 function getVertexEndpoint(context: { env?: Record<string, unknown> }, model?: string) {
   const endpoint = context.env?.VERTEX_TUNED_MODEL || model;
   if (!endpoint || typeof endpoint !== 'string') {

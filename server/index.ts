@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, GenerateContentResponse, Part } from '@google/genai';
+import { getGoogleCloudAccessToken } from '../functions/_lib/gemini';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 import { resolvePreferredLocale } from '../src/lib/locale';
 import {
@@ -21,6 +22,11 @@ import {
   validateBlindMetrics,
   validateRows,
 } from '../src/lib/hfcdCore';
+import {
+  buildHFCDResearchCloudConfig,
+  buildHFCDResearchJobPlan,
+  HFCDResearchJobRequest,
+} from '../src/lib/hfcdResearchJobs';
 
 type Attachment = {
   name: string;
@@ -192,6 +198,149 @@ function assertHfcdApiKey(req: express.Request) {
   const key = String(req.header('x-api-key') || req.header('authorization')?.replace(/^Bearer\s+/i, '') || '');
   return configuredKeys.includes(key);
 }
+
+function getProcessEnvRecord() {
+  return process.env as Record<string, unknown>;
+}
+
+async function callGoogleApi(url: string, init: RequestInit = {}) {
+  const token = await getGoogleCloudAccessToken({ env: getProcessEnvRecord() });
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || text || `Google API failed with status ${response.status}`);
+  }
+  return payload;
+}
+
+function operationToStatus(operation: any) {
+  if (!operation) return 'unknown';
+  if (operation.error) return 'failed';
+  if (operation.done) return 'succeeded';
+  return 'running';
+}
+
+async function fetchGcsJson(bucket: string, objectName: string) {
+  try {
+    const token = await getGoogleCloudAccessToken({ env: getProcessEnvRecord() });
+    const response = await fetch(
+      `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}?alt=media`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (response.status === 404) return undefined;
+    if (!response.ok) return undefined;
+    return response.json();
+  } catch {
+    return undefined;
+  }
+}
+
+app.get('/api/hfcd/research-jobs/status', async (req, res) => {
+  try {
+    if (!assertHfcdApiKey(req)) {
+      res.status(401).json({ error: 'Invalid HFCD API key.' });
+      return;
+    }
+    const cloud = buildHFCDResearchCloudConfig(getProcessEnvRecord());
+    const operationName = typeof req.query.operationName === 'string' ? req.query.operationName : undefined;
+    const artifactPrefix = typeof req.query.artifactPrefix === 'string' ? req.query.artifactPrefix : undefined;
+    if (!cloud.enabled) {
+      res.status(503).json({
+        ok: false,
+        status: 'not_configured',
+        cloud,
+        message: 'HFCD 云端长程仿真未配置。需要 HFCD_CLOUD_PROJECT_ID / HFCD_CLOUD_RUN_JOB / HFCD_GCS_BUCKET。',
+      });
+      return;
+    }
+    const operation = operationName ? await callGoogleApi(`https://run.googleapis.com/v2/${operationName}`) : undefined;
+    const manifest = artifactPrefix && cloud.bucket
+      ? await fetchGcsJson(cloud.bucket, `${artifactPrefix}/cloud_manifest.json`)
+      : undefined;
+    const status = (manifest as { status?: string } | undefined)?.status || operationToStatus(operation);
+    res.json({
+      ok: status !== 'failed',
+      status,
+      operationName,
+      operation,
+      artifactPrefix,
+      manifest,
+    });
+  } catch (error) {
+    console.error('HFCD research status API failed:', error);
+    res.status(500).json({ ok: false, status: 'unknown', error: error instanceof Error ? error.message : 'HFCD research status failed.' });
+  }
+});
+
+app.post('/api/hfcd/research-jobs/submit', async (req, res) => {
+  try {
+    if (!assertHfcdApiKey(req)) {
+      res.status(401).json({ error: 'Invalid HFCD API key.' });
+      return;
+    }
+    const request = req.body as HFCDResearchJobRequest;
+    const cloud = buildHFCDResearchCloudConfig(getProcessEnvRecord());
+    const plan = buildHFCDResearchJobPlan(request, getProcessEnvRecord());
+    if (!cloud.enabled) {
+      res.status(503).json({
+        ok: false,
+        status: 'not_configured',
+        plan,
+        cloud,
+        message: 'HFCD 云端长程仿真未配置。需要先部署 Cloud Run Job 与 GCS 源目录。',
+      });
+      return;
+    }
+    const envVars = {
+      ...plan.env,
+      HFCD_JOB_ID: plan.jobId,
+      HFCD_GCS_BUCKET: cloud.bucket || '',
+      HFCD_SOURCE_GCS_PREFIX: plan.sourcePrefix,
+      HFCD_ARTIFACT_PREFIX: plan.artifactPrefix,
+      HFCD_EXPERIMENT_SCRIPT: plan.experimentScript,
+      HFCD_OUTPUT_GLOBS: plan.outputGlobs,
+    };
+    const operation = await callGoogleApi(
+      `https://run.googleapis.com/v2/projects/${cloud.projectId}/locations/${cloud.region}/jobs/${cloud.cloudRunJob}:run`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          overrides: {
+            taskCount: 1,
+            timeout: '3600s',
+            containerOverrides: [
+              {
+                env: Object.entries(envVars).map(([name, value]) => ({
+                  name,
+                  value: String(value),
+                })),
+              },
+            ],
+          },
+        }),
+      },
+    );
+    res.json({
+      ok: true,
+      status: 'queued',
+      plan,
+      cloud,
+      operationName: operation?.name,
+      operation,
+    });
+  } catch (error) {
+    console.error('HFCD research submit API failed:', error);
+    res.status(500).json({ ok: false, status: 'failed', error: error instanceof Error ? error.message : 'HFCD research submit failed.' });
+  }
+});
 
 app.post('/api/hfcd/audit', (req, res) => {
   try {
