@@ -124,17 +124,11 @@ const API_KEYS_STORAGE_KEY = 'hfcdApiKeysV1';
 const RESEARCH_JOBS_STORAGE_KEY = 'hfcdResearchJobsV1';
 
 const TABS: Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }> = [
-  { id: 'dashboard', label: '仪表盘', icon: BarChart3 },
-  { id: 'upload', label: '数据上传', icon: Upload },
-  { id: 'templates', label: '模板中心', icon: FileDown },
-  { id: 'reports', label: '报告中心', icon: FileText },
+  { id: 'dashboard', label: '价值与快速开始', icon: BarChart3 },
+  { id: 'upload', label: '上传数据', icon: Upload },
   { id: 'blind', label: '盲测验证', icon: ShieldAlert },
-  { id: 'calibration', label: '参数学习', icon: Gauge },
-  { id: 'simulation', label: '深度仿真', icon: Layers3 },
-  { id: 'research', label: '云端长程仿真', icon: Microscope },
-  { id: 'projects', label: '项目空间', icon: Database },
-  { id: 'api', label: 'API 商业版', icon: FlaskConical },
-  { id: 'knowledge', label: 'HFCD 知识库', icon: BookOpen },
+  { id: 'research', label: '云端真实跑模型', icon: Microscope },
+  { id: 'reports', label: '结果中心', icon: FileText },
 ];
 
 const gateLabels = [
@@ -146,6 +140,36 @@ const gateLabels = [
   'manifest_fraction',
   'buffer_score',
 ] as const;
+
+const HFCD_EXPERIMENT_EVIDENCE = {
+  headline: '从 595 条候选研发路径中筛出 558 条高稳定方案',
+  source: 'HFCD V12.38 Post-27000 ME28800 长程实验',
+  summary:
+    '这组实验不是页面演示数据，而是从本地 HFCD 长程实验链沉淀出的真实结果：系统持续比较多条修复路线，判断哪些路线能在更长运行周期里保持稳定，哪些路线应该提前淘汰。',
+  metrics: [
+    { label: '候选研发路径', value: '595', note: '相当于同时比较 595 条可能的修复/调参路线。' },
+    { label: '高稳定候选方案', value: '558', note: '长程测试后仍保持稳定，可进入下一轮研发优先级。' },
+    { label: '稳定方案占比', value: '93.78%', note: '用于说明系统能把大批候选路线压缩成可行动清单。' },
+    { label: '提前淘汰风险路线', value: '37', note: '避免团队继续投入可能失稳的方向。' },
+  ],
+  cloudMetrics: [
+    { label: '源 checkpoint 复核', value: '101', note: '从多组历史状态继续复跑，验证不是单点偶然。' },
+    { label: '稳定结果落盘', value: '499', note: 'V12.37 阶段可追溯稳定结果。' },
+    { label: '云端 smoke 产物', value: '447', note: 'Cloud Run 已能输出报告、图表、CSV、summary 和日志。' },
+  ],
+  routeBars: [
+    { label: '支撑条件增强', count: 119, total: 119, note: '增强承载环境，让关键输出稳定承接。' },
+    { label: '核心状态回中', count: 119, total: 119, note: '把偏离的核心状态拉回安全区。' },
+    { label: '峰值/扩散保护', count: 113, total: 119, note: '防止局部性能过冲带来系统性扩散。' },
+    { label: '边界组合闭合', count: 104, total: 119, note: '同时收紧多个边界条件。' },
+    { label: '微能量清理', count: 103, total: 119, note: '清理小幅但持续积累的负载漂移。' },
+  ],
+  evolution: [
+    { label: 'V12.35', step: '23,400', stable: 29, total: 43 },
+    { label: 'V12.37', step: '27,000', stable: 499, total: 505 },
+    { label: 'V12.38', step: '28,800', stable: 558, total: 595 },
+  ],
+};
 
 function downloadText(fileName: string, content: string, mimeType = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type: mimeType });
@@ -290,9 +314,189 @@ function MetricCard({ label, value, note }: { label: string; value: React.ReactN
 function SectionTitle({ title, description }: { title: string; description: string }) {
   return (
     <div className="mb-6">
-      <div className="text-xs font-bold uppercase tracking-[0.28em] text-[#7ef8d2]/75">HFCD Stability-Window Audit</div>
+      <div className="text-xs font-bold uppercase tracking-[0.28em] text-[#7ef8d2]/75">R&D Risk Validation</div>
       <h2 className="mt-3 text-3xl font-black tracking-tight text-white">{title}</h2>
       <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-400 md:text-base">{description}</p>
+    </div>
+  );
+}
+
+function evidencePercent(count: number, total: number) {
+  if (!total) return '0%';
+  return `${((count / total) * 100).toFixed(1)}%`;
+}
+
+function EvidenceMetricCard({ label, value, note }: { label: string; value: string; note: string }) {
+  return (
+    <div className="rounded-[26px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
+      <div className="text-xs font-bold uppercase tracking-[0.22em] text-[#8dffdf]">{label}</div>
+      <div className="mt-4 text-4xl font-black tracking-tight text-white">{value}</div>
+      <p className="mt-3 text-sm leading-7 text-slate-300">{note}</p>
+    </div>
+  );
+}
+
+function ExperimentEvidencePanel() {
+  return (
+    <div className="rounded-[34px] border border-[#52DBA9]/18 bg-[radial-gradient(circle_at_12%_0%,rgba(82,219,169,0.16),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] p-5 md:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-5">
+        <div className="max-w-4xl">
+          <div className="text-xs font-black uppercase tracking-[0.28em] text-[#8dffdf]">真实实验能力证据</div>
+          <h3 className="mt-3 text-3xl font-black tracking-tight text-white">{HFCD_EXPERIMENT_EVIDENCE.headline}</h3>
+          <p className="mt-3 text-sm leading-8 text-slate-300">{HFCD_EXPERIMENT_EVIDENCE.summary}</p>
+        </div>
+        <div className="rounded-full border border-white/10 bg-black/20 px-4 py-2 text-xs font-bold text-slate-300">
+          {HFCD_EXPERIMENT_EVIDENCE.source}
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-4">
+        {HFCD_EXPERIMENT_EVIDENCE.metrics.map((metric) => (
+          <EvidenceMetricCard key={metric.label} label={metric.label} value={metric.value} note={metric.note} />
+        ))}
+      </div>
+
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <div className="rounded-[28px] border border-white/8 bg-black/12 p-5">
+          <h4 className="text-xl font-black text-white">系统能比较不同研发修复路线</h4>
+          <p className="mt-2 text-sm leading-7 text-slate-400">
+            下面不是抽象分数，而是“哪类修复路线在长程测试里更稳”。客户可以用这个逻辑判断下一轮实验先做什么、暂停什么。
+          </p>
+          <div className="mt-5 space-y-4">
+            {HFCD_EXPERIMENT_EVIDENCE.routeBars.map((item) => {
+              const pct = Math.round((item.count / item.total) * 100);
+              return (
+                <div key={item.label}>
+                  <div className="mb-2 flex items-center justify-between gap-4 text-sm">
+                    <div>
+                      <span className="font-bold text-white">{item.label}</span>
+                      <span className="ml-2 text-slate-500">{item.note}</span>
+                    </div>
+                    <span className="font-mono text-[#9df4d7]">{item.count}/{item.total}</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-white/8">
+                    <div className="h-full rounded-full bg-[#52DBA9]" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-white/8 bg-black/12 p-5">
+          <h4 className="text-xl font-black text-white">从实验数据到客户可用结果</h4>
+          <div className="mt-5 space-y-4">
+            {HFCD_EXPERIMENT_EVIDENCE.evolution.map((item) => {
+              const pct = Math.round((item.stable / item.total) * 100);
+              return (
+                <div key={item.label} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-white">{item.label}</div>
+                      <div className="mt-1 text-xs text-slate-500">{item.step} 步长程测试</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-black text-[#9df4d7]">{evidencePercent(item.stable, item.total)}</div>
+                      <div className="text-xs text-slate-500">{item.stable}/{item.total} 稳定</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/8">
+                    <div className="h-full rounded-full bg-[#52DBA9]" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            {HFCD_EXPERIMENT_EVIDENCE.cloudMetrics.map((metric) => (
+              <div key={metric.label} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                <div className="text-2xl font-black text-white">{metric.value}</div>
+                <div className="mt-1 text-xs font-bold text-[#9df4d7]">{metric.label}</div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">{metric.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowCard({
+  title,
+  badge,
+  description,
+  points,
+  action,
+  onClick,
+}: {
+  title: string;
+  badge: string;
+  description: string;
+  points: string[];
+  action: string;
+  onClick: () => void;
+}) {
+  return (
+    <article className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+      <div className="text-xs font-black uppercase tracking-[0.24em] text-[#8dffdf]">{badge}</div>
+      <h3 className="mt-3 text-2xl font-black text-white">{title}</h3>
+      <p className="mt-3 text-sm leading-7 text-slate-400">{description}</p>
+      <div className="mt-4 space-y-2">
+        {points.map((point) => (
+          <div key={point} className="flex gap-2 text-sm leading-6 text-slate-300">
+            <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-[#7ef8d2]" />
+            <span>{point}</span>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={onClick}
+        className="mt-5 rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
+      >
+        {action}
+      </button>
+    </article>
+  );
+}
+
+function IndustryUploadGuide({ industry }: { industry: HFCDIndustry }) {
+  const spec = HFCD_INDUSTRIES[industry];
+  const required = getIndustryFieldProfiles(industry).filter((field) => field.required).slice(0, 8);
+  const optional = getIndustryFieldProfiles(industry)
+    .filter((field) => !field.required)
+    .slice(0, 5);
+  return (
+    <div className="rounded-[24px] border border-white/8 bg-black/10 p-4">
+      <div className="text-sm font-black text-white">你要上传什么数据？</div>
+      <p className="mt-2 text-xs leading-6 text-slate-400">
+        当前选择：{spec.title}。上传历史实验、生产、校准、寿命或质检 CSV；如果要做盲测验证，请额外提供 actual_failure。
+      </p>
+      <div className="mt-4 space-y-3">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">建议必填字段</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {required.map((field) => (
+              <span key={field.key} className="rounded-full border border-[#52DBA9]/16 bg-[#52DBA9]/8 px-3 py-1 text-[11px] font-semibold text-[#9df4d7]">
+                {field.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">可选增强字段</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {optional.map((field) => (
+              <span key={field.key} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-slate-300">
+                {field.label}
+              </span>
+            ))}
+            <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-[11px] font-semibold text-amber-100">
+              actual_failure 真实失效标签
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1393,7 +1597,7 @@ export function HFCDWorkbench() {
     };
     setDatasets((current) => [dataset, ...current].slice(0, 200));
     setReports((current) => [report, ...current].slice(0, 40));
-    setActiveTab('upload');
+    setActiveTab(validateBlindMetrics(nextResults).hasActualFailure ? 'blind' : 'reports');
   };
 
   const handleRunLearnedAudit = () => {
@@ -1522,15 +1726,15 @@ export function HFCDWorkbench() {
     }
   };
 
-  const handleSubmitResearchJob = async () => {
+  const submitResearchJob = async (request: HFCDResearchJobRequest) => {
     const createdAt = Date.now();
     const fallbackId = createId('research');
-    const projectTitle = researchRequest.projectName || 'HFCD 云端长程仿真';
+    const projectTitle = request.projectName || 'HFCD 云端长程仿真';
     setResearchJobs((current) => [
       {
         id: fallbackId,
         projectName: projectTitle,
-        preset: researchRequest.preset || 'v12_38_me28800',
+        preset: request.preset || 'v12_38_me28800',
         status: 'queued',
         createdAt,
         message: '正在提交到 Cloud Run...',
@@ -1545,7 +1749,7 @@ export function HFCDWorkbench() {
           'content-type': 'application/json',
           ...(apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : {}),
         },
-        body: JSON.stringify(researchRequest),
+        body: JSON.stringify(request),
       });
       const payload = await response.json();
       const jobId = payload?.plan?.jobId || fallbackId;
@@ -1580,6 +1784,10 @@ export function HFCDWorkbench() {
         ),
       );
     }
+  };
+
+  const handleSubmitResearchJob = async () => {
+    await submitResearchJob(researchRequest);
   };
 
   const handleRefreshResearchJob = async (job: HFCDResearchJobRecord) => {
@@ -1675,26 +1883,41 @@ export function HFCDWorkbench() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-[#7ef8d2]/20 bg-[#52DBA9]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.24em] text-[#91ffe1]">
                 <Activity className="h-3.5 w-3.5" />
-                HFCD Stability-Window Audit
+                HFCD R&D Risk Validation
               </div>
-              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">HFCD 稳定性审计系统</h1>
+              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">HFCD 研发风险验证与云端真实仿真</h1>
               <p className="mt-4 max-w-4xl text-base leading-8 text-slate-300 md:text-lg">
-                上传实验、生产或质检数据，系统会自动检查核心状态、运行负荷、支撑条件、关键性能、风险扩散、交付达标率和安全余量，找出高风险样本，并生成可执行的研发修复建议。
+                上传历史实验、生产或质检数据，先验证系统能不能提前发现高风险样本、主要失效原因和修复方向；需要深度验证时，再把 HFCD V12.x 长程脚本提交到云端真实运行，产出报告、图表、CSV、summary、checkpoint 和日志。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
-                  onClick={() => setActiveTab('upload')}
+                  onClick={() => setActiveTab('blind')}
                   className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
                 >
-                  进入数据上传
+                  做一次盲测验证
+                </button>
+                <button
+                  onClick={() => setActiveTab('research')}
+                  className="rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-bold text-slate-100 transition-colors hover:bg-white/[0.08]"
+                >
+                  云端真实跑模型
                 </button>
               </div>
             </div>
             <div className="rounded-[28px] border border-white/8 bg-black/15 p-5">
               <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">产品价值</div>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                让研发团队不用再从海量表格里人工找问题。上传一份 CSV，就能快速定位最危险的样本、主要失效原因和优先修复动作，把研发复盘从“凭经验讨论”推进到“按证据决策”。
-              </p>
+              <div className="mt-4 space-y-4">
+                {[
+                  ['先证明有效', '用客户历史失效标签做盲测，直接看命中率、提升幅度和提前预警。'],
+                  ['再真实运行', 'Cloud Run 执行原始 HFCD Python 长程脚本，不只是在网页里做演示。'],
+                  ['最后拿结果', '输出可下载报告、风险样本、研发修复建议、图表、CSV 与 checkpoint。'],
+                ].map(([title, body]) => (
+                  <div key={title} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+                    <div className="font-bold text-white">{title}</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-400">{body}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -1722,32 +1945,78 @@ export function HFCDWorkbench() {
 
         {activeTab === 'dashboard' ? (
           <section className="mt-8">
-            <SectionTitle title="产业智能仪表盘" description="把 HFCD 作为 longone.ai 的产业智能入口：先快速审计，再用盲测验证商业价值，最后进入深度仿真合作。" />
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="已分析项目数" value={dashboardStats.projectCount} note="本机报告中心记录的项目数。" />
-              <MetricCard label="总样本数" value={dashboardStats.sampleCount} note="所有报告累计样本。" />
-              <MetricCard label="全部达标样本" value={dashboardStats.strictStableCount} note="七类关键指标全部通过的样本。" />
-              <MetricCard label="高风险样本" value={dashboardStats.highRiskCount} note="风险分进入高位的样本。" />
+            <SectionTitle
+              title="一页讲清楚：它有什么价值、怎么用、结果在哪里"
+              description="HFCD 当前产品只保留两条主线：盲测验证用于证明能不能发现风险；云端真实跑模型用于把原始长程实验搬到云端执行。其它能力都收进结果中心和高级入口，不再打断用户。"
+            />
+            <div className="grid gap-5 lg:grid-cols-2">
+              <WorkflowCard
+                badge="Core Flow 01"
+                title="盲测验证：证明它有没有用"
+                description="上传带真实失效标签的历史数据，系统先不看答案调参，而是直接排序高风险样本，验证它能不能比客户现有方法更早发现问题。"
+                points={[
+                  '输入：历史实验/生产/质检数据 + actual_failure 真实失效标签。',
+                  '输出：高风险样本、主要失效原因、Top10 命中率、AUC、提前预警天数。',
+                  '用途：快速证明 HFCD 是否值得进入客户试点。',
+                ]}
+                action="进入盲测验证"
+                onClick={() => setActiveTab('blind')}
+              />
+              <WorkflowCard
+                badge="Core Flow 02"
+                title="云端真实跑模型：跑原始长程脚本"
+                description="当客户需要更深验证时，把 HFCD V12.x Python 长程实验提交到 Cloud Run，真实消耗 CPU、写 checkpoint、产出完整证据链。"
+                points={[
+                  '输入：实验版本、checkpoint、运行规模和云端任务参数。',
+                  '输出：Markdown 报告、PNG 图表、CSV、summary、checkpoint、运行日志。',
+                  '用途：从快速验证升级到研究级复核和联合研发。',
+                ]}
+                action="提交云端真实任务"
+                onClick={() => setActiveTab('research')}
+              />
             </div>
-            <div className="mt-8 grid gap-5 lg:grid-cols-2">
-              {(Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((item) => (
-                <IndustryCard
-                  key={item}
-                  industry={item}
-                  onAnalyze={() => {
-                    setIndustry(item);
-                    setActiveTab('upload');
-                  }}
-                  onDownload={() => handleDownloadTemplate(item)}
-                />
-              ))}
+
+            <div className="mt-6">
+              <ExperimentEvidencePanel />
+            </div>
+
+            <div className="mt-6 rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-2xl font-black text-white">快速上手：先选行业，再加载示例或上传 CSV</h3>
+                  <p className="mt-2 max-w-4xl text-sm leading-7 text-slate-400">
+                    用户不需要理解内部变量。页面会把芯片、材料、能源、生命科学数据自动转成稳定性检查项，并给出业务语言解释。
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('upload')}
+                  className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b]"
+                >
+                  开始上传数据
+                </button>
+              </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {(Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => {
+                      setIndustry(item);
+                      setActiveTab('upload');
+                    }}
+                    className="rounded-[24px] border border-white/8 bg-black/10 p-4 text-left transition-colors hover:border-[#52DBA9]/28 hover:bg-[#52DBA9]/8"
+                  >
+                    <div className="text-lg font-black text-white">{HFCD_INDUSTRIES[item].title}</div>
+                    <p className="mt-2 text-xs leading-6 text-slate-500">{HFCD_INDUSTRIES[item].description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
         ) : null}
 
         {activeTab === 'upload' ? (
           <section className="mt-8">
-            <SectionTitle title="数据上传与风险分析" description="选择行业、上传 CSV，系统会检查字段是否完整，并自动识别高风险样本、主要问题和研发修复建议。" />
+            <SectionTitle title="上传数据：不用懂内部术语，也能快速跑起来" description="选择行业后，页面会告诉你该上传哪些字段。可以先加载示例数据看完整流程，再换成客户自己的历史实验、生产、校准、寿命或质检 CSV。" />
             <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
@@ -1783,6 +2052,9 @@ export function HFCDWorkbench() {
                       ))}
                     </select>
                   </label>
+                  <div className="mt-5">
+                    <IndustryUploadGuide industry={industry} />
+                  </div>
                   <label className="mt-5 flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-[24px] border border-dashed border-[#52DBA9]/25 bg-[#52DBA9]/6 px-5 py-6 text-center transition-colors hover:bg-[#52DBA9]/10">
                     <Upload className="h-8 w-8 text-[#8dffdf]" />
                     <span className="mt-3 text-sm font-semibold text-white">上传 CSV 数据</span>
@@ -1924,14 +2196,14 @@ export function HFCDWorkbench() {
 
         {activeTab === 'reports' ? (
           <section className="mt-8">
-            <SectionTitle title="报告中心" description="报告中心已经进入咨询交付形态：趋势对比、风险热图、稳定性指标通过率、风险类型分布、HTML 与打印/PDF 都在这里完成。" />
+            <SectionTitle title="结果中心" description="这里统一保存两类结果：一类是上传 CSV 后生成的风险分析/盲测报告；另一类是云端真实跑模型后的报告、图表、CSV、summary、checkpoint 和日志位置。" />
             <div className="mb-5 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-black text-white">多轮报告对比</h3>
-                  <p className="mt-1 text-sm text-slate-500">当前项目空间：{activeProject?.name || '未选择'}。按时间线追踪全部达标样本、高风险样本和平均风险分。</p>
+                  <h3 className="text-xl font-black text-white">风险分析报告</h3>
+                  <p className="mt-1 text-sm text-slate-500">当前项目：{activeProject?.name || '未选择'}。按时间线追踪达标样本、高风险样本和平均风险分。</p>
                 </div>
-                <button onClick={() => setActiveTab('projects')} className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-4 py-2 text-xs font-semibold text-[#9df4d7]">进入项目空间</button>
+                <button onClick={() => setActiveTab('upload')} className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-4 py-2 text-xs font-semibold text-[#9df4d7]">上传新数据</button>
               </div>
               <div className="mt-5 grid gap-3 md:grid-cols-3">
                 {activeProjectReports.slice(0, 6).map((report) => {
@@ -1949,6 +2221,59 @@ export function HFCDWorkbench() {
                   );
                 })}
                 {!activeProjectReports.length ? <div className="rounded-2xl border border-white/8 bg-black/10 p-4 text-sm text-slate-500">当前项目还没有历史报告。</div> : null}
+              </div>
+            </div>
+            <div className="mb-5 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-black text-white">云端真实跑模型产物</h3>
+                  <p className="mt-1 text-sm text-slate-500">Cloud Run 任务完成后，GCS 前缀、运行状态和产物清单会显示在这里。</p>
+                </div>
+                <button onClick={() => setActiveTab('research')} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">提交云端任务</button>
+              </div>
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {researchJobs.slice(0, 4).map((job) => {
+                  const manifest = job.manifest as { artifacts?: string[]; returncode?: number; finished_at?: string } | undefined;
+                  return (
+                    <article key={job.id} className="rounded-[24px] border border-white/8 bg-black/10 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-black text-white">{job.projectName}</div>
+                          <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">{formatDate(job.createdAt)} · {job.preset}</div>
+                        </div>
+                        <span className={`rounded-full border px-3 py-1 text-xs font-bold ${researchStatusClass(job.status)}`}>
+                          {researchStatusLabel(job.status)}
+                        </span>
+                      </div>
+                      <div className="mt-3 break-all font-mono text-xs leading-6 text-slate-400">{job.artifactPrefix || job.operationName || '等待提交或刷新状态'}</div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="rounded-2xl bg-white/[0.04] p-3">
+                          <div className="text-xl font-black text-white">{manifest?.returncode ?? 'N/A'}</div>
+                          <div className="text-slate-500">returncode</div>
+                        </div>
+                        <div className="rounded-2xl bg-white/[0.04] p-3">
+                          <div className="text-xl font-black text-white">{manifest?.artifacts?.length ?? 0}</div>
+                          <div className="text-slate-500">产物数</div>
+                        </div>
+                        <div className="rounded-2xl bg-white/[0.04] p-3">
+                          <div className="text-xl font-black text-white">{manifest?.finished_at ? '已完成' : '待刷新'}</div>
+                          <div className="text-slate-500">完成状态</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button onClick={() => handleRefreshResearchJob(job)} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">刷新状态</button>
+                        {job.artifactPrefix ? (
+                          <button onClick={() => navigator.clipboard?.writeText(job.artifactPrefix || '')} className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-4 py-2 text-xs font-semibold text-[#9df4d7]">复制 GCS 前缀</button>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+                {!researchJobs.length ? (
+                  <div className="rounded-[24px] border border-white/8 bg-black/10 p-5 text-sm leading-7 text-slate-500">
+                    还没有云端任务。进入“云端真实跑模型”，先提交一次 smoke 任务，确认链路能产出报告、图表和 checkpoint。
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="space-y-4">
@@ -2174,9 +2499,35 @@ export function HFCDWorkbench() {
         {activeTab === 'research' ? (
           <section className="mt-8">
             <SectionTitle
-              title="云端研究级长程仿真"
-              description="把本地 HFCD V12.x Python 长程实验搬到云端真实运行。前端提交任务，Cloud Run 执行原始脚本，GCS 保存 CSV、JSON、Markdown、PNG、checkpoint 和运行日志。"
+              title="云端真实跑模型"
+              description="这里跑的是真实云端任务：Cloud Run 执行 HFCD V12.x Python 长程脚本，GCS 保存 CSV、JSON、Markdown、PNG、checkpoint 和运行日志。先用 smoke 验证链路，再扩大运行规模。"
             />
+            <div className="mb-6 rounded-[30px] border border-[#52DBA9]/18 bg-[#52DBA9]/8 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-2xl font-black text-white">最快跑法：先提交 smoke 任务</h3>
+                  <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-300">
+                    smoke 只跑小规模任务，用来确认云端链路、GCS 写入和结果读取都正常。成功后再把 max variants、checkpoint 数量调大，进入标准长程运行。
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const smokeRequest = { ...researchRequest, smoke: true, maxVariants: 1, topCheckpoints: 1 };
+                    setResearchRequest(smokeRequest);
+                    void submitResearchJob(smokeRequest);
+                  }}
+                  className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)]"
+                >
+                  一键提交 smoke
+                </button>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <MetricCard label="任务引擎" value={<span className="text-2xl">Cloud Run</span>} note="真实运行 Python 脚本，不是前端假演示。" />
+                <MetricCard label="默认模式" value={<span className="text-2xl">smoke</span>} note="先验证链路，再扩大运行规模。" />
+                <MetricCard label="输出产物" value="6 类" note="报告、图表、CSV、summary、checkpoint、日志。" />
+                <MetricCard label="最新任务" value={researchJobs[0] ? researchStatusLabel(researchJobs[0].status) : '未提交'} note="提交后可在本页和结果中心刷新状态。" />
+              </div>
+            </div>
             <div className="grid gap-6 xl:grid-cols-[430px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
