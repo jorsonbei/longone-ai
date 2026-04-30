@@ -189,18 +189,18 @@ function classifySource(fileName: string): Pick<SourceRecord, 'kind' | 'recommen
       notes: ['对话资料优先用于抽取问答样本，不直接作为 canon。'],
     };
   }
-  if (/创世宝典|從宇宙起源到AI文明進化|爱与战争/i.test(fileName)) {
+  if (/创世宝典|從宇宙起源到AI文明進化|爱与战争|补遗|最终发布版|完整版|123版|sheet418|开启无-尽进化|大一统架构|光基文明法则|V10|v7\.1/i.test(fileName)) {
     return {
       kind: 'canon',
       recommendedUses: ['canon-reference', 'sft-reference'],
-      notes: ['正文或核心版本材料，优先作为 canon 主语料。'],
+      notes: ['正文、历史版本或补遗材料，优先作为 canon 主语料进入长期内化。'],
     };
   }
-  if (/HFCD|公式|宇宙算法/i.test(fileName)) {
+  if (/HFCD|公式|宇宙算法|量子算法|红移|数学推导|公理算法|机制映射|宇宙现象解释/i.test(fileName)) {
     return {
       kind: 'theory',
       recommendedUses: ['theory-reference', 'sft-reference'],
-      notes: ['理论公式与 OS 机制材料，适合补强结构化回答。'],
+      notes: ['理论公式、跨学科机制、数学推导与 OS 机制材料，进入结构化推理层。'],
     };
   }
   if (/体悟卡|《物性论》8/i.test(fileName)) {
