@@ -3,6 +3,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { officialSiteContent, OfficialSiteContent } from '../content/officialSiteContent';
+import { hfcdWorkbenchDefaultCopy, HFCDWorkbenchCopy } from '../content/hfcdWorkbenchContent';
 
 const STORAGE_KEY = 'adminOfficialSiteDraftV1';
 const ADMIN_CONTENT_DOC_ID = 'official-site';
@@ -61,6 +62,7 @@ export type AdminContentDraft = {
   bookHref: string;
   faq: FaqDraft[];
   industries: Record<string, IndustryDraft>;
+  hfcdWorkbench: HFCDWorkbenchCopy;
 };
 
 type AdminContentSyncState = 'idle' | 'loading' | 'synced' | 'saving' | 'fallback-local' | 'error';
@@ -109,6 +111,7 @@ function buildInitialDraft(): AdminContentDraft {
           },
         ])
     ),
+    hfcdWorkbench: { ...hfcdWorkbenchDefaultCopy },
   };
 }
 
@@ -203,6 +206,10 @@ export function useAdminContent() {
           ...initial.industries,
           ...(parsed.industries || {}),
         },
+        hfcdWorkbench: {
+          ...initial.hfcdWorkbench,
+          ...(parsed.hfcdWorkbench || {}),
+        },
       };
     } catch {
       return buildInitialDraft();
@@ -260,6 +267,10 @@ export function useAdminContent() {
             industries: {
               ...initial.industries,
               ...((parsed?.industries as Partial<Record<string, IndustryDraft>>) || {}),
+            },
+            hfcdWorkbench: {
+              ...initial.hfcdWorkbench,
+              ...(parsed?.hfcdWorkbench || {}),
             },
           };
           const nextJson = JSON.stringify(merged);
@@ -319,8 +330,18 @@ export function useAdminContent() {
 
   const content = useMemo(() => mergeDraftIntoContent(draft), [draft]);
 
-  const updateField = (field: keyof Omit<AdminContentDraft, 'industries'>, value: string) => {
+  const updateField = (field: keyof Omit<AdminContentDraft, 'industries' | 'hfcdWorkbench'>, value: string) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateHfcdWorkbenchField = <K extends keyof HFCDWorkbenchCopy>(field: K, value: HFCDWorkbenchCopy[K]) => {
+    setDraft((prev) => ({
+      ...prev,
+      hfcdWorkbench: {
+        ...prev.hfcdWorkbench,
+        [field]: value,
+      },
+    }));
   };
 
   const updateListField = (field: 'definitionParagraphs' | 'whyNowBullets', index: number, value: string) => {
@@ -447,6 +468,7 @@ export function useAdminContent() {
     addFaq,
     removeFaq,
     updateIndustry,
+    updateHfcdWorkbenchField,
     resetDraft,
     syncState,
     syncError,

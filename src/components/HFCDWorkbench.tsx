@@ -50,6 +50,7 @@ import {
   HFCDResearchJobRequest,
   HFCDResearchJobStatus,
 } from '../lib/hfcdResearchJobs';
+import { hfcdWorkbenchDefaultCopy, HFCDWorkbenchCopy } from '../content/hfcdWorkbenchContent';
 
 type WorkbenchTab =
   | 'dashboard'
@@ -123,14 +124,6 @@ const DATASET_STORAGE_KEY = 'hfcdDatasetsV1';
 const API_KEYS_STORAGE_KEY = 'hfcdApiKeysV1';
 const RESEARCH_JOBS_STORAGE_KEY = 'hfcdResearchJobsV1';
 
-const TABS: Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }> = [
-  { id: 'dashboard', label: '价值与快速开始', icon: BarChart3 },
-  { id: 'upload', label: '上传数据', icon: Upload },
-  { id: 'blind', label: '盲测验证', icon: ShieldAlert },
-  { id: 'research', label: '云端真实跑模型', icon: Microscope },
-  { id: 'reports', label: '结果中心', icon: FileText },
-];
-
 const gateLabels = [
   'Q_error',
   'energy_drift_per_q',
@@ -155,7 +148,7 @@ const HFCD_EXPERIMENT_EVIDENCE = {
   cloudMetrics: [
     { label: '源 checkpoint 复核', value: '101', note: '从多组历史状态继续复跑，验证不是单点偶然。' },
     { label: '稳定结果落盘', value: '499', note: 'V12.37 阶段可追溯稳定结果。' },
-    { label: '云端 smoke 产物', value: '447', note: 'Cloud Run 已能输出报告、图表、CSV、summary 和日志。' },
+    { label: '云端方案产物', value: '447', note: 'Cloud Run 已能输出报告、图表、CSV、summary 和日志。' },
   ],
   routeBars: [
     { label: '支撑条件增强', count: 119, total: 119, note: '增强承载环境，让关键输出稳定承接。' },
@@ -1378,7 +1371,18 @@ function researchStatusClass(status: HFCDResearchJobStatus) {
   return 'border-white/10 bg-white/[0.05] text-slate-300';
 }
 
-export function HFCDWorkbench() {
+export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy }) {
+  const copy = incomingCopy || hfcdWorkbenchDefaultCopy;
+  const tabs = useMemo<Array<{ id: WorkbenchTab; label: string; icon: React.ElementType }>>(
+    () => [
+      { id: 'dashboard', label: '价值与快速开始', icon: BarChart3 },
+      { id: 'upload', label: '上传数据', icon: Upload },
+      { id: 'blind', label: copy.blindTitle || '验证预警能力', icon: ShieldAlert },
+      { id: 'research', label: copy.researchTabLabel || '获取研发升级方案', icon: Microscope },
+      { id: 'reports', label: copy.reportsTitle || '结果中心', icon: FileText },
+    ],
+    [copy.blindTitle, copy.reportsTitle, copy.researchTabLabel],
+  );
   const [activeTab, setActiveTab] = useState<WorkbenchTab>('dashboard');
   const [industry, setIndustry] = useState<HFCDIndustry>('quantum');
   const [projectName, setProjectName] = useState('HFCD 稳定窗审计项目');
@@ -1397,7 +1401,7 @@ export function HFCDWorkbench() {
   const [fieldInput, setFieldInput] = useState<HFCDFieldSimulationInput>(() => defaultHFCDFieldSimulationInput('quantum'));
   const [researchRequest, setResearchRequest] = useState<HFCDResearchJobRequest>({
     preset: 'v12_38_me28800',
-    projectName: 'V12.38 研究级长程仿真',
+    projectName: 'V12.38 研发升级方案',
     sourceMode: 'best101',
     maxVariants: 1,
     topCheckpoints: 1,
@@ -1556,17 +1560,19 @@ export function HFCDWorkbench() {
     }
   };
 
-  const handleRunAudit = () => {
-    if (!rows.length) {
-      setUploadError('请先上传 CSV 文件，再运行分析。');
-      return;
-    }
-    if (!validation.isValid) {
-      setUploadError(validation.missingRequired.length ? `缺少必填字段：${validation.missingRequired.join(', ')}` : '请先上传 CSV 文件，再运行分析。');
-      return;
-    }
-    const nextResults = auditRecords(rows, industry);
-    setResults(nextResults);
+  const saveAuditRun = ({
+    nextResults,
+    nextRows,
+    nextFileName,
+    nextProjectName,
+    nextIndustry,
+  }: {
+    nextResults: HFCDAuditResult[];
+    nextRows: Array<Record<string, string>>;
+    nextFileName: string;
+    nextProjectName: string;
+    nextIndustry: HFCDIndustry;
+  }) => {
     let projectId = activeProject?.id;
     if (!projectId) {
       const project = createDefaultProject();
@@ -1580,9 +1586,9 @@ export function HFCDWorkbench() {
       id: reportId,
       projectId,
       datasetId,
-      projectName,
-      industry,
-      fileName,
+      projectName: nextProjectName,
+      industry: nextIndustry,
+      fileName: nextFileName,
       createdAt: Date.now(),
       results: nextResults,
     };
@@ -1590,14 +1596,76 @@ export function HFCDWorkbench() {
       id: datasetId,
       projectId,
       reportId,
-      fileName: fileName || `${projectName}.csv`,
-      industry,
-      rowCount: rows.length,
+      fileName: nextFileName || `${nextProjectName}.csv`,
+      industry: nextIndustry,
+      rowCount: nextRows.length,
       createdAt: Date.now(),
     };
     setDatasets((current) => [dataset, ...current].slice(0, 200));
     setReports((current) => [report, ...current].slice(0, 40));
+  };
+
+  const handleRunAudit = () => {
+    if (!rows.length) {
+      setUploadError('请先上传 CSV 文件，再运行分析。');
+      return;
+    }
+    if (!validation.isValid) {
+      setUploadError(validation.missingRequired.length ? `缺少必填字段：${validation.missingRequired.join(', ')}` : '请先上传 CSV 文件，再运行分析。');
+      return;
+    }
+    const nextResults = auditRecords(rows, industry);
+    setResults(nextResults);
+    saveAuditRun({
+      nextResults,
+      nextRows: rows,
+      nextFileName: fileName || `${projectName}.csv`,
+      nextProjectName: projectName,
+      nextIndustry: industry,
+    });
     setActiveTab(validateBlindMetrics(nextResults).hasActualFailure ? 'blind' : 'reports');
+  };
+
+  const handleBlindUploadFile = async (file: File | null) => {
+    setUploadError(null);
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseCsv(text);
+      const nextProjectName = file.name.replace(/\.[^.]+$/, '') || '客户盲测验证';
+      const nextValidation = validateRows(parsed, industry);
+      if (!parsed.length) {
+        setRows([]);
+        setResults([]);
+        setFileName(file.name);
+        setProjectName(nextProjectName);
+        setUploadError('CSV 没有检测到有效数据行。');
+        return;
+      }
+      if (!nextValidation.isValid) {
+        setRows(parsed);
+        setResults([]);
+        setFileName(file.name);
+        setProjectName(nextProjectName);
+        setUploadError(nextValidation.missingRequired.length ? `缺少必填字段：${nextValidation.missingRequired.join(', ')}` : 'CSV 字段不完整，无法验证。');
+        return;
+      }
+      const nextResults = auditRecords(parsed, industry);
+      setRows(parsed);
+      setResults(nextResults);
+      setFileName(file.name);
+      setProjectName(nextProjectName);
+      saveAuditRun({
+        nextResults,
+        nextRows: parsed,
+        nextFileName: file.name,
+        nextProjectName,
+        nextIndustry: industry,
+      });
+      setActiveTab('blind');
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'CSV 读取失败。');
+    }
   };
 
   const handleRunLearnedAudit = () => {
@@ -1729,7 +1797,7 @@ export function HFCDWorkbench() {
   const submitResearchJob = async (request: HFCDResearchJobRequest) => {
     const createdAt = Date.now();
     const fallbackId = createId('research');
-    const projectTitle = request.projectName || 'HFCD 云端长程仿真';
+    const projectTitle = request.projectName || 'HFCD 研发升级方案';
     setResearchJobs((current) => [
       {
         id: fallbackId,
@@ -1778,7 +1846,7 @@ export function HFCDWorkbench() {
             ? {
                 ...job,
                 status: 'failed',
-                message: error instanceof Error ? error.message : '提交云端长程仿真失败。',
+                message: error instanceof Error ? error.message : '提交研发方案任务失败。',
               }
             : job,
         ),
@@ -1826,7 +1894,7 @@ export function HFCDWorkbench() {
       setResearchJobs((current) =>
         current.map((item) =>
           item.id === job.id
-            ? { ...item, status: 'unknown', message: error instanceof Error ? error.message : '查询云端长程仿真状态失败。' }
+            ? { ...item, status: 'unknown', message: error instanceof Error ? error.message : '查询研发方案任务状态失败。' }
             : item,
         ),
       );
@@ -1883,34 +1951,34 @@ export function HFCDWorkbench() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-[#7ef8d2]/20 bg-[#52DBA9]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.24em] text-[#91ffe1]">
                 <Activity className="h-3.5 w-3.5" />
-                HFCD R&D Risk Validation
+                {copy.heroBadge}
               </div>
-              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">HFCD 研发风险验证与云端真实仿真</h1>
+              <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">{copy.heroTitle}</h1>
               <p className="mt-4 max-w-4xl text-base leading-8 text-slate-300 md:text-lg">
-                上传历史实验、生产或质检数据，先验证系统能不能提前发现高风险样本、主要失效原因和修复方向；需要深度验证时，再把 HFCD V12.x 长程脚本提交到云端真实运行，产出报告、图表、CSV、summary、checkpoint 和日志。
+                {copy.heroSubtitle}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   onClick={() => setActiveTab('blind')}
                   className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] transition-colors hover:bg-[#67e5b7]"
                 >
-                  做一次盲测验证
+                  {copy.heroPrimaryCta}
                 </button>
                 <button
                   onClick={() => setActiveTab('research')}
                   className="rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-bold text-slate-100 transition-colors hover:bg-white/[0.08]"
                 >
-                  云端真实跑模型
+                  {copy.heroSecondaryCta}
                 </button>
               </div>
             </div>
             <div className="rounded-[28px] border border-white/8 bg-black/15 p-5">
-              <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">产品价值</div>
+              <div className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">{copy.valueCardTitle}</div>
               <div className="mt-4 space-y-4">
                 {[
-                  ['先证明有效', '用客户历史失效标签做盲测，直接看命中率、提升幅度和提前预警。'],
-                  ['再真实运行', 'Cloud Run 执行原始 HFCD Python 长程脚本，不只是在网页里做演示。'],
-                  ['最后拿结果', '输出可下载报告、风险样本、研发修复建议、图表、CSV 与 checkpoint。'],
+                  [copy.valueProofTitle, copy.valueProofBody],
+                  [copy.valueCauseTitle, copy.valueCauseBody],
+                  [copy.valuePlanTitle, copy.valuePlanBody],
                 ].map(([title, body]) => (
                   <div key={title} className="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
                     <div className="font-bold text-white">{title}</div>
@@ -1923,7 +1991,7 @@ export function HFCDWorkbench() {
         </section>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
@@ -1946,32 +2014,32 @@ export function HFCDWorkbench() {
         {activeTab === 'dashboard' ? (
           <section className="mt-8">
             <SectionTitle
-              title="一页讲清楚：它有什么价值、怎么用、结果在哪里"
-              description="HFCD 当前产品只保留两条主线：盲测验证用于证明能不能发现风险；云端真实跑模型用于把原始长程实验搬到云端执行。其它能力都收进结果中心和高级入口，不再打断用户。"
+              title={copy.dashboardTitle}
+              description={copy.dashboardDescription}
             />
             <div className="grid gap-5 lg:grid-cols-2">
               <WorkflowCard
                 badge="Core Flow 01"
-                title="盲测验证：证明它有没有用"
-                description="上传带真实失效标签的历史数据，系统先不看答案调参，而是直接排序高风险样本，验证它能不能比客户现有方法更早发现问题。"
+                title={copy.blindFlowTitle}
+                description={copy.blindFlowDescription}
                 points={[
-                  '输入：历史实验/生产/质检数据 + actual_failure 真实失效标签。',
-                  '输出：高风险样本、主要失效原因、Top10 命中率、AUC、提前预警天数。',
-                  '用途：快速证明 HFCD 是否值得进入客户试点。',
+                  copy.blindFlowPointInput,
+                  copy.blindFlowPointOutput,
+                  copy.blindFlowPointUse,
                 ]}
-                action="进入盲测验证"
+                action={copy.blindFlowAction}
                 onClick={() => setActiveTab('blind')}
               />
               <WorkflowCard
                 badge="Core Flow 02"
-                title="云端真实跑模型：跑原始长程脚本"
-                description="当客户需要更深验证时，把 HFCD V12.x Python 长程实验提交到 Cloud Run，真实消耗 CPU、写 checkpoint、产出完整证据链。"
+                title={copy.researchFlowTitle}
+                description={copy.researchFlowDescription}
                 points={[
-                  '输入：实验版本、checkpoint、运行规模和云端任务参数。',
-                  '输出：Markdown 报告、PNG 图表、CSV、summary、checkpoint、运行日志。',
-                  '用途：从快速验证升级到研究级复核和联合研发。',
+                  copy.researchFlowPointInput,
+                  copy.researchFlowPointOutput,
+                  copy.researchFlowPointUse,
                 ]}
-                action="提交云端真实任务"
+                action={copy.researchFlowAction}
                 onClick={() => setActiveTab('research')}
               />
             </div>
@@ -2016,7 +2084,7 @@ export function HFCDWorkbench() {
 
         {activeTab === 'upload' ? (
           <section className="mt-8">
-            <SectionTitle title="上传数据：不用懂内部术语，也能快速跑起来" description="选择行业后，页面会告诉你该上传哪些字段。可以先加载示例数据看完整流程，再换成客户自己的历史实验、生产、校准、寿命或质检 CSV。" />
+            <SectionTitle title={copy.uploadTitle} description={copy.uploadDescription} />
             <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
@@ -2196,7 +2264,7 @@ export function HFCDWorkbench() {
 
         {activeTab === 'reports' ? (
           <section className="mt-8">
-            <SectionTitle title="结果中心" description="这里统一保存两类结果：一类是上传 CSV 后生成的风险分析/盲测报告；另一类是云端真实跑模型后的报告、图表、CSV、summary、checkpoint 和日志位置。" />
+            <SectionTitle title={copy.reportsTitle} description={copy.reportsDescription} />
             <div className="mb-5 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2226,7 +2294,7 @@ export function HFCDWorkbench() {
             <div className="mb-5 rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-black text-white">云端真实跑模型产物</h3>
+                  <h3 className="text-xl font-black text-white">研发升级方案产物</h3>
                   <p className="mt-1 text-sm text-slate-500">Cloud Run 任务完成后，GCS 前缀、运行状态和产物清单会显示在这里。</p>
                 </div>
                 <button onClick={() => setActiveTab('research')} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">提交云端任务</button>
@@ -2271,7 +2339,7 @@ export function HFCDWorkbench() {
                 })}
                 {!researchJobs.length ? (
                   <div className="rounded-[24px] border border-white/8 bg-black/10 p-5 text-sm leading-7 text-slate-500">
-                    还没有云端任务。进入“云端真实跑模型”，先提交一次 smoke 任务，确认链路能产出报告、图表和 checkpoint。
+                    还没有研发方案任务。进入“{copy.researchTabLabel}”，先生成一版快速方案，确认链路能产出报告、图表和 checkpoint。
                   </div>
                 ) : null}
               </div>
@@ -2314,24 +2382,26 @@ export function HFCDWorkbench() {
 
         {activeTab === 'blind' ? (
           <section className="mt-8">
-            <SectionTitle title="盲测验证" description="用客户历史数据验证系统是否真的能提前发现风险。上传包含真实失效标签的 CSV 后，系统会自动对比客户原有模型，输出命中率、提升幅度和提前预警天数。" />
+            <SectionTitle title={copy.blindTitle} description={copy.blindDescription} />
             <div className="mb-6 rounded-[28px] border border-[#52DBA9]/14 bg-[#52DBA9]/7 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-xl font-black text-white">怎么让这一页有结果？</h3>
+                  <h3 className="text-xl font-black text-white">{copy.blindInstructionTitle}</h3>
                   <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-300">
-                    CSV 至少需要 `actual_failure` 字段：真实失效填 1，未失效填 0。可选补充 `baseline_score` 用于和客户现有模型对比，补充 `lead_time_days` 用于统计提前预警天数。
+                    {copy.blindInstructionBody}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
                     加载盲测示例
                   </button>
-                  <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
-                    上传客户数据
-                  </button>
+                  <label className="cursor-pointer rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/[0.08]">
+                    {copy.blindUploadButton}
+                    <input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => void handleBlindUploadFile(event.target.files?.[0] || null)} />
+                  </label>
                 </div>
               </div>
+              {uploadError ? <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{uploadError}</div> : null}
               {!results.length || !blindMetrics.hasActualFailure ? (
                 <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-7 text-amber-100">
                   当前没有可验证的真实失效标签，所以 AUC、Top10 命中率、提前预警都会显示 N/A。这不是计算失败，是缺少验证标签。
@@ -2426,7 +2496,7 @@ export function HFCDWorkbench() {
                     加载学习示例
                   </button>
                   <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
-                    上传客户数据
+                    上传数据
                   </button>
                 </div>
               </div>
@@ -2451,13 +2521,13 @@ export function HFCDWorkbench() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => setActiveTab('research')} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
-                    提交云端长程实验
+                    获取研发升级方案
                   </button>
                   <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
                     加载仿真示例
                   </button>
                   <button onClick={() => setActiveTab('upload')} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200">
-                    上传客户数据
+                    上传数据
                   </button>
                 </div>
               </div>
@@ -2465,8 +2535,8 @@ export function HFCDWorkbench() {
             <div className="mb-6 rounded-[28px] border border-[#52DBA9]/20 bg-[#52DBA9]/8 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs font-black uppercase tracking-[0.24em] text-[#8dffdf]">Cloud Run Real Experiment</div>
-                  <h3 className="mt-3 text-2xl font-black text-white">真实云端长程实验入口</h3>
+                  <div className="text-xs font-black uppercase tracking-[0.24em] text-[#8dffdf]">R&D Upgrade Plan</div>
+                  <h3 className="mt-3 text-2xl font-black text-white">研发升级方案入口</h3>
                   <p className="mt-3 max-w-5xl text-sm leading-8 text-slate-300">
                     这里不是页面里的轻量模拟。点击后会进入云端任务页，提交你原来的 HFCD V12.x Python 长程脚本到 Google Cloud Run，
                     从 GCS 拉取脚本和 checkpoint，运行后把 Markdown、PNG、CSV、summary、progress log 和 checkpoint 写回 GCS。
@@ -2476,7 +2546,7 @@ export function HFCDWorkbench() {
                   onClick={() => setActiveTab('research')}
                   className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)]"
                 >
-                  去运行云端真实实验
+                  去生成研发升级方案
                 </button>
               </div>
             </div>
@@ -2499,15 +2569,15 @@ export function HFCDWorkbench() {
         {activeTab === 'research' ? (
           <section className="mt-8">
             <SectionTitle
-              title="云端真实跑模型"
-              description="这里跑的是真实云端任务：Cloud Run 执行 HFCD V12.x Python 长程脚本，GCS 保存 CSV、JSON、Markdown、PNG、checkpoint 和运行日志。先用 smoke 验证链路，再扩大运行规模。"
+              title={copy.researchTitle}
+              description={copy.researchDescription}
             />
             <div className="mb-6 rounded-[30px] border border-[#52DBA9]/18 bg-[#52DBA9]/8 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-2xl font-black text-white">最快跑法：先提交 smoke 任务</h3>
+                  <h3 className="text-2xl font-black text-white">{copy.researchQuickTitle}</h3>
                   <p className="mt-2 max-w-4xl text-sm leading-8 text-slate-300">
-                    smoke 只跑小规模任务，用来确认云端链路、GCS 写入和结果读取都正常。成功后再把 max variants、checkpoint 数量调大，进入标准长程运行。
+                    {copy.researchQuickDescription}
                   </p>
                 </div>
                 <button
@@ -2518,12 +2588,12 @@ export function HFCDWorkbench() {
                   }}
                   className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)]"
                 >
-                  一键提交 smoke
+                  {copy.researchQuickButton}
                 </button>
               </div>
               <div className="mt-5 grid gap-3 md:grid-cols-4">
-                <MetricCard label="任务引擎" value={<span className="text-2xl">Cloud Run</span>} note="真实运行 Python 脚本，不是前端假演示。" />
-                <MetricCard label="默认模式" value={<span className="text-2xl">smoke</span>} note="先验证链路，再扩大运行规模。" />
+                <MetricCard label="运行方式" value={<span className="text-2xl">云端任务</span>} note="在云端执行长程脚本并保存产物。" />
+                <MetricCard label="起步模式" value={<span className="text-2xl">快速验证</span>} note="先验证链路，再扩大运行规模。" />
                 <MetricCard label="输出产物" value="6 类" note="报告、图表、CSV、summary、checkpoint、日志。" />
                 <MetricCard label="最新任务" value={researchJobs[0] ? researchStatusLabel(researchJobs[0].status) : '未提交'} note="提交后可在本页和结果中心刷新状态。" />
               </div>
@@ -2531,9 +2601,9 @@ export function HFCDWorkbench() {
             <div className="grid gap-6 xl:grid-cols-[430px_minmax(0,1fr)]">
               <div className="space-y-5">
                 <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-                  <h3 className="text-xl font-black text-white">提交长程实验</h3>
+                  <h3 className="text-xl font-black text-white">{copy.researchSubmitTitle}</h3>
                   <p className="mt-2 text-sm leading-7 text-slate-400">
-                    这里启动的不是浏览器里的轻量计算，而是 Cloud Run 上的 Python 任务。建议先用 smoke 模式验证链路，再放大 max variants 和 checkpoint 数。
+                    {copy.researchSubmitDescription}
                   </p>
                   <label className="mt-5 block">
                     <div className="text-sm font-semibold text-white">任务名称</div>
@@ -2618,14 +2688,14 @@ export function HFCDWorkbench() {
                         onChange={(event) => setResearchRequest((current) => ({ ...current, smoke: event.target.checked }))}
                         className="accent-[#52DBA9]"
                       />
-                      smoke 模式先测链路
+                      快速验证模式
                     </label>
                   </div>
                   <button
                     onClick={handleSubmitResearchJob}
                     className="mt-5 w-full rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)] transition-colors hover:bg-[#67e5b7]"
                   >
-                    提交到云端真实运行
+                    {copy.researchSubmitButton}
                   </button>
                 </div>
 
@@ -2717,7 +2787,7 @@ export function HFCDWorkbench() {
                     })}
                     {!researchJobs.length ? (
                       <div className="rounded-[24px] border border-white/8 bg-black/10 p-6 text-sm leading-7 text-slate-500">
-                        还没有云端长程任务。先用 smoke 模式提交一次，确认 Cloud Run、GCS 和 Worker 凭据都通，再扩大运行规模。
+                        还没有研发方案任务。先用快速验证模式提交一次，确认云端运行、结果存储和读取都正常，再扩大运行规模。
                       </div>
                     ) : null}
                   </div>
@@ -2729,7 +2799,7 @@ export function HFCDWorkbench() {
                     {[
                       ['快速审计', '浏览器或 Worker 里对客户 CSV 做稳定性指标映射，秒级返回，适合客户初筛。'],
                       ['参数化仿真', '基于客户数据和手动输入参数生成候选研发路线，多步轨迹是产品级模拟。'],
-                      ['研究级长程仿真', '运行原始 V12.x Python 脚本，吃 CPU、checkpoint 和磁盘输出，适合继续推进物质生成实验链。'],
+                      ['研究级方案复核', '运行原始 V12.x Python 脚本，保留 checkpoint、CSV、图表和日志，适合继续推进深度研发验证。'],
                     ].map(([title, body]) => (
                       <div key={title} className="rounded-2xl border border-white/8 bg-black/10 p-4">
                         <div className="font-bold text-white">{title}</div>

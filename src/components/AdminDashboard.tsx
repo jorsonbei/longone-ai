@@ -3,6 +3,7 @@ import { Activity, BarChart3, ClipboardCheck, Database, FileText, KeyRound, Mess
 import { ChatSession, WuxingRecord } from '../types';
 import { OfficialSiteContent } from '../content/officialSiteContent';
 import { AdminContentDraft } from '../hooks/useAdminContent';
+import { HFCDWorkbenchCopy } from '../content/hfcdWorkbenchContent';
 import { WuxingConfig } from '../lib/wuxingKernel';
 import { FAILURE_MODE_LABELS, HFCD_GATE_EXPLANATIONS, HFCD_INDUSTRIES } from '../lib/hfcdCore';
 
@@ -16,7 +17,8 @@ interface AdminDashboardProps {
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   onOpenHFCD: () => void;
-  updateField: (field: keyof Omit<AdminContentDraft, 'industries' | 'definitionParagraphs' | 'whyNowBullets' | 'evidenceHighlights' | 'evidenceMetrics' | 'faq'>, value: string) => void;
+  updateField: (field: keyof Omit<AdminContentDraft, 'industries' | 'hfcdWorkbench' | 'definitionParagraphs' | 'whyNowBullets' | 'evidenceHighlights' | 'evidenceMetrics' | 'faq'>, value: string) => void;
+  updateHfcdWorkbenchField: <K extends keyof HFCDWorkbenchCopy>(field: K, value: HFCDWorkbenchCopy[K]) => void;
   updateListField: (field: 'definitionParagraphs' | 'whyNowBullets', index: number, value: string) => void;
   addListFieldItem: (field: 'definitionParagraphs' | 'whyNowBullets') => void;
   removeListFieldItem: (field: 'definitionParagraphs' | 'whyNowBullets', index: number) => void;
@@ -49,6 +51,75 @@ const TABS = [
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
+
+const HFCD_COPY_FIELD_GROUPS: Array<{
+  title: string;
+  description: string;
+  fields: Array<{ key: keyof HFCDWorkbenchCopy; label: string; hint: string; multiline?: boolean }>;
+}> = [
+  {
+    title: '首屏与价值表达',
+    description: '控制研发增强模型工作台第一屏。所有文案都应面向客户价值，而不是解释内部架构。',
+    fields: [
+      { key: 'heroBadge', label: '顶部短语', hint: '首屏小徽标。' },
+      { key: 'heroTitle', label: '首屏标题', hint: '客户进入工作台第一眼看到的主标题。' },
+      { key: 'heroSubtitle', label: '首屏说明', hint: '说明它能解决什么问题、为什么有价值。', multiline: true },
+      { key: 'heroPrimaryCta', label: '主按钮', hint: '引导用户做第一步。' },
+      { key: 'heroSecondaryCta', label: '次按钮', hint: '引导用户进入研发方案流程。' },
+      { key: 'valueCardTitle', label: '价值卡标题', hint: '右侧价值卡片标题。' },
+      { key: 'valueProofTitle', label: '价值 1 标题', hint: '建议表达“发现风险”。' },
+      { key: 'valueProofBody', label: '价值 1 说明', hint: '解释如何证明风险预警能力。', multiline: true },
+      { key: 'valueCauseTitle', label: '价值 2 标题', hint: '建议表达“解释原因”。' },
+      { key: 'valueCauseBody', label: '价值 2 说明', hint: '解释为什么不是黑箱分数。', multiline: true },
+      { key: 'valuePlanTitle', label: '价值 3 标题', hint: '建议表达“给出动作”。' },
+      { key: 'valuePlanBody', label: '价值 3 说明', hint: '解释结果包和研发升级方案。', multiline: true },
+    ],
+  },
+  {
+    title: '工作台首页与两条主流程',
+    description: '控制“价值与快速开始”页。文案要直接说明客户能得到什么结果、为什么可信、下一步怎么用。',
+    fields: [
+      { key: 'dashboardTitle', label: '首页标题', hint: '一页讲清楚价值和怎么用。' },
+      { key: 'dashboardDescription', label: '首页说明', hint: '用客户能理解的话说明输入、处理、输出。', multiline: true },
+      { key: 'blindFlowTitle', label: '验证流程标题', hint: '第一条核心流程标题。' },
+      { key: 'blindFlowDescription', label: '验证流程说明', hint: '说明用历史真实结果验证预警能力。', multiline: true },
+      { key: 'blindFlowPointInput', label: '验证流程输入', hint: '说明用户要上传什么。' },
+      { key: 'blindFlowPointOutput', label: '验证流程输出', hint: '说明用户会得到什么。' },
+      { key: 'blindFlowPointUse', label: '验证流程用途', hint: '说明客户为什么要做。' },
+      { key: 'blindFlowAction', label: '验证流程按钮', hint: '按钮文案。' },
+      { key: 'researchFlowTitle', label: '方案流程标题', hint: '第二条核心流程标题。' },
+      { key: 'researchFlowDescription', label: '方案流程说明', hint: '说明如何获取研发升级方案。', multiline: true },
+      { key: 'researchFlowPointInput', label: '方案流程输入', hint: '说明任务需要哪些参数。' },
+      { key: 'researchFlowPointOutput', label: '方案流程输出', hint: '说明会输出哪些产物。' },
+      { key: 'researchFlowPointUse', label: '方案流程用途', hint: '说明适用场景。' },
+      { key: 'researchFlowAction', label: '方案流程按钮', hint: '按钮文案。' },
+    ],
+  },
+  {
+    title: '页面标题与操作提示',
+    description: '控制上传、盲测、研发方案和结果中心页面的关键文字。',
+    fields: [
+      { key: 'uploadTitle', label: '上传页标题', hint: '上传数据页面标题。' },
+      { key: 'uploadDescription', label: '上传页说明', hint: '告诉用户上传什么类型的数据。', multiline: true },
+      { key: 'blindTitle', label: '验证页标题', hint: '盲测验证页标题。' },
+      { key: 'blindDescription', label: '验证页说明', hint: '说明验证页结果如何产生。', multiline: true },
+      { key: 'blindInstructionTitle', label: '验证说明卡标题', hint: '上传说明卡标题。' },
+      { key: 'blindInstructionBody', label: '验证说明卡正文', hint: '说明 actual_failure、baseline_score、lead_time_days。', multiline: true },
+      { key: 'blindUploadButton', label: '验证页上传按钮', hint: '本页上传按钮文案。' },
+      { key: 'researchTabLabel', label: '研发方案标签', hint: '顶部导航标签，建议使用“获取研发升级方案”。' },
+      { key: 'researchTitle', label: '研发方案页标题', hint: '研发方案页面标题。' },
+      { key: 'researchDescription', label: '研发方案页说明', hint: '解释云端任务和输出产物，但不要写给工程师看。', multiline: true },
+      { key: 'researchQuickTitle', label: '快速方案标题', hint: '快速方案卡片标题。' },
+      { key: 'researchQuickDescription', label: '快速方案说明', hint: '说明为什么先跑小规模任务。', multiline: true },
+      { key: 'researchQuickButton', label: '快速方案按钮', hint: '快速提交按钮文案。' },
+      { key: 'researchSubmitTitle', label: '提交任务标题', hint: '左侧表单标题。' },
+      { key: 'researchSubmitDescription', label: '提交任务说明', hint: '解释提交任务的方式。', multiline: true },
+      { key: 'researchSubmitButton', label: '提交任务按钮', hint: '表单提交按钮文案。' },
+      { key: 'reportsTitle', label: '结果中心标题', hint: '结果中心页标题。' },
+      { key: 'reportsDescription', label: '结果中心说明', hint: '说明报告和方案包在哪里。', multiline: true },
+    ],
+  },
+];
 
 function PanelTitle({ title, description }: { title: string; description: string }) {
   return (
@@ -171,6 +242,7 @@ export function AdminDashboard({
   onDeleteChat,
   onOpenHFCD,
   updateField,
+  updateHfcdWorkbenchField,
   updateListField,
   addListFieldItem,
   removeListFieldItem,
@@ -359,6 +431,29 @@ export function AdminDashboard({
                         </div>
                       );
                     })}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="工作台文案管理" description="这里控制研发增强模型工作台的标题、说明和按钮。修改后前台立即使用同一套文案。">
+                  <div className="space-y-5">
+                    {HFCD_COPY_FIELD_GROUPS.map((group) => (
+                      <div key={group.title} className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                        <div className="text-sm font-black text-white">{group.title}</div>
+                        <p className="mt-1 text-xs leading-6 text-slate-500">{group.description}</p>
+                        <div className="mt-4 grid gap-4">
+                          {group.fields.map((field) => (
+                            <FieldBlock
+                              key={field.key}
+                              label={field.label}
+                              hint={field.hint}
+                              value={draft.hfcdWorkbench[field.key]}
+                              multiline={field.multiline}
+                              onChange={(value) => updateHfcdWorkbenchField(field.key, value)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </SectionCard>
 

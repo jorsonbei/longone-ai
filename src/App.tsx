@@ -166,6 +166,7 @@ export default function App() {
     addFaq,
     removeFaq,
     updateIndustry,
+    updateHfcdWorkbenchField,
     resetDraft,
     syncState: adminContentSyncState,
     syncError: adminContentSyncError,
@@ -778,7 +779,7 @@ export default function App() {
               locale={locale}
             />
           ) : activeView === 'hfcd' ? (
-            <HFCDWorkbench />
+            <HFCDWorkbench copy={adminDraft.hfcdWorkbench} />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}
@@ -791,6 +792,7 @@ export default function App() {
               onDeleteChat={deleteChat}
               onOpenHFCD={() => setActiveView('hfcd')}
               updateField={updateField}
+              updateHfcdWorkbenchField={updateHfcdWorkbenchField}
               updateListField={updateListField}
               addListFieldItem={addListFieldItem}
               removeListFieldItem={removeListFieldItem}
