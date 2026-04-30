@@ -51,6 +51,29 @@ def download_source(bucket: storage.Bucket, source_prefix: str) -> int:
     return count
 
 
+def download_input_dataset(bucket: storage.Bucket, object_name: str | None) -> dict[str, Any] | None:
+    if not object_name:
+        return None
+
+    target = LOCAL_ROOT / "customer_input" / "input_dataset.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    blob = bucket.blob(object_name)
+    if not blob.exists():
+        raise FileNotFoundError(f"HFCD input dataset not found in GCS: {object_name}")
+    blob.download_to_filename(target)
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    return {
+        "object": object_name,
+        "local_path": str(target),
+        "file_name": payload.get("fileName"),
+        "industry": payload.get("industry"),
+        "row_count": payload.get("rowCount") or len(payload.get("rows") or []),
+    }
+
+
 def upload_file(bucket: storage.Bucket, artifact_prefix: str, file_path: Path, root: Path) -> str:
     relative = file_path.relative_to(root).as_posix()
     object_name = f"{artifact_prefix.rstrip('/')}/{relative}"
@@ -127,6 +150,7 @@ def main() -> int:
     artifact_prefix = require_env("HFCD_ARTIFACT_PREFIX")
     script_name = require_env("HFCD_EXPERIMENT_SCRIPT")
     output_globs = os.environ.get("HFCD_OUTPUT_GLOBS", "物性论_HFCD_*,HFCD_*_checkpoints/*.pkl")
+    input_dataset_object = os.environ.get("HFCD_INPUT_DATASET_OBJECT")
 
     apply_extra_env()
 
@@ -143,12 +167,14 @@ def main() -> int:
         "finished_at": None,
         "returncode": None,
         "source_file_count": 0,
+        "input_dataset": None,
         "artifacts": [],
         "error": None,
     }
 
     try:
         manifest["source_file_count"] = download_source(bucket, source_prefix)
+        manifest["input_dataset"] = download_input_dataset(bucket, input_dataset_object)
         upload_manifest(bucket, artifact_prefix, manifest)
         returncode = run_experiment(script_name)
         manifest["returncode"] = returncode

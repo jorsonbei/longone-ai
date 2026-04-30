@@ -92,14 +92,14 @@ export const hfcdWorkbenchDefaultCopy: HFCDWorkbenchCopy = {
   researchTabLabel: '获取研发升级方案',
   researchTitle: '获取研发升级方案',
   researchDescription:
-    '这里会提交云端任务，生成一份研发升级方案包。系统会运行 HFCD 长程脚本，保存报告、图表、CSV、summary、checkpoint 和运行日志，方便团队复核每条候选路线。',
+    '先上传客户历史实验、生产或质检数据，再提交云端任务生成研发升级方案包。系统会把输入数据与 HFCD 长程脚本结果一起保存，产出报告、图表、CSV、summary、checkpoint 和运行日志。',
   researchQuickTitle: '先生成一版快速升级方案',
   researchQuickDescription:
-    '先用小规模任务确认数据、云端运行和结果读取正常；确认通过后，再扩大运行规模做更完整的研发路线复核。',
+    '先用当前上传的数据跑小规模任务，确认输入、云端运行和结果读取正常；确认通过后，再扩大运行规模做更完整的研发路线复核。',
   researchQuickButton: '生成快速方案',
   researchSubmitTitle: '提交研发方案任务',
   researchSubmitDescription:
-    '任务会在云端运行 Python 长程脚本。建议先用快速验证模式确认链路，再放大候选路线数量和 checkpoint 数。',
+    '任务会把当前上传的数据写入 GCS，并在云端运行 Python 长程脚本。建议先用快速验证模式确认链路，再放大候选路线数量和 checkpoint 数。',
   researchSubmitButton: '提交生成升级方案',
   reportsTitle: '结果中心',
   reportsDescription:

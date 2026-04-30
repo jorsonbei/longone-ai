@@ -1679,7 +1679,7 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
     setActiveTab('calibration');
   };
 
-  const handleLoadSample = (targetIndustry = industry) => {
+  const handleLoadSample = (targetIndustry = industry, nextTab: WorkbenchTab = 'upload') => {
     const csv = templateToCsv(targetIndustry);
     setIndustry(targetIndustry);
     setRows(parseCsv(csv));
@@ -1687,7 +1687,7 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
     setProjectName(`${HFCD_INDUSTRIES[targetIndustry].title} 示例审计`);
     setResults([]);
     setUploadError(null);
-    setActiveTab('upload');
+    setActiveTab(nextTab);
   };
 
   const handleLoadBlindValidationSample = (targetIndustry = industry) => {
@@ -1795,14 +1795,39 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
   };
 
   const submitResearchJob = async (request: HFCDResearchJobRequest) => {
+    if (!rows.length) {
+      setUploadError('请先在本页上传客户 CSV 数据，或加载示例数据，再生成研发升级方案。');
+      return;
+    }
+    if (!validation.isValid) {
+      setUploadError(validation.missingRequired.length ? `当前数据缺少必填字段：${validation.missingRequired.join(', ')}` : '当前数据字段不完整，无法生成研发升级方案。');
+      return;
+    }
+
+    setUploadError(null);
+    const requestWithDataset: HFCDResearchJobRequest = {
+      ...request,
+      inputDataset: {
+        industry,
+        fileName: fileName || `${projectName || 'hfcd_dataset'}.csv`,
+        rowCount: rows.length,
+        rows,
+        validation: {
+          isValid: validation.isValid,
+          missingRequired: validation.missingRequired,
+          computableFields: validation.computableFields,
+          suggestedFields: validation.suggestedFields,
+        },
+      },
+    };
     const createdAt = Date.now();
     const fallbackId = createId('research');
-    const projectTitle = request.projectName || 'HFCD 研发升级方案';
+    const projectTitle = requestWithDataset.projectName || 'HFCD 研发升级方案';
     setResearchJobs((current) => [
       {
         id: fallbackId,
         projectName: projectTitle,
-        preset: request.preset || 'v12_38_me28800',
+        preset: requestWithDataset.preset || 'v12_38_me28800',
         status: 'queued',
         createdAt,
         message: '正在提交到 Cloud Run...',
@@ -1817,7 +1842,7 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
           'content-type': 'application/json',
           ...(apiKeys[0]?.key ? { 'x-api-key': apiKeys[0].key } : {}),
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(requestWithDataset),
       });
       const payload = await response.json();
       const jobId = payload?.plan?.jobId || fallbackId;
@@ -2572,6 +2597,73 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
               title={copy.researchTitle}
               description={copy.researchDescription}
             />
+            <div className="mb-6 grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <div className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-2xl font-black text-white">先上传要分析的数据</h3>
+                    <p className="mt-2 text-sm leading-8 text-slate-400">
+                      研发升级方案不是空跑按钮。请上传客户历史实验、生产、校准、寿命或质检 CSV；云端任务会把这份数据保存为 input_dataset.json，并和长程脚本结果一起落盘。
+                    </p>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs font-bold ${rows.length && validation.isValid ? 'border-[#52DBA9]/25 bg-[#52DBA9]/12 text-[#9df4d7]' : 'border-amber-300/25 bg-amber-300/12 text-amber-100'}`}>
+                    {rows.length ? `${rows.length} 行数据` : '未上传数据'}
+                  </span>
+                </div>
+                <label className="mt-5 block">
+                  <div className="text-sm font-semibold text-white">行业</div>
+                  <select
+                    value={industry}
+                    onChange={(event) => setIndustry(event.target.value as HFCDIndustry)}
+                    className="mt-3 h-12 w-full rounded-2xl border border-white/10 bg-[#141821] px-4 text-sm text-slate-200 outline-none focus:border-[#52DBA9]/50"
+                  >
+                    {(Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((item) => (
+                      <option key={item} value={item}>{HFCD_INDUSTRIES[item].title}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="mt-5 flex min-h-[136px] cursor-pointer flex-col items-center justify-center rounded-[24px] border border-dashed border-[#52DBA9]/25 bg-[#52DBA9]/6 px-5 py-6 text-center transition-colors hover:bg-[#52DBA9]/10">
+                  <Upload className="h-8 w-8 text-[#8dffdf]" />
+                  <span className="mt-3 text-sm font-semibold text-white">上传客户 CSV 数据</span>
+                  <span className="mt-2 text-xs leading-6 text-slate-500">当前文件：{fileName || '尚未选择'}</span>
+                  <input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => handleUploadFile(event.target.files?.[0] || null)} />
+                </label>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handleLoadSample(industry, 'research')}
+                    className="rounded-full border border-[#52DBA9]/20 bg-[#52DBA9]/10 px-4 py-2 text-xs font-semibold text-[#9df4d7] hover:bg-[#52DBA9]/16"
+                  >
+                    加载示例数据
+                  </button>
+                  <button
+                    onClick={() => handleDownloadTemplate(industry)}
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-white/[0.08]"
+                  >
+                    下载字段模板
+                  </button>
+                </div>
+                {uploadError ? <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{uploadError}</div> : null}
+              </div>
+
+              <div className="rounded-[30px] border border-white/8 bg-white/[0.03] p-5">
+                <h3 className="text-2xl font-black text-white">这份数据会怎么参与真实运行？</h3>
+                <div className="mt-4 grid gap-3">
+                  {[
+                    ['1. 字段检查', `当前可计算字段 ${validation.computableFields.length} 个，缺失必填 ${validation.missingRequired.length ? validation.missingRequired.join('、') : '无'}。`],
+                    ['2. 输入落盘', '提交后服务端会把本次 CSV 转成 JSON 上传到 GCS，Cloud Run 任务会下载同一份输入。'],
+                    ['3. 云端执行', 'Cloud Run 运行已部署的 HFCD Python 长程脚本，并把报告、图表、CSV、summary、checkpoint、日志与输入数据一起保存。'],
+                  ].map(([title, body]) => (
+                    <div key={title} className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                      <div className="font-bold text-white">{title}</div>
+                      <p className="mt-2 text-sm leading-7 text-slate-400">{body}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5">
+                  <IndustryUploadGuide industry={industry} />
+                </div>
+              </div>
+            </div>
             <div className="mb-6 rounded-[30px] border border-[#52DBA9]/18 bg-[#52DBA9]/8 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>

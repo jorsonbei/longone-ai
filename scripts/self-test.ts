@@ -174,6 +174,12 @@ async function main() {
   const researchPlan = buildHFCDResearchJobPlan({
     preset: 'v12_38_me28800',
     projectName: 'self-test',
+    inputDataset: {
+      industry: 'quantum',
+      fileName: 'self-test.csv',
+      rowCount: 2,
+      rows: blindRows,
+    },
     smoke: true,
     maxVariants: 3,
     topCheckpoints: 4,
@@ -188,6 +194,8 @@ async function main() {
   assert(researchPlan.artifactPrefix.includes('hfcd/research-jobs/'), 'HFCD research plan should create a GCS artifact prefix.');
   assert(researchPlan.outputGlobs.includes('ME28800'), 'HFCD research plan should preserve V12.38 output globs.');
   assert(researchPlan.env.HFCD_V1238_LOG_INTERVAL === '60', 'HFCD research smoke plan should shorten log interval.');
+  assert(researchPlan.env.HFCD_INPUT_DATASET_FILE === 'self-test.csv', 'HFCD research plan should carry uploaded input dataset metadata.');
+  assert(researchPlan.env.HFCD_INPUT_DATASET_ROWS === '2', 'HFCD research plan should carry uploaded input row count.');
   console.log('[self-test] HFCD audit core OK');
 
   const nameCase = analyzeWuxingInput(

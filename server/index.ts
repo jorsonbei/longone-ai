@@ -243,6 +243,26 @@ async function fetchGcsJson(bucket: string, objectName: string) {
   }
 }
 
+async function uploadGcsJson(bucket: string, objectName: string, payload: unknown) {
+  const token = await getGoogleCloudAccessToken({ env: getProcessEnvRecord() });
+  const response = await fetch(
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify(payload, null, 2),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to upload HFCD input dataset to GCS: ${response.status} ${text.slice(0, 300)}`);
+  }
+  return response.json();
+}
+
 app.get('/api/hfcd/research-jobs/status', async (req, res) => {
   try {
     if (!assertHfcdApiKey(req)) {
@@ -299,6 +319,17 @@ app.post('/api/hfcd/research-jobs/submit', async (req, res) => {
       });
       return;
     }
+    if (request.inputDataset && cloud.bucket) {
+      const datasetObject = `${plan.artifactPrefix}/input/input_dataset.json`;
+      await uploadGcsJson(cloud.bucket, datasetObject, {
+        ...request.inputDataset,
+        uploadedAt: new Date().toISOString(),
+        jobId: plan.jobId,
+      });
+      plan.env.HFCD_INPUT_DATASET_OBJECT = datasetObject;
+      plan.env.HFCD_INPUT_DATASET_GCS_URI = `gs://${cloud.bucket}/${datasetObject}`;
+      plan.env.HFCD_OUTPUT_GLOBS = [plan.outputGlobs, 'customer_input/*.json'].filter(Boolean).join(',');
+    }
     const envVars = {
       ...plan.env,
       HFCD_JOB_ID: plan.jobId,
@@ -306,7 +337,7 @@ app.post('/api/hfcd/research-jobs/submit', async (req, res) => {
       HFCD_SOURCE_GCS_PREFIX: plan.sourcePrefix,
       HFCD_ARTIFACT_PREFIX: plan.artifactPrefix,
       HFCD_EXPERIMENT_SCRIPT: plan.experimentScript,
-      HFCD_OUTPUT_GLOBS: plan.outputGlobs,
+      HFCD_OUTPUT_GLOBS: plan.env.HFCD_OUTPUT_GLOBS || plan.outputGlobs,
     };
     const operation = await callGoogleApi(
       `https://run.googleapis.com/v2/projects/${cloud.projectId}/locations/${cloud.region}/jobs/${cloud.cloudRunJob}:run`,

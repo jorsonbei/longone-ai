@@ -12,6 +12,18 @@ export type HFCDResearchJobStatus =
 export interface HFCDResearchJobRequest {
   preset?: HFCDResearchPreset;
   projectName?: string;
+  inputDataset?: {
+    industry?: string;
+    fileName?: string;
+    rowCount?: number;
+    rows?: Array<Record<string, unknown>>;
+    validation?: {
+      isValid?: boolean;
+      missingRequired?: string[];
+      computableFields?: string[];
+      suggestedFields?: string[];
+    };
+  };
   sourceMode?: 'best101' | 'repair' | 'all' | string;
   maxVariants?: number;
   topCheckpoints?: number;
@@ -154,6 +166,12 @@ export function buildHFCDResearchJobPlan(
     HFCD_SOURCE_MODE: String(request.sourceMode || ''),
     HFCD_JOB_PROJECT_NAME: projectName,
   };
+
+  if (request.inputDataset) {
+    envVars.HFCD_INPUT_DATASET_FILE = String(request.inputDataset.fileName || '');
+    envVars.HFCD_INPUT_DATASET_INDUSTRY = String(request.inputDataset.industry || '');
+    envVars.HFCD_INPUT_DATASET_ROWS = String(request.inputDataset.rowCount || request.inputDataset.rows?.length || 0);
+  }
 
   if (request.sourceMode) {
     if (preset === 'v12_38_me28800') envVars.HFCD_V1238_SOURCE_MODE = String(request.sourceMode);
