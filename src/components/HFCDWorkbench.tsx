@@ -2125,6 +2125,9 @@ export function HFCDWorkbench() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button onClick={() => setActiveTab('research')} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
+                    提交云端长程实验
+                  </button>
                   <button onClick={() => handleLoadBlindValidationSample(industry)} className="rounded-full bg-[#52DBA9] px-4 py-2 text-xs font-bold text-[#10131b]">
                     加载仿真示例
                   </button>
@@ -2132,6 +2135,24 @@ export function HFCDWorkbench() {
                     上传客户数据
                   </button>
                 </div>
+              </div>
+            </div>
+            <div className="mb-6 rounded-[28px] border border-[#52DBA9]/20 bg-[#52DBA9]/8 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.24em] text-[#8dffdf]">Cloud Run Real Experiment</div>
+                  <h3 className="mt-3 text-2xl font-black text-white">真实云端长程实验入口</h3>
+                  <p className="mt-3 max-w-5xl text-sm leading-8 text-slate-300">
+                    这里不是页面里的轻量模拟。点击后会进入云端任务页，提交你原来的 HFCD V12.x Python 长程脚本到 Google Cloud Run，
+                    从 GCS 拉取脚本和 checkpoint，运行后把 Markdown、PNG、CSV、summary、progress log 和 checkpoint 写回 GCS。
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('research')}
+                  className="rounded-full bg-[#52DBA9] px-5 py-3 text-sm font-bold text-[#10131b] shadow-[0_14px_40px_rgba(82,219,169,0.18)]"
+                >
+                  去运行云端真实实验
+                </button>
               </div>
             </div>
             <SimulationPanel report={simulationReport} />
