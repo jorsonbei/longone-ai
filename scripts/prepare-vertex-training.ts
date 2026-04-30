@@ -59,8 +59,11 @@ type VertexSftExample = {
   }>;
 };
 
-const SOURCE_DIR =
-  process.env.WUXING_TRAINING_SOURCE || '/Users/beijisheng/Desktop/420/wuxing-training-source';
+const DEFAULT_SOURCE_DIR = '/Users/beijisheng/Desktop/420/wuxing-training-source';
+const SOURCE_DIRS = (process.env.WUXING_TRAINING_SOURCES || process.env.WUXING_TRAINING_SOURCE || DEFAULT_SOURCE_DIR)
+  .split(path.delimiter)
+  .map((item) => item.trim())
+  .filter(Boolean);
 const OUTPUT_ROOT = path.join(process.cwd(), 'training', 'vertex-ai');
 const EXTRACTED_DIR = path.join(OUTPUT_ROOT, 'extracted');
 const REPORTS_DIR = path.join(OUTPUT_ROOT, 'reports');
@@ -164,7 +167,7 @@ print("\\n".join(chunks))
 
 function extractText(filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.md' || ext === '.txt') {
+  if (ext === '.md' || ext === '.txt' || ext === '.tex') {
     return fs.readFileSync(filePath, 'utf8');
   }
   if (ext === '.docx') {
@@ -181,7 +184,8 @@ function detectTags(text: string) {
   return KEYWORD_TAGS.filter(([, keywords]) => keywords.some((keyword) => text.includes(keyword))).map(([tag]) => tag);
 }
 
-function classifySource(fileName: string): Pick<SourceRecord, 'kind' | 'recommendedUses' | 'notes'> {
+function classifySource(fileName: string, extractedText = ''): Pick<SourceRecord, 'kind' | 'recommendedUses' | 'notes'> {
+  const haystack = `${fileName}\n${extractedText.slice(0, 12000)}`;
   if (/聊天记录|chatgpt/i.test(fileName)) {
     return {
       kind: 'conversation',
@@ -189,14 +193,14 @@ function classifySource(fileName: string): Pick<SourceRecord, 'kind' | 'recommen
       notes: ['对话资料优先用于抽取问答样本，不直接作为 canon。'],
     };
   }
-  if (/创世宝典|從宇宙起源到AI文明進化|爱与战争|补遗|最终发布版|完整版|123版|sheet418|开启无-尽进化|大一统架构|光基文明法则|V10|v7\.1/i.test(fileName)) {
+  if (/创世宝典|從宇宙起源到AI文明進化|爱与战争|补遗|最终发布版|完整版|123版|sheet418|开启无-尽进化|大一统架构|光基文明法则|V10|v7\.1/i.test(haystack)) {
     return {
       kind: 'canon',
       recommendedUses: ['canon-reference', 'sft-reference'],
       notes: ['正文、历史版本或补遗材料，优先作为 canon 主语料进入长期内化。'],
     };
   }
-  if (/HFCD|公式|宇宙算法|量子算法|红移|数学推导|公理算法|机制映射|宇宙现象解释/i.test(fileName)) {
+  if (/HFCD|公式|宇宙算法|量子算法|红移|数学推导|公理算法|机制映射|宇宙现象解释|升级方案|结果复核|盲预测|量纲闭合|FinalReport|MEPRC/i.test(haystack)) {
     return {
       kind: 'theory',
       recommendedUses: ['theory-reference', 'sft-reference'],
@@ -350,10 +354,19 @@ function main() {
   ensureDir(DATASETS_DIR);
   ensureDir(CONFIG_DIR);
 
-  const sourceFiles = fs
-    .readdirSync(SOURCE_DIR)
-    .filter((name) => /\.(md|txt|docx|pdf)$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  const sourceFiles = SOURCE_DIRS.flatMap((sourceDir) => {
+    if (!fs.existsSync(sourceDir)) {
+      throw new Error(`Training source directory not found: ${sourceDir}`);
+    }
+    return fs
+      .readdirSync(sourceDir)
+      .filter((name) => /\.(md|txt|docx|pdf|tex)$/i.test(name))
+      .map((fileName) => ({ sourceDir, fileName }));
+  }).sort((a, b) => {
+    const sourceCompare = a.sourceDir.localeCompare(b.sourceDir, 'zh-Hans-CN');
+    if (sourceCompare !== 0) return sourceCompare;
+    return a.fileName.localeCompare(b.fileName, 'zh-Hans-CN');
+  });
 
   const records: SourceRecord[] = [];
   const allChunks: CorpusChunk[] = [];
@@ -361,14 +374,14 @@ function main() {
   const extractedPairs: ConversationPair[] = [];
   const skippedPairs: SkippedPair[] = [];
 
-  sourceFiles.forEach((fileName, index) => {
-    const absolutePath = path.join(SOURCE_DIR, fileName);
-    const slug = slugify(fileName, index);
+  sourceFiles.forEach(({ sourceDir, fileName }, index) => {
+    const absolutePath = path.join(sourceDir, fileName);
+    const slug = slugify(`${path.basename(sourceDir)}-${fileName}`, index);
     const extracted = normalize(extractText(absolutePath));
     const extractedTextPath = path.join(EXTRACTED_DIR, `${slug}.txt`);
     fs.writeFileSync(extractedTextPath, `${extracted}\n`, 'utf8');
 
-    const classification = classifySource(fileName);
+    const classification = classifySource(fileName, extracted);
     const pairs = extractPairs(slug, extracted);
     const chunks = splitIntoChunks(slug, classification.kind, fileName, extracted);
 
@@ -437,7 +450,7 @@ function main() {
   const validationRows = allSftSeeds.slice(splitIndex).map((item) => item.example);
 
   writeJson(path.join(REPORTS_DIR, 'source-manifest.json'), {
-    sourceDir: SOURCE_DIR,
+    sourceDir: SOURCE_DIRS.length === 1 ? SOURCE_DIRS[0] : SOURCE_DIRS,
     generatedAt: new Date().toISOString(),
     totals: {
       files: records.length,
@@ -474,7 +487,7 @@ function main() {
   const summary = [
     '# Vertex AI 训练源盘点',
     '',
-    `- 训练源目录：\`${SOURCE_DIR}\``,
+    `- 训练源目录：${SOURCE_DIRS.map((sourceDir) => `\`${sourceDir}\``).join('、')}`,
     `- 源文件数：${records.length}`,
     `- 参考 chunks：${allChunks.length}`,
     `- canon / theory / style chunks：${canonChunks.length}`,
