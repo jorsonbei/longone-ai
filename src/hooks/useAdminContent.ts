@@ -5,7 +5,7 @@ import { useAuth } from '../lib/AuthContext';
 import { officialSiteContent, OfficialSiteContent } from '../content/officialSiteContent';
 import { hfcdWorkbenchDefaultCopy, HFCDWorkbenchCopy } from '../content/hfcdWorkbenchContent';
 
-const ADMIN_CONTENT_VERSION = 'official-site-homepage-2026-05-01-v3';
+const ADMIN_CONTENT_VERSION = 'official-site-homepage-2026-05-01-v4';
 const STORAGE_KEY = `adminOfficialSiteDraft:${ADMIN_CONTENT_VERSION}`;
 const ADMIN_CONTENT_DOC_ID = 'official-site';
 

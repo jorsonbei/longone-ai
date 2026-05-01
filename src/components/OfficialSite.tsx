@@ -154,17 +154,17 @@ export function OfficialSite({ onBackToChat, onOpenHFCD, content = officialSiteC
           </button>
         </div>
 
-        <section className="relative overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(82,219,169,0.18),transparent_28%),radial-gradient(circle_at_top_right,rgba(92,111,255,0.18),transparent_24%),linear-gradient(180deg,#171a24_0%,#10131b_100%)] px-5 py-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)] md:rounded-[36px] md:px-10 md:py-14">
+        <section className="relative overflow-hidden rounded-[28px] border border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(82,219,169,0.18),transparent_28%),radial-gradient(circle_at_top_right,rgba(92,111,255,0.18),transparent_24%),linear-gradient(180deg,#171a24_0%,#10131b_100%)] px-5 py-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)] md:rounded-[36px] md:px-10 md:py-12">
           <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.04),transparent_22%,transparent_78%,rgba(255,255,255,0.03))]" />
           <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.72fr)] xl:items-center">
             <div className="max-w-4xl">
-              <div className="inline-flex items-center rounded-full border border-[#7ef8d2]/20 bg-[#7ef8d2]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.24em] text-[#91ffe1]">
+              <div className="inline-flex items-center rounded-full border border-[#7ef8d2]/20 bg-[#7ef8d2]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-[#91ffe1]">
                 {hero.badge}
               </div>
-              <h1 className="mt-6 max-w-4xl text-[clamp(2.7rem,7vw,5.4rem)] font-black leading-[0.98] tracking-[-0.055em] text-white md:leading-[0.96]">
+              <h1 className="mt-6 max-w-[820px] text-[clamp(2.15rem,4.4vw,3.8rem)] font-extrabold leading-[1.12] tracking-[-0.025em] text-white [text-wrap:balance] md:leading-[1.08]">
                 {hero.title}
               </h1>
-              <p className="mt-6 max-w-3xl text-base leading-8 text-slate-300 md:text-lg md:leading-9">
+              <p className="mt-6 max-w-3xl text-base leading-8 text-slate-300 md:text-[1.05rem] md:leading-9">
                 {hero.subtitle}
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -190,7 +190,7 @@ export function OfficialSite({ onBackToChat, onOpenHFCD, content = officialSiteC
             <div className="grid gap-4 rounded-[28px] border border-white/8 bg-black/15 p-4 backdrop-blur-sm md:p-5">
               <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                 <div className="text-xs font-bold uppercase tracking-[0.24em] text-[#7ef8d2]/75">{ui.officialSite.definitionEyebrow}</div>
-                <div className="mt-3 text-xl font-black leading-tight text-white md:text-2xl">{ui.officialSite.coreThesis}</div>
+                <div className="mt-3 text-lg font-extrabold leading-snug text-white md:text-xl">{ui.officialSite.coreThesis}</div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">

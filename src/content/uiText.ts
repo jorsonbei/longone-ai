@@ -346,7 +346,7 @@ const uiTextByLocaleBase: Record<Exclude<Locale, 'ja'>, UiText> = {
       bookEyebrow: '完整阅读',
       faqEyebrow: 'FAQ',
       faqTitle: '常见问题',
-      coreThesis: '28800步不崩：混沌能量可以被锁成长期稳定结构。',
+      coreThesis: '混沌能量可以被组织成长期稳定结构。',
       industryValue: '真实收益',
       industryValueBody: '帮助研发团队更早发现高风险样本、主要失效原因和优先改进方案。',
       socialValue: '商业价值',
