@@ -5,7 +5,8 @@ import { useAuth } from '../lib/AuthContext';
 import { officialSiteContent, OfficialSiteContent } from '../content/officialSiteContent';
 import { hfcdWorkbenchDefaultCopy, HFCDWorkbenchCopy } from '../content/hfcdWorkbenchContent';
 
-const STORAGE_KEY = 'adminOfficialSiteDraftV2';
+const ADMIN_CONTENT_VERSION = 'official-site-homepage-2026-05-01-v3';
+const STORAGE_KEY = `adminOfficialSiteDraft:${ADMIN_CONTENT_VERSION}`;
 const ADMIN_CONTENT_DOC_ID = 'official-site';
 
 type IndustryDraft = {
@@ -32,6 +33,7 @@ type FaqDraft = {
 };
 
 export type AdminContentDraft = {
+  contentVersion: string;
   seoTitle: string;
   seoDescription: string;
   seoImage: string;
@@ -69,6 +71,7 @@ type AdminContentSyncState = 'idle' | 'loading' | 'synced' | 'saving' | 'fallbac
 
 function buildInitialDraft(): AdminContentDraft {
   return {
+    contentVersion: ADMIN_CONTENT_VERSION,
     seoTitle: officialSiteContent.seo.title,
     seoDescription: officialSiteContent.seo.description,
     seoImage: officialSiteContent.seo.image,
@@ -113,6 +116,10 @@ function buildInitialDraft(): AdminContentDraft {
     ),
     hfcdWorkbench: { ...hfcdWorkbenchDefaultCopy },
   };
+}
+
+function isCurrentDraft(draft: Partial<AdminContentDraft> | undefined): draft is Partial<AdminContentDraft> {
+  return draft?.contentVersion === ADMIN_CONTENT_VERSION;
 }
 
 function mergeDraftIntoContent(draft: AdminContentDraft): OfficialSiteContent {
@@ -178,6 +185,7 @@ export function useAdminContent() {
 
     try {
       const parsed = JSON.parse(saved) as Partial<AdminContentDraft>;
+      if (!isCurrentDraft(parsed)) return buildInitialDraft();
       const initial = buildInitialDraft();
       return {
         ...initial,
@@ -241,6 +249,29 @@ export function useAdminContent() {
         if (snapshot.exists()) {
           const parsed = snapshot.data()?.draft as Partial<AdminContentDraft> | undefined;
           const initial = buildInitialDraft();
+          if (!isCurrentDraft(parsed)) {
+            const nextJson = JSON.stringify(initial);
+            lastSyncedJsonRef.current = nextJson;
+            setDraft((prev) => {
+              const prevJson = JSON.stringify(prev);
+              return prevJson === nextJson ? prev : initial;
+            });
+            void setDoc(
+              contentRef,
+              {
+                draft: initial,
+                updatedAt: Date.now(),
+                migrationReason: 'reset-outdated-official-site-content',
+              },
+              { merge: true }
+            ).catch((error) => {
+              console.error('Failed to migrate outdated admin content:', error);
+            });
+            setHasLoadedRemote(true);
+            setSyncState('synced');
+            setSyncError(null);
+            return;
+          }
           const merged: AdminContentDraft = {
             ...initial,
             ...(parsed || {}),
@@ -330,7 +361,10 @@ export function useAdminContent() {
 
   const content = useMemo(() => mergeDraftIntoContent(draft), [draft]);
 
-  const updateField = (field: keyof Omit<AdminContentDraft, 'industries' | 'hfcdWorkbench'>, value: string) => {
+  const updateField = (
+    field: keyof Omit<AdminContentDraft, 'contentVersion' | 'industries' | 'hfcdWorkbench'>,
+    value: string
+  ) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
   };
 

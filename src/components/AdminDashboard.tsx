@@ -17,7 +17,13 @@ interface AdminDashboardProps {
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   onOpenHFCD: () => void;
-  updateField: (field: keyof Omit<AdminContentDraft, 'industries' | 'hfcdWorkbench' | 'definitionParagraphs' | 'whyNowBullets' | 'evidenceHighlights' | 'evidenceMetrics' | 'faq'>, value: string) => void;
+  updateField: (
+    field: keyof Omit<
+      AdminContentDraft,
+      'contentVersion' | 'industries' | 'hfcdWorkbench' | 'definitionParagraphs' | 'whyNowBullets' | 'evidenceHighlights' | 'evidenceMetrics' | 'faq'
+    >,
+    value: string
+  ) => void;
   updateHfcdWorkbenchField: <K extends keyof HFCDWorkbenchCopy>(field: K, value: HFCDWorkbenchCopy[K]) => void;
   updateListField: (field: 'definitionParagraphs' | 'whyNowBullets', index: number, value: string) => void;
   addListFieldItem: (field: 'definitionParagraphs' | 'whyNowBullets') => void;
