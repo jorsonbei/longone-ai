@@ -10,7 +10,7 @@ import { THING_NATURE_MANIFESTO } from './lib/thingNatureManifesto';
 import { Message, Attachment } from './types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Settings, ExternalLink, LogIn, MoreHorizontal, Download, Trash, Eraser, Link2, Twitter, Linkedin, X as XIcon, History } from 'lucide-react';
+import { Settings, ExternalLink, LogIn, MoreHorizontal, Download, Trash, Eraser, Link2, Twitter, Linkedin, X as XIcon, History, Languages } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useAuth } from './lib/AuthContext';
@@ -20,12 +20,13 @@ import { OfficialSite } from './components/OfficialSite';
 import { useAdminContent } from './hooks/useAdminContent';
 import { AdminDashboard } from './components/AdminDashboard';
 import { HFCDWorkbench } from './components/HFCDWorkbench';
+import { FootballPredictor } from './components/FootballPredictor';
 import { analyzeWuxingInput } from './lib/wuxingKernel';
 import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
 import { getUiText } from './content/uiText';
 import { getOfficialSiteContent } from './content/officialSiteContent';
-import type { Locale } from './lib/locale';
+import { LOCALE_OPTIONS, type Locale } from './lib/locale';
 
 const LIGHTWEIGHT_MESSAGE_RE =
   /^(hi|hello|hey|yo|sup|test|ping|ok|okay|在吗|在？|在么|你好|您好|嗨|哈喽|测试|1)\s*[!.?。！，、~～]*$/i;
@@ -136,7 +137,7 @@ export default function App() {
   } = useChats();
 
   const [model, setModel] = useState<string>(MODELS.FLASH);
-  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin' | 'hfcd'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin' | 'hfcd' | 'football'>('chat');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -209,13 +210,29 @@ export default function App() {
       return;
     }
 
+    if (activeView === 'football') {
+      const footballTitle = locale === 'zh'
+        ? `足球预测 | ${ui.brand.appTitle}`
+        : `HFCD Football Predictor | ${ui.brand.appTitle}`;
+      const footballDescription = locale === 'zh'
+        ? '足球比赛列表、模型信号、正式建议、观察候选和串关候选。'
+        : 'HFCD Football OS match feed, model signals, recommendations, and parlay candidates.';
+      document.title = footballTitle;
+      setMeta('description', footballDescription);
+      setMeta('og:title', footballTitle, 'property');
+      setMeta('og:description', footballDescription, 'property');
+      setMeta('twitter:title', footballTitle);
+      setMeta('twitter:description', footballDescription);
+      return;
+    }
+
     document.title = ui.brand.appTitle;
     setMeta('description', ui.brand.appDescription);
     setMeta('og:title', ui.brand.appTitle, 'property');
     setMeta('og:description', ui.brand.appDescription, 'property');
     setMeta('twitter:title', ui.brand.appTitle);
     setMeta('twitter:description', ui.brand.appDescription);
-  }, [activeView, localizedOfficialSiteContent, ui.brand.appDescription, ui.brand.appTitle]);
+  }, [activeView, locale, localizedOfficialSiteContent, ui.brand.appDescription, ui.brand.appTitle]);
 
   useEffect(() => {
     const targetChatId = initialChatIdRef.current;
@@ -243,6 +260,8 @@ export default function App() {
   if (authLoading || !isLoaded) {
     return <div className="h-screen w-full flex items-center justify-center bg-background text-foreground">{ui.common.loading}</div>;
   }
+
+  const currentLocaleOption = LOCALE_OPTIONS.find((option) => option.value === locale) || LOCALE_OPTIONS[0];
 
   // ENFORCE LOGIN: Sprint 1 Requirement
   if (!user) {
@@ -524,6 +543,7 @@ export default function App() {
           }}
           onOpenOfficialSite={() => setActiveView('official-site')}
           onOpenHFCD={() => setActiveView('hfcd')}
+          onOpenFootball={() => setActiveView('football')}
           onOpenAdmin={() => setActiveView('admin')}
           canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
@@ -560,6 +580,19 @@ export default function App() {
             ) : <div />}
             
             <div className="flex items-center gap-2 w-auto justify-end">
+              <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
+                <SelectTrigger className="flex h-10 w-[116px] items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-sm font-semibold text-slate-200 shadow-none hover:bg-white/[0.08]">
+                  <Languages className="h-4 w-4 text-slate-400" />
+                  <SelectValue>{currentLocaleOption.label}</SelectValue>
+                </SelectTrigger>
+                <SelectContent className="border-white/10 bg-[#1C1E26] text-slate-100">
+                  {LOCALE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="focus:bg-white/10">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {activeView !== 'chat' ? (
                 <button
                   onClick={() => setActiveView('chat')}
@@ -780,6 +813,8 @@ export default function App() {
             />
           ) : activeView === 'hfcd' ? (
             <HFCDWorkbench copy={adminDraft.hfcdWorkbench} />
+          ) : activeView === 'football' ? (
+            <FootballPredictor locale={locale} />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}

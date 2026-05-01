@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "module": "hfcd_football_os",
+  "model_version": "HFCD_Football_V9_AccuracyFirstPredictor",
+  "accuracy_mode": true,
+  "description": "HFCD Football OS Accuracy-First tools available to the Thing-Nature Gemini agent.",
+  "tools": [
+    {
+      "name": "football_get_fixtures",
+      "method": "GET",
+      "path": "/api/football/fixtures",
+      "description": "Return current predictable football fixtures from the HFCD Football feed.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "football_predict_all",
+      "method": "GET",
+      "path": "/api/football/predict",
+      "description": "Return all matches grouped by official_accuracy, watchlist, rejected/no_signal and high-accuracy combo candidates.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "football_predict_match",
+      "method": "GET",
+      "path": "/api/football/predict/{matchId}",
+      "description": "Return one match prediction with league, kickoff, market, predicted_result, model_prob, historical_hit_rate, Brier, log_loss, calibration_error, model_agreement, accuracy_grade, failure_risk and explanation. Odds/edge/EV are reference fields only.",
+      "input_schema": {
+        "type": "object",
+        "required": ["matchId"],
+        "properties": {
+          "matchId": {
+            "type": "string",
+            "description": "Feed event_id or a team-name search string."
+          }
+        }
+      }
+    },
+    {
+      "name": "football_refresh_odds",
+      "method": "POST",
+      "path": "/api/football/refresh-odds",
+      "description": "Refresh football odds cache through the server-side runner. API keys stay server-side.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["cache", "live", "scores"],
+            "default": "cache"
+          }
+        }
+      }
+    },
+    {
+      "name": "football_get_parlay_candidates",
+      "method": "GET",
+      "path": "/api/football/parlay",
+      "description": "Return high-accuracy combo candidates and every leg's market, predicted result, model probability, historical hit rate, accuracy grade and risk notes.",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "football_settle_results",
+      "method": "POST",
+      "path": "/api/football/settle",
+      "description": "Settle paper-trading recommendations with final scores supplied by the caller.",
+      "input_schema": {
+        "type": "object",
+        "required": ["results"],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["event_id", "home_score", "away_score"],
+              "properties": {
+                "event_id": { "type": "string" },
+                "home_score": { "type": "number" },
+                "away_score": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

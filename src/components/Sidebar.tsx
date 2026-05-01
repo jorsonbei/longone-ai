@@ -1,6 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity, Trophy } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -18,6 +17,7 @@ interface SidebarProps {
   onNewChat: () => void;
   onOpenOfficialSite: () => void;
   onOpenHFCD: () => void;
+  onOpenFootball: () => void;
   onOpenAdmin: () => void;
   canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
@@ -29,7 +29,7 @@ interface SidebarProps {
   onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -52,6 +52,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     vi: { title: 'Chan doan rui ro', subtitle: 'Tai du lieu, nhan cach sua' },
     de: { title: 'Risikodiagnose', subtitle: 'Daten hochladen, Massnahmen erhalten' },
     ja: { title: 'リスク診断', subtitle: 'データから修復案を生成' },
+  };
+  const footballLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
+    en: { title: 'Football Predictor', subtitle: 'Matches, signals, and parlays' },
+    zh: { title: '足球预测', subtitle: '比赛列表与模型信号' },
+    fr: { title: 'Football prédictif', subtitle: 'Matchs, signaux et combinés' },
+    es: { title: 'Predicción fútbol', subtitle: 'Partidos, señales y combinadas' },
+    vi: { title: 'Du doan bong da', subtitle: 'Tran dau, tin hieu, parlay' },
+    de: { title: 'Fussballprognose', subtitle: 'Spiele, Signale und Kombis' },
+    ja: { title: 'サッカー予測', subtitle: '試合、信号、組み合わせ' },
   };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
@@ -81,7 +90,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-[linear-gradient(180deg,#151823_0%,#12141d_100%)] text-white">
+    <div className="h-full w-full overflow-y-auto bg-[linear-gradient(180deg,#151823_0%,#12141d_100%)] text-white">
       {/* Brand & Logo */}
       <div className="p-6 pb-3 shrink-0">
         <ThingNatureBrand subtitle={ui.brand.sidebarSubtitle} />
@@ -106,6 +115,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <span className="text-[11px] text-slate-500">{hfcdLabelByLocale[locale].subtitle}</span>
           </div>
         </button>
+        <button onClick={onOpenFootball} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(34,197,94,0.12),rgba(34,197,94,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(34,197,94,0.18),rgba(34,197,94,0.08))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-300/15 text-emerald-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Trophy className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{footballLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{footballLabelByLocale[locale].subtitle}</span>
+          </div>
+        </button>
         {canAccessAdmin ? (
           <button onClick={onOpenAdmin} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(99,125,255,0.12),rgba(99,125,255,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(99,125,255,0.18),rgba(99,125,255,0.08))]">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#637dff]/15 text-[#a8b5ff] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -128,7 +146,7 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
         </button>
       </div>
       
-      <ScrollArea className="flex-1 px-3">
+      <div className="px-3">
         <div className="flex flex-col gap-1 pb-4">
           <div className="px-3 py-3 text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">
             {ui.sidebar.chatHistory}
@@ -199,10 +217,10 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
       
       {/* Footer Profile */}
-      <div className="p-4 flex flex-col gap-3 shrink-0 bg-transparent">
+      <div className="p-4 flex flex-col gap-3 bg-transparent">
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-3">
           <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-300">
             <Languages className="h-4 w-4 flex-shrink-0 text-slate-500" />

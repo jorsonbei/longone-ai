@@ -38,6 +38,7 @@ const INTERNALIZATION_CORE = `
 6. 历史版本、补遗、创世宝典、HFCD 技术细节、数学推导、量子算法、红移模型与跨学科映射不是彼此冲突的碎片，而是同一个生命体在不同阶段的生长记录。
 7. 实验后的升级方案、V12.x 结果复核、长程 checkpoint 路线、盲预测与量纲闭合材料，是 HFCD 从概念模型走向可复核研发引擎的实验演化链。
 8. 回答必须像一个已经吸收整本《物性论》及其历史演化链、实验升级链的模型自然说话，而不是像一个拿到零散设定后机械拼接的模板系统。
+9. HFCD Football OS 是物性论 OS 的正式工具模块：V9 以后采用 Accuracy-First Predict 模式，足球预测问题必须优先使用后端工具结果，区分 official_accuracy / watchlist / rejected / no_signal，不能凭常识预测，不能把 edge、EV、赔率价值作为高置信预测门槛；赔率只作为参考，BTTS 赔率也不能用大小球赔率替代。
 
 回答纪律：
 - 先直接回答用户真正的问题，再展开。
@@ -47,6 +48,7 @@ const INTERNALIZATION_CORE = `
 - 当用户问“吸收前后区别”时，要以“模型底层运行协议变化”作答，而不是只说风格变化。
 - 当历史版本之间存在不同表述时，优先抽取其共同稳定核，再说明版本演化，不要机械判定互相矛盾。
 - 当命中 HFCD 实验、V12.x、升级方案、盲测、云端真实跑模型或研发方案时，优先用实验链路、失败模式迁移和可落盘证据解释，不只给抽象术语。
+- 当命中足球预测、比赛、赔率、组合、BTTS、Titan007、赛后结算时，优先调用或引用 HFCD Football OS 工具上下文；Gemini 的职责是解释、组织和审计 Accuracy Ledger，不是绕过模型自行预测或承诺投注收益。
 `.trim();
 
 const KEYWORD_TAGS: Array<[string, string[]]> = [
@@ -58,6 +60,7 @@ const KEYWORD_TAGS: Array<[string, string[]]> = [
   ['name', ['名字', '命名', '贝记胜生', '景龙锁', '阮氏兰惠']],
   ['emotion', ['眼泪', '流泪', '痛苦', '快乐', '情绪', '心智']],
   ['civilization', ['文明', '组织', '财富', '制度', '国家', '创业']],
+  ['football', ['足球', '比赛', '预测', '准确率', '命中率', 'Brier', 'log-loss', '校准', '组合', 'BTTS', 'Titan007', 'official_accuracy', 'watchlist', 'rejected', '赛后结算', 'Sportmonks', 'API-Football']],
 ];
 
 function normalize(text: string) {
@@ -152,7 +155,19 @@ function buildCorpus(records: SourceManifestRecord[]) {
     if (!fs.existsSync(record.extractedTextPath)) {
       continue;
     }
-    const raw = fs.readFileSync(record.extractedTextPath, 'utf8');
+    const rawFromFile = fs.readFileSync(record.extractedTextPath, 'utf8');
+    const raw = /HFCD_Football|FOOTBALL|football/i.test(`${record.id} ${record.fileName}`)
+      ? normalize(`
+HFCD Football V9 Accuracy-First override:
+当前物性论 OS 足球模块以 HFCD_Football_V9_AccuracyFirstPredictor 为准。
+正式输出叫 official_accuracy / 高置信预测，核心门槛是模型概率、历史命中率、Brier、log-loss、校准误差、模型一致性和跨赛季稳定。
+edge、EV、赔率价值、bookmaker、market_prob 只能作为参考，不能决定官方预测，缺少赔率也不能自动降级。
+高准确率组合按平均预测概率、历史命中率、模型一致性、校准稳定性和风险惩罚排序，不再按最高 EV 或收益率排序。
+如果下方历史脚本或旧文档仍出现 official 必须有赔率、正 EV、edge 门槛等表述，全部视为 V9 前旧规则，回答时必须采用本段 V9 规则。
+
+${rawFromFile}
+`)
+      : rawFromFile;
     const sourceLabel = path.basename(record.fileName, path.extname(record.fileName));
     chunks.push(...chunkText(record.id, sourceLabel, record.kind, raw));
     bootstrapPack.push({

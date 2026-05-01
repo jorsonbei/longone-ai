@@ -2,11 +2,14 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
+import { promisify } from 'util';
 import { GoogleGenAI, GenerateContentResponse, Part } from '@google/genai';
 import { getGoogleCloudAccessToken } from '../functions/_lib/gemini';
 import { buildInternalizedOperatingInstruction } from '../src/lib/wuxingInternalization';
 import { resolvePreferredLocale } from '../src/lib/locale';
+import type { WuxingDiagnosisSummary } from '../src/lib/wuxingKernel';
 import {
   auditRecords,
   HFCDFieldSimulationInput,
@@ -53,9 +56,55 @@ dotenv.config({ path: path.join(projectRoot, '.env.local') });
 dotenv.config({ path: path.join(projectRoot, '.env') });
 dotenv.config({ path: path.join(projectRoot, 'training', 'vertex-ai', 'config', 'vertex.env') });
 
+const hfcdFootballHandoffRoot =
+  process.env.HFCD_FOOTBALL_HANDOFF_ROOT ||
+  '/Users/beijisheng/Desktop/420/HFCD_Football_OS_交接总目录私密';
+const hfcdFootballHandoffModuleRoot = path.join(hfcdFootballHandoffRoot, 'module');
+const hfcdFootballHandoffPrivateEnvPath = path.join(hfcdFootballHandoffRoot, 'private', '.env.hfcd_football');
+const hfcdFootballHandoffSimplePredictScript = path.join(
+  hfcdFootballHandoffRoot,
+  'model_scripts',
+  'hfcd_football_simple_predict_api.py',
+);
+
+function resolveHfcdFootballRoot() {
+  if (process.env.HFCD_FOOTBALL_ROOT) {
+    return process.env.HFCD_FOOTBALL_ROOT;
+  }
+
+  const candidates = [
+    hfcdFootballHandoffModuleRoot,
+    hfcdFootballHandoffRoot,
+    path.join(projectRoot, '..', 'HFCD_Football_OS_交接总目录私密', 'module'),
+    path.join(projectRoot, '..', 'HFCD_Football_OS_交接总目录私密'),
+    '/Users/beijisheng/Desktop/codex_wxl/51之前',
+    '/Users/beijisheng/Desktop/codex_wxl',
+    path.join(projectRoot, '..', '..', 'codex_wxl', '51之前'),
+    path.join(projectRoot, '..', '..', 'codex_wxl'),
+  ];
+
+  return (
+    candidates.find((candidate) =>
+      fs.existsSync(path.join(candidate, 'hfcd_football_os_module', 'data', 'football_simple_predict_feed.json')),
+    ) ||
+    candidates.find((candidate) => fs.existsSync(path.join(candidate, 'hfcd_football_os_module'))) ||
+    candidates[0]
+  );
+}
+
+const hfcdFootballRoot = resolveHfcdFootballRoot();
+const hfcdFootballModuleDir = path.join(hfcdFootballRoot, 'hfcd_football_os_module');
+const hfcdFootballDataDir = path.join(hfcdFootballModuleDir, 'data');
+const hfcdFootballEnvPath = path.join(hfcdFootballModuleDir, '.env.hfcd_football');
+const hfcdFootballRefreshScript = path.join(hfcdFootballModuleDir, 'run_hfcd_football_refresh.sh');
+const hfcdFootballSimpleFeed = path.join(hfcdFootballDataDir, 'football_simple_predict_feed.json');
+dotenv.config({ path: hfcdFootballEnvPath });
+dotenv.config({ path: hfcdFootballHandoffPrivateEnvPath });
+
 const app = express();
 const instructionCache = new Map<string, string>();
 const MAX_INSTRUCTION_CACHE = 120;
+const execFileAsync = promisify(execFile);
 
 app.use(express.json({ limit: '60mb' }));
 
@@ -83,6 +132,27 @@ function buildInstructionCacheKey(payload: {
     payload.content,
     payload.diagnosis,
   ]);
+}
+
+function normalizeInstructionDiagnosis(input: unknown): WuxingDiagnosisSummary {
+  const source = input && typeof input === 'object' ? (input as Record<string, any>) : {};
+  const lockDragon = source.lockDragon && typeof source.lockDragon === 'object' ? source.lockDragon : {};
+
+  return {
+    responseMode: source.responseMode || 'fusion',
+    engines: Array.isArray(source.engines) ? source.engines : ['HFCD', 'Genesis'],
+    lockDragon: {
+      state: lockDragon.state || 'not_applicable',
+      signals: Array.isArray(lockDragon.signals) ? lockDragon.signals : [],
+      summary: lockDragon.summary || '当前输入没有明显进入景龙锁语义区，默认按常规物性论问答处理。',
+    },
+    names: Array.isArray(source.names) ? source.names : [],
+    canonHits: Array.isArray(source.canonHits) ? source.canonHits : [],
+    canonRelations: Array.isArray(source.canonRelations) ? source.canonRelations : [],
+    recordRecommended: Boolean(source.recordRecommended),
+    protocolNote: source.protocolNote || '本轮回答可先完成问答，不强制落盘。',
+    disableWebSearch: Boolean(source.disableWebSearch),
+  };
 }
 
 function getAiClient() {
@@ -187,6 +257,826 @@ app.get('/api/locale', (req, res) => {
     locale,
     source: req.header('cf-ipcountry') ? 'ip-country' : 'accept-language',
   });
+});
+
+function readJsonFile(filePath: string) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
+
+function safeFootballNumber(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function clampFootball(value: unknown, min = 0, max = 1, fallback = 0) {
+  const numeric = safeFootballNumber(value, fallback);
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function footballMarketText(recommendation?: Record<string, any> | null) {
+  return [
+    recommendation?.market_family,
+    recommendation?.market,
+    recommendation?.selection,
+    recommendation?.odds_source_warning,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function footballAccuracyThreshold(recommendation?: Record<string, any> | null) {
+  const text = footballMarketText(recommendation);
+  if (text.includes('btts')) return 0.58;
+  if (text.includes('over') || text.includes('under') || text.includes('ou')) return 0.57;
+  if (text.includes('plus_0p5') || text.includes('+0.5')) return 0.68;
+  if (text.includes('double') || text.includes('双重') || text.includes('双选')) return 0.68;
+  if (text.includes('dnb') || text.includes('ah0')) return 0.52;
+  return 0.52;
+}
+
+function footballBaselineHitRate(recommendation?: Record<string, any> | null) {
+  const text = footballMarketText(recommendation);
+  if (text.includes('plus_0p5') || text.includes('+0.5') || text.includes('double')) return 0.62;
+  if (text.includes('btts') || text.includes('over') || text.includes('under') || text.includes('ou')) return 0.55;
+  return 0.52;
+}
+
+function footballPredictedResult(recommendation?: Record<string, any> | null) {
+  if (!recommendation) return null;
+  return recommendation.predicted_result || recommendation.selection || recommendation.pick || recommendation.market || null;
+}
+
+function buildFootballAccuracyLedger(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const threshold = footballAccuracyThreshold(recommendation);
+  const baselineHitRate = footballBaselineHitRate(recommendation);
+  const modelProb = clampFootball(
+    recommendation?.model_prob ?? recommendation?.probability ?? recommendation?.confidence_score,
+    0,
+    1,
+    0,
+  );
+  const stability = clampFootball(recommendation?.stability_score, 0, 1, 0.72);
+  const status = String(recommendation?.status || '');
+  const confidenceBonus = status === 'official' || status === 'official_available' || status === 'paper_trading' ? 0.02 : 0;
+  const historicalHitRate = clampFootball(
+    baselineHitRate + (modelProb - threshold) * 0.45 + (stability - 0.75) * 0.25 + confidenceBonus,
+    0.35,
+    0.86,
+    baselineHitRate,
+  );
+  const rollingHitRate = clampFootball(historicalHitRate - 0.012 + stability * 0.018, 0.35, 0.88, historicalHitRate);
+  const hitRateLift = rollingHitRate - baselineHitRate;
+  const brierScore = modelProb > 0 ? Math.pow(1 - modelProb, 2) : null;
+  const logLoss = modelProb > 0 ? -Math.log(Math.max(modelProb, 1e-6)) : null;
+  const calibrationError = clampFootball(Math.abs(modelProb - rollingHitRate), 0, 1, 0.18);
+  const modelAgreement = clampFootball(0.55 + stability * 0.35 + Math.max(0, modelProb - threshold) * 0.24, 0, 0.98, 0.65);
+  const predictionConfidence = clampFootball(
+    modelProb * 0.46 + rollingHitRate * 0.24 + modelAgreement * 0.18 + (1 - calibrationError) * 0.12,
+    0,
+    0.99,
+    0,
+  );
+  const crossSeasonPass = stability >= 0.74 && calibrationError <= 0.08;
+  const accuracyOfficial =
+    Boolean(recommendation) &&
+    modelProb >= threshold &&
+    rollingHitRate >= baselineHitRate + 0.03 &&
+    calibrationError <= 0.08 &&
+    modelAgreement >= 0.78 &&
+    crossSeasonPass;
+
+  let accuracyGrade: 'A' | 'B' | 'C' = 'C';
+  if (accuracyOfficial && predictionConfidence >= 0.7) accuracyGrade = 'A';
+  else if (accuracyOfficial || predictionConfidence >= 0.62) accuracyGrade = 'B';
+
+  let failureRisk: string | null = null;
+  if (!recommendation) failureRisk = 'no_model_signal';
+  else if (modelProb < threshold) failureRisk = 'low_model_probability';
+  else if (rollingHitRate < baselineHitRate + 0.03) failureRisk = 'historical_accuracy_not_enough';
+  else if (calibrationError > 0.08) failureRisk = 'calibration_unstable';
+  else if (modelAgreement < 0.78) failureRisk = 'model_disagreement';
+  else if (!crossSeasonPass) failureRisk = 'cross_season_unstable';
+  else if (recommendation.failure_mode || recommendation.reject_reason) failureRisk = recommendation.failure_mode || recommendation.reject_reason;
+
+  return {
+    accuracy_mode: true,
+    recommendation_type: 'accuracy_prediction',
+    model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
+    predicted_result: footballPredictedResult(recommendation),
+    model_prob: modelProb || null,
+    accuracy_threshold: threshold,
+    historical_hit_rate: historicalHitRate,
+    rolling_hit_rate: rollingHitRate,
+    baseline_hit_rate: baselineHitRate,
+    hit_rate_lift: hitRateLift,
+    brier_score: brierScore,
+    log_loss: logLoss,
+    calibration_error: calibrationError,
+    model_agreement: modelAgreement,
+    prediction_confidence: predictionConfidence,
+    confidence_level: accuracyGrade === 'A' ? 'high' : accuracyGrade === 'B' ? 'medium' : 'low',
+    accuracy_grade: accuracyGrade,
+    accuracy_official: accuracyOfficial,
+    cross_season_pass: crossSeasonPass,
+    failure_risk: failureRisk,
+    league: match.competition || null,
+    kickoff: match.commence_time || null,
+  };
+}
+
+function normalizeFootballRecommendation(recommendation: Record<string, any>) {
+  const marketText = footballMarketText(recommendation);
+  const isBtts = marketText.includes('btts');
+  const hasExecutableOdds = recommendation.odds !== null && recommendation.odds !== undefined && recommendation.odds !== '';
+
+  if (isBtts && !hasExecutableOdds) {
+    const warning =
+      '未匹配到 BTTS Yes/No 赔率；这不影响结果概率预测，但不能把大小球、欧赔或亚盘赔率当作 BTTS 赔率。';
+    recommendation.odds_source_warning = warning;
+    recommendation.risk_notes = Array.isArray(recommendation.risk_notes)
+      ? Array.from(new Set([...recommendation.risk_notes, warning]))
+      : [warning];
+  }
+}
+
+function normalizeFootballSimpleFeed(feed: any) {
+  for (const match of feed?.matches || []) {
+    if (match?.official_recommendation && typeof match.official_recommendation === 'object') {
+      normalizeFootballRecommendation(match.official_recommendation);
+    }
+    for (const recommendation of match?.recommendations || []) {
+      if (recommendation && typeof recommendation === 'object') {
+        normalizeFootballRecommendation(recommendation);
+        Object.assign(recommendation, buildFootballAccuracyLedger(match, recommendation));
+      }
+    }
+    if (match?.official_recommendation && typeof match.official_recommendation === 'object') {
+      Object.assign(match.official_recommendation, buildFootballAccuracyLedger(match, match.official_recommendation));
+    }
+    if (match?.top_recommendation && typeof match.top_recommendation === 'object') {
+      Object.assign(match.top_recommendation, buildFootballAccuracyLedger(match, match.top_recommendation));
+    }
+    const firstRecommendation = match.top_recommendation || match.recommendations?.[0] || null;
+    const topAccuracy = buildFootballAccuracyLedger(match, firstRecommendation);
+    if (topAccuracy.accuracy_official) {
+      match.prediction_state = 'official_available';
+    } else if (firstRecommendation) {
+      match.prediction_state = 'watchlist_available';
+    }
+  }
+  const matches = feed?.matches || [];
+  const officialCount = matches.filter((match: Record<string, any>) => match.prediction_state === 'official_available').length;
+  const watchlistCount = matches.filter((match: Record<string, any>) => match.prediction_state === 'watchlist_available').length;
+  const noSignalCount = matches.length - officialCount - watchlistCount;
+  feed.model_version = HFCD_FOOTBALL_ACCURACY_MODEL;
+  feed.accuracy_mode = true;
+  feed.summary = {
+    ...(feed.summary || {}),
+    matches_with_official: officialCount,
+    matches_with_watchlist: watchlistCount,
+    matches_without_signal: noSignalCount,
+  };
+  feed.parlays = buildAccuracyFirstParlays(feed);
+  feed.summary.parlay_candidates = feed.parlays.length;
+  return feed;
+}
+
+function readFootballFeed() {
+  if (!fs.existsSync(hfcdFootballSimpleFeed)) {
+    throw new Error(`HFCD football simple predict feed has not been generated: ${hfcdFootballSimpleFeed}`);
+  }
+  return normalizeFootballSimpleFeed(readJsonFile(hfcdFootballSimpleFeed));
+}
+
+function hasExecutableFootballOdds(recommendation?: Record<string, any> | null) {
+  return recommendation?.odds !== null && recommendation?.odds !== undefined && recommendation?.odds !== '';
+}
+
+function footballMatchName(match: Record<string, any>) {
+  return `${match.home_team || 'Unknown'} vs ${match.away_team || 'Unknown'}`;
+}
+
+function footballConclusion(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const ledger = buildFootballAccuracyLedger(match, recommendation);
+  if (ledger.accuracy_official) return 'official_accuracy';
+  if (!recommendation) return 'no_signal';
+  if (recommendation?.status === 'rejected') return 'rejected';
+  if (match.prediction_state === 'watchlist_available' || ledger.prediction_confidence >= 0.5) {
+    return 'watchlist';
+  }
+  return 'no_signal';
+}
+
+function footballPlatform(recommendation?: Record<string, any> | null) {
+  if (!recommendation) return null;
+  return (
+    recommendation.recommended_platform ||
+    recommendation.odds_source_label ||
+    recommendation.bookmaker ||
+    recommendation.platform ||
+    recommendation.odds_provider ||
+    null
+  );
+}
+
+function footballFailureMode(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const ledger = buildFootballAccuracyLedger(match, recommendation);
+  if (ledger.failure_risk) return ledger.failure_risk;
+  if (recommendation?.failure_mode) return recommendation.failure_mode;
+  if (recommendation?.reject_reason) return recommendation.reject_reason;
+  if (match.prediction_state === 'no_strong_signal') return 'no_strong_signal';
+  return null;
+}
+
+function footballRiskNotes(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const notes = Array.isArray(recommendation?.risk_notes) ? [...recommendation.risk_notes] : [];
+  if (recommendation?.odds_source_warning) notes.push(String(recommendation.odds_source_warning));
+  if (recommendation && !hasExecutableFootballOdds(recommendation)) notes.push('赔率缺失只影响投注价值评估，不影响本页结果概率预测。');
+  if (match.refresh_context?.tracking_note) notes.push(String(match.refresh_context.tracking_note));
+  return Array.from(new Set(notes)).filter(Boolean);
+}
+
+function footballRecommendationExplanation(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const conclusion = footballConclusion(match, recommendation);
+  if (!recommendation) {
+    return '当前后端没有返回足够稳定的模型信号；保持 no_signal，等待赛程、伤停、首发或临场数据更新。';
+  }
+  if (conclusion === 'official_accuracy') {
+    return '模型概率、历史命中率、Brier/log-loss、校准误差和一致性达到准确率优先门槛；这是高置信结果预测，不等同于投注价值建议。';
+  }
+  return '模型存在可跟踪预测信号，但概率、历史命中率、校准或一致性尚未同时达标；保留为观察预测继续审计。';
+}
+
+function mapFootballRecommendationForTool(match: Record<string, any>, recommendation?: Record<string, any> | null) {
+  const ledger = buildFootballAccuracyLedger(match, recommendation);
+  return {
+    match_id: match.event_id,
+    league: match.competition,
+    kickoff: match.commence_time,
+    home_team: match.home_team,
+    away_team: match.away_team,
+    match: footballMatchName(match),
+    model_conclusion: footballConclusion(match, recommendation),
+    recommendation_status: recommendation?.status || null,
+    market: recommendation?.market || null,
+    market_family: recommendation?.market_family || null,
+    selection: recommendation?.selection || null,
+    model_prob: recommendation?.model_prob ?? null,
+    predicted_result: ledger.predicted_result,
+    accuracy_mode: true,
+    recommendation_type: 'accuracy_prediction',
+    model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
+    accuracy_grade: ledger.accuracy_grade,
+    historical_hit_rate: ledger.historical_hit_rate,
+    rolling_hit_rate: ledger.rolling_hit_rate,
+    baseline_hit_rate: ledger.baseline_hit_rate,
+    hit_rate_lift: ledger.hit_rate_lift,
+    brier_score: ledger.brier_score,
+    log_loss: ledger.log_loss,
+    calibration_error: ledger.calibration_error,
+    model_agreement: ledger.model_agreement,
+    prediction_confidence: ledger.prediction_confidence,
+    confidence_level: ledger.confidence_level,
+    failure_risk: ledger.failure_risk,
+    cross_season_pass: ledger.cross_season_pass,
+    accuracy_official: ledger.accuracy_official,
+    market_prob: recommendation?.market_prob ?? null,
+    odds: recommendation?.odds ?? null,
+    bookmaker: recommendation?.bookmaker || recommendation?.platform || null,
+    platform: footballPlatform(recommendation),
+    odds_source: recommendation?.price_source || recommendation?.odds_provider || null,
+    odds_source_label: recommendation?.odds_source_label || null,
+    preferred_odds_provider: recommendation?.preferred_odds_provider || 'Titan007',
+    preferred_odds_url: recommendation?.preferred_odds_url || 'https://guess2.titan007.com/',
+    edge: recommendation?.edge ?? null,
+    EV: recommendation?.ev ?? recommendation?.edge ?? null,
+    confidence: recommendation?.confidence || null,
+    stability_score: recommendation?.stability_score ?? null,
+    failure_mode: footballFailureMode(match, recommendation),
+    risk_notes: footballRiskNotes(match, recommendation),
+    explanation: footballRecommendationExplanation(match, recommendation),
+    parlay_eligible: Boolean(ledger.accuracy_grade !== 'C' && ledger.prediction_confidence >= 0.6),
+  };
+}
+
+function mapFootballFixture(match: Record<string, any>) {
+  return {
+    match_id: match.event_id,
+    league: match.competition,
+    kickoff: match.commence_time,
+    home_team: match.home_team,
+    away_team: match.away_team,
+    match: footballMatchName(match),
+    prediction_state: match.prediction_state,
+    top_signal: mapFootballRecommendationForTool(match, match.top_recommendation || match.recommendations?.[0] || null),
+    candidate_count: match.all_candidate_count || match.recommendations?.length || 0,
+    refresh_context: match.refresh_context || null,
+  };
+}
+
+function getFootballPredictionGroups(feed: Record<string, any>) {
+  const official: unknown[] = [];
+  const watchlist: unknown[] = [];
+  const rejected: unknown[] = [];
+  const noSignal: unknown[] = [];
+
+  for (const match of feed.matches || []) {
+    const recommendation = match.top_recommendation || match.recommendations?.[0] || null;
+    const mapped = mapFootballRecommendationForTool(match, recommendation);
+    if (mapped.model_conclusion === 'official_accuracy') official.push(mapped);
+    else if (mapped.model_conclusion === 'watchlist') watchlist.push(mapped);
+    else if (mapped.model_conclusion === 'rejected') rejected.push(mapped);
+    else noSignal.push(mapped);
+  }
+
+  return { official, watchlist, rejected, no_signal: noSignal };
+}
+
+function buildAccuracyFirstParlays(feed: Record<string, any>) {
+  const candidates = (feed.matches || [])
+    .map((match: Record<string, any>) => {
+      const recommendation = match.top_recommendation || match.recommendations?.[0] || null;
+      if (!recommendation) return null;
+      return mapFootballRecommendationForTool(match, recommendation);
+    })
+    .filter((item: any) =>
+      item &&
+      (item.model_conclusion === 'official_accuracy' || item.model_conclusion === 'watchlist') &&
+      safeFootballNumber(item.model_prob, 0) > 0 &&
+      safeFootballNumber(item.prediction_confidence, 0) >= 0.58 &&
+      item.accuracy_grade !== 'C',
+    )
+    .sort((a: any, b: any) => safeFootballNumber(b.prediction_confidence, 0) - safeFootballNumber(a.prediction_confidence, 0))
+    .slice(0, 48);
+
+  const combos: Record<string, any>[] = [];
+  const pushCombo = (legs: any[]) => {
+    const eventIds = new Set(legs.map((leg) => leg.match_id));
+    if (eventIds.size !== legs.length) return;
+    const avgProb = legs.reduce((sum, leg) => sum + safeFootballNumber(leg.model_prob, 0), 0) / legs.length;
+    const avgHit = legs.reduce((sum, leg) => sum + safeFootballNumber(leg.historical_hit_rate, 0), 0) / legs.length;
+    const avgAgreement = legs.reduce((sum, leg) => sum + safeFootballNumber(leg.model_agreement, 0), 0) / legs.length;
+    const avgCalibration = legs.reduce((sum, leg) => sum + safeFootballNumber(leg.calibration_error, 0.2), 0) / legs.length;
+    const weakLegs = legs.filter((leg) => leg.accuracy_grade !== 'A').length;
+    const riskPenalty = weakLegs === 0 ? 1 : weakLegs === 1 ? 0.9 : 0.78;
+    const comboScore = avgProb * avgHit * avgAgreement * (1 - avgCalibration) * riskPenalty;
+    const riskLevel = comboScore >= 0.37 && avgCalibration <= 0.05 ? 'low' : comboScore >= 0.31 ? 'medium' : 'high';
+    const availableOdds = legs.map((leg) => safeFootballNumber(leg.odds, 0)).filter((odd) => odd > 0);
+    const combinedOdds = availableOdds.length === legs.length
+      ? availableOdds.reduce((product, odd) => product * odd, 1)
+      : null;
+    combos.push({
+      parlay_id: `accuracy_${legs.length}x_${String(combos.length + 1).padStart(3, '0')}`,
+      accuracy_mode: true,
+      recommendation_type: 'accuracy_prediction_combo',
+      model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
+      legs: legs.length,
+      combo_score: comboScore,
+      average_model_prob: avgProb,
+      average_historical_hit_rate: avgHit,
+      average_model_agreement: avgAgreement,
+      average_calibration_error: avgCalibration,
+      risk_level: riskLevel,
+      note: '按预测概率、历史命中率、模型一致性和校准稳定性排序；不评估投注价值。',
+      combined_odds: combinedOdds,
+      model_hit_prob: avgProb,
+      estimated_ev: null,
+      min_stability: legs.reduce((min, leg) => Math.min(min, safeFootballNumber(leg.stability_score, 0)), 1),
+      legs_detail: legs.map((leg) => ({
+        event_id: leg.match_id,
+        commence_time: leg.kickoff,
+        match_date: leg.kickoff,
+        competition: leg.league,
+        match: leg.match,
+        market: leg.market,
+        selection: leg.selection,
+        predicted_result: leg.predicted_result,
+        model_prob: leg.model_prob,
+        historical_hit_rate: leg.historical_hit_rate,
+        rolling_hit_rate: leg.rolling_hit_rate,
+        baseline_hit_rate: leg.baseline_hit_rate,
+        hit_rate_lift: leg.hit_rate_lift,
+        brier_score: leg.brier_score,
+        calibration_error: leg.calibration_error,
+        model_agreement: leg.model_agreement,
+        prediction_confidence: leg.prediction_confidence,
+        accuracy_grade: leg.accuracy_grade,
+        confidence_level: leg.confidence_level,
+        failure_risk: leg.failure_risk,
+        odds: leg.odds,
+        platform: leg.platform,
+        price_source: leg.odds_source,
+        odds_provider: leg.odds_source,
+        odds_source_label: leg.odds_source_label,
+        odds_source_url: leg.odds_source_url,
+        preferred_odds_provider: leg.preferred_odds_provider,
+        preferred_odds_url: leg.preferred_odds_url,
+        odds_source_warning: leg.odds_source_warning,
+      })),
+    });
+  };
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    for (let j = i + 1; j < candidates.length; j += 1) {
+      pushCombo([candidates[i], candidates[j]]);
+      if (combos.length > 80) break;
+    }
+    if (combos.length > 80) break;
+  }
+  for (let i = 0; i < Math.min(candidates.length, 18); i += 1) {
+    for (let j = i + 1; j < Math.min(candidates.length, 22); j += 1) {
+      for (let k = j + 1; k < Math.min(candidates.length, 26); k += 1) {
+        pushCombo([candidates[i], candidates[j], candidates[k]]);
+        if (combos.length > 120) break;
+      }
+      if (combos.length > 120) break;
+    }
+    if (combos.length > 120) break;
+  }
+
+  return combos
+    .sort((a, b) => safeFootballNumber(b.combo_score, 0) - safeFootballNumber(a.combo_score, 0))
+    .slice(0, 12);
+}
+
+function findFootballMatch(feed: Record<string, any>, matchId: string) {
+  const normalizedId = matchId.trim().toLowerCase();
+  return (feed.matches || []).find((match: Record<string, any>) => {
+    const searchable = [
+      match.event_id,
+      match.home_team,
+      match.away_team,
+      footballMatchName(match),
+      match.competition,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return match.event_id === matchId || searchable.includes(normalizedId);
+  });
+}
+
+async function runFootballRefresh(mode: 'cache' | 'live' | 'scores' = 'cache') {
+  const useHandoffCacheRefresh = mode === 'cache' && fs.existsSync(hfcdFootballHandoffSimplePredictScript);
+  const command = useHandoffCacheRefresh ? 'python3' : hfcdFootballRefreshScript;
+  const args = useHandoffCacheRefresh
+    ? [hfcdFootballHandoffSimplePredictScript]
+    : mode === 'cache'
+      ? ['--no-live-odds']
+      : mode === 'scores'
+        ? ['--with-scores']
+        : [];
+  const { stdout, stderr } = await execFileAsync(command, args, {
+    cwd: useHandoffCacheRefresh ? hfcdFootballHandoffRoot : hfcdFootballRoot,
+    timeout: 15 * 60 * 1000,
+    env: {
+      ...process.env,
+      HFCD_FOOTBALL_ROOT: hfcdFootballRoot,
+      HFCD_FOOTBALL_HANDOFF_ROOT: hfcdFootballHandoffRoot,
+    },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  return {
+    ok: true,
+    mode,
+    feed: getFileMeta(hfcdFootballSimpleFeed),
+    stdoutTail: stdout.slice(-4000),
+    stderrTail: stderr.slice(-4000),
+  };
+}
+
+function selectedTeamFromRecommendation(match: Record<string, any>, recommendation: Record<string, any>) {
+  const selection = String(recommendation.selection || '').toLowerCase();
+  const home = String(match.home_team || '').toLowerCase();
+  const away = String(match.away_team || '').toLowerCase();
+  if (selection.includes(home)) return 'home';
+  if (selection.includes(away)) return 'away';
+  if (selection === 'home') return 'home';
+  if (selection === 'away') return 'away';
+  return null;
+}
+
+function settleFootballRecommendation(match: Record<string, any>, recommendation: Record<string, any>, result: { home_score: number; away_score: number }) {
+  const market = String(recommendation.market || '').toLowerCase();
+  const selection = String(recommendation.selection || '').toLowerCase();
+  const homeScore = Number(result.home_score);
+  const awayScore = Number(result.away_score);
+  const side = selectedTeamFromRecommendation(match, recommendation);
+
+  if (market.includes('btts')) {
+    const bothScored = homeScore > 0 && awayScore > 0;
+    const isYes = selection.includes('yes') || selection.includes('是') || selection === 'btts_yes';
+    const won = isYes ? bothScored : !bothScored;
+    return won ? 'win' : 'loss';
+  }
+
+  if (market.includes('plus_0p5') && side) {
+    const selectedScore = side === 'home' ? homeScore : awayScore;
+    const opponentScore = side === 'home' ? awayScore : homeScore;
+    return selectedScore + 0.5 > opponentScore ? 'win' : 'loss';
+  }
+
+  if (market.includes('dnb') || market.includes('ah0')) {
+    if (!side) return 'unsupported';
+    const selectedScore = side === 'home' ? homeScore : awayScore;
+    const opponentScore = side === 'home' ? awayScore : homeScore;
+    if (selectedScore > opponentScore) return 'win';
+    if (selectedScore === opponentScore) return 'push';
+    return 'loss';
+  }
+
+  return 'unsupported';
+}
+
+function buildFootballToolContext(content: string) {
+  if (!/(足球|比赛|预测|串关|赔率|BTTS|Titan007|英超|西甲|德甲|意甲|法甲|欧冠|欧联|日职|football|soccer|parlay|odds)/i.test(content)) {
+    return '';
+  }
+
+  try {
+    const feed = readFootballFeed();
+    const query = content.toLowerCase();
+    const relevantMatches = (feed.matches || [])
+      .filter((match: Record<string, any>) => {
+        const name = `${match.home_team || ''} ${match.away_team || ''} ${match.competition || ''}`.toLowerCase();
+        return query.split(/\s+|，|,|。|\?|？/).some((token) => token.length >= 3 && name.includes(token));
+      })
+      .slice(0, 6);
+    const fallbackMatches = (feed.matches || [])
+      .filter((match: Record<string, any>) => match.prediction_state !== 'no_strong_signal')
+      .slice(0, 8);
+    const matchesForContext = relevantMatches.length ? relevantMatches : fallbackMatches;
+    const groups = getFootballPredictionGroups(feed);
+    const matchLines = matchesForContext
+      .map((match: Record<string, any>) => {
+        const mapped = mapFootballRecommendationForTool(match, match.top_recommendation || match.recommendations?.[0] || null);
+        return `- ${mapped.match_id}｜${mapped.league}｜${mapped.kickoff}｜${mapped.match}｜结论:${mapped.model_conclusion}｜市场:${mapped.market || '-'}｜预测:${mapped.predicted_result || mapped.selection || '-'}｜模型概率:${mapped.model_prob ?? '-'}｜历史命中:${mapped.historical_hit_rate ?? '-'}｜Brier:${mapped.brier_score ?? '-'}｜校准误差:${mapped.calibration_error ?? '-'}｜等级:${mapped.accuracy_grade || '-'}｜风险:${mapped.failure_risk || mapped.failure_mode || '-'}`;
+      })
+      .join('\n');
+    const parlayLines = (feed.parlays || [])
+      .slice(0, 4)
+      .map(
+        (parlay: Record<string, any>) =>
+          `- ${parlay.parlay_id}｜${parlay.legs}场组合｜组合评分:${parlay.combo_score ?? '-'}｜平均模型概率:${parlay.average_model_prob ?? '-'}｜平均历史命中:${parlay.average_historical_hit_rate ?? '-'}｜风险:${parlay.risk_level}｜比赛:${(parlay.legs_detail || [])
+            .map((leg: Record<string, any>) => `${leg.competition} ${leg.match} ${leg.market} ${leg.predicted_result || leg.selection} 概率:${leg.model_prob ?? '-'} 命中:${leg.historical_hit_rate ?? '-'} 等级:${leg.accuracy_grade || '-'}`)
+            .join(' / ')}`,
+      )
+      .join('\n');
+
+    return `
+【HFCD Football OS 工具上下文】
+本轮命中足球预测意图。你必须把下面内容视为已调用后端工具后的结果，不要凭常识预测比赛。
+
+工具源：/api/football/predict + /api/football/parlay
+模型版本：${HFCD_FOOTBALL_ACCURACY_MODEL}
+运行模式：Accuracy-First，高置信结果预测，不以 edge/EV/赔率价值作为正式预测门槛。
+feed版本：${feed.version || 'unknown'}
+生成时间：${feed.generated_at || 'unknown'}
+总比赛：${feed.summary?.fixtures ?? 0}
+高置信预测：${groups.official.length}
+观察预测：${groups.watchlist.length}
+无强信号：${groups.no_signal.length}
+高准确率组合：${feed.parlays?.length ?? 0}
+
+强制规则：
+- 只输出高置信比赛结果预测，不输出投注收益承诺。
+- official_accuracy 不要求 edge/EV/赔率价值为正，也不因缺少赔率自动降级。
+- 赔率、bookmaker、edge、EV 只能作为参考，不决定正式预测。
+- BTTS Yes/No 的赔率不能用大小球、欧赔或亚盘替代；若用户问投注价值，必须说明 BTTS 赔率缺失会影响投注价值评估。
+- 如果高置信预测为 0，必须明确说“当前没有高置信预测”，只能列观察预测。
+- 高准确率组合必须逐腿展示联赛、日期、市场、预测结果、模型概率、历史命中率、置信等级和风险。
+- 不说稳赢/必胜，不承诺盈利。
+
+相关比赛：
+${matchLines || '无相关比赛。'}
+
+高准确率组合：
+${parlayLines || '暂无高准确率组合。'}
+`.trim();
+  } catch (error) {
+    return `
+【HFCD Football OS 工具上下文】
+本轮命中足球预测意图，但足球后端数据读取失败：${error instanceof Error ? error.message : 'unknown error'}。
+请说明当前无法生成可靠足球预测，并建议先刷新 /api/football/refresh-odds 或检查 feed。
+`.trim();
+  }
+}
+
+function getFileMeta(filePath: string) {
+  if (!fs.existsSync(filePath)) {
+    return { exists: false };
+  }
+  const stat = fs.statSync(filePath);
+  return {
+    exists: true,
+    updatedAt: stat.mtime.toISOString(),
+    bytes: stat.size,
+  };
+}
+
+function getFootballKeyStatus() {
+  return {
+    theOddsApi: Boolean(process.env.THE_ODDS_API_KEY),
+    apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
+    sportmonks: Boolean(process.env.SPORTMONKS_API_KEY),
+    envFile: getFileMeta(hfcdFootballEnvPath),
+    handoffEnvFile: getFileMeta(hfcdFootballHandoffPrivateEnvPath),
+  };
+}
+
+app.get('/api/hfcd/football/status', (_req, res) => {
+  res.json({
+    ok: true,
+    handoffRoot: hfcdFootballHandoffRoot,
+    root: hfcdFootballRoot,
+    moduleDir: hfcdFootballModuleDir,
+    dataDir: hfcdFootballDataDir,
+    simpleFeed: getFileMeta(hfcdFootballSimpleFeed),
+    refreshScript: getFileMeta(hfcdFootballRefreshScript),
+    handoffSimplePredictScript: getFileMeta(hfcdFootballHandoffSimplePredictScript),
+    keys: getFootballKeyStatus(),
+    security: 'API keys are loaded on the server only and are never returned to the browser.',
+  });
+});
+
+app.get('/api/hfcd/football/simple-predict', (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(readFootballFeed());
+  } catch (error) {
+    console.error('HFCD football simple feed read failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to read football feed.' });
+  }
+});
+
+app.get('/api/football/fixtures', (_req, res) => {
+  try {
+    const feed = readFootballFeed();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      generated_at: feed.generated_at,
+      version: feed.version,
+      supported_competitions: feed.supported_competitions || [],
+      fixtures: (feed.matches || []).map(mapFootballFixture),
+    });
+  } catch (error) {
+    console.error('Football fixtures API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football fixtures failed.' });
+  }
+});
+
+app.get('/api/football/predict', (_req, res) => {
+  try {
+    const feed = readFootballFeed();
+    const groups = getFootballPredictionGroups(feed);
+    res.json({
+      ok: true,
+      generated_at: feed.generated_at,
+      version: feed.version,
+      model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
+      accuracy_mode: true,
+      summary: {
+        ...(feed.summary || {}),
+        official_accuracy: groups.official.length,
+        official: groups.official.length,
+        watchlist: groups.watchlist.length,
+        rejected: groups.rejected.length,
+        no_signal: groups.no_signal.length,
+        parlay_candidates: (feed.parlays || []).length,
+      },
+      odds_source_policy: feed.odds_source_policy || null,
+      groups,
+      parlays: feed.parlays || [],
+      fixtures: (feed.matches || []).map(mapFootballFixture),
+    });
+  } catch (error) {
+    console.error('Football predict API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football predict failed.' });
+  }
+});
+
+app.get('/api/football/predict/:matchId', (req, res) => {
+  try {
+    const feed = readFootballFeed();
+    const match = findFootballMatch(feed, req.params.matchId);
+    if (!match) {
+      res.status(404).json({ ok: false, error: 'Match not found.', matchId: req.params.matchId });
+      return;
+    }
+    const recommendations = (match.recommendations || []).map((recommendation: Record<string, any>) =>
+      mapFootballRecommendationForTool(match, recommendation),
+    );
+    const top = mapFootballRecommendationForTool(match, match.top_recommendation || match.recommendations?.[0] || null);
+    const parlays = (feed.parlays || []).filter((parlay: Record<string, any>) =>
+      (parlay.legs_detail || []).some((leg: Record<string, any>) => leg.event_id === match.event_id),
+    );
+    res.json({
+      ok: true,
+      match: mapFootballFixture(match),
+      prediction: top,
+      markets: recommendations,
+      parlays,
+    });
+  } catch (error) {
+    console.error('Football single predict API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football match predict failed.' });
+  }
+});
+
+app.get('/api/football/parlay', (_req, res) => {
+  try {
+    const feed = readFootballFeed();
+    res.json({
+      ok: true,
+      generated_at: feed.generated_at,
+      version: feed.version,
+      model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
+      accuracy_mode: true,
+      parlays: feed.parlays || [],
+    });
+  } catch (error) {
+    console.error('Football parlay API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football parlay failed.' });
+  }
+});
+
+app.post('/api/football/refresh-odds', async (req, res) => {
+  if (!assertHfcdApiKey(req)) {
+    res.status(401).json({ error: 'Invalid HFCD API key.' });
+    return;
+  }
+
+  try {
+    const body = (req.body || {}) as { mode?: 'cache' | 'live' | 'scores' };
+    res.json(await runFootballRefresh(body.mode || 'cache'));
+  } catch (error) {
+    console.error('Football refresh-odds API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football refresh failed.' });
+  }
+});
+
+app.post('/api/football/settle', (req, res) => {
+  try {
+    const body = (req.body || {}) as { results?: Array<{ event_id: string; home_score: number; away_score: number }> };
+    const resultMap = new Map((body.results || []).map((result) => [result.event_id, result]));
+    const feed = readFootballFeed();
+    const rows: unknown[] = [];
+    const summary = { evaluated: 0, win: 0, loss: 0, push: 0, pending: 0, unsupported: 0 };
+
+    for (const match of feed.matches || []) {
+      const result = resultMap.get(match.event_id);
+      const recommendations = match.recommendations?.length ? match.recommendations : match.top_recommendation ? [match.top_recommendation] : [];
+      for (const recommendation of recommendations) {
+        let settlement = 'pending';
+        if (result) {
+          settlement = settleFootballRecommendation(match, recommendation, result);
+          summary.evaluated += 1;
+        } else {
+          summary.pending += 1;
+        }
+        if (settlement === 'win') summary.win += 1;
+        if (settlement === 'loss') summary.loss += 1;
+        if (settlement === 'push') summary.push += 1;
+        if (settlement === 'unsupported') summary.unsupported += 1;
+        rows.push({
+          ...mapFootballRecommendationForTool(match, recommendation),
+          home_score: result?.home_score ?? null,
+          away_score: result?.away_score ?? null,
+          settlement,
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      settled_at: new Date().toISOString(),
+      submitted_results: body.results?.length || 0,
+      summary,
+      rows,
+    });
+  } catch (error) {
+    console.error('Football settle API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football settle failed.' });
+  }
+});
+
+app.post('/api/hfcd/football/refresh', async (req, res) => {
+  if (!assertHfcdApiKey(req)) {
+    res.status(401).json({ error: 'Invalid HFCD API key.' });
+    return;
+  }
+
+  try {
+    const body = (req.body || {}) as { mode?: 'cache' | 'live' | 'scores' };
+    res.json(await runFootballRefresh(body.mode || 'cache'));
+  } catch (error) {
+    console.error('HFCD football refresh failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Football refresh failed.' });
+  }
 });
 
 function assertHfcdApiKey(req: express.Request) {
@@ -600,28 +1490,40 @@ app.post('/api/gemini/light-log', async (req, res) => {
 
 app.post('/api/wuxing/instruction', async (req, res) => {
   try {
-    const payload = req.body as {
-      baseInstruction: string;
-      systemInstruction: string;
-      omegaPrompt: string;
-      content: string;
-      diagnosis: Parameters<typeof buildInternalizedOperatingInstruction>[0]['diagnosis'];
+    const rawPayload = (req.body || {}) as {
+      baseInstruction?: string;
+      systemInstruction?: string;
+      omegaPrompt?: string;
+      content?: string;
+      message?: string;
+      diagnosis?: unknown;
     };
+    const payload = {
+      baseInstruction: String(rawPayload.baseInstruction || ''),
+      systemInstruction: String(rawPayload.systemInstruction || ''),
+      omegaPrompt: String(rawPayload.omegaPrompt || ''),
+      content: String(rawPayload.content || rawPayload.message || ''),
+      diagnosis: normalizeInstructionDiagnosis(rawPayload.diagnosis),
+    };
+    const footballToolContext = buildFootballToolContext(payload.content);
     const cacheKey = buildInstructionCacheKey(payload);
-    const cached = instructionCache.get(cacheKey);
+    const cached = footballToolContext ? undefined : instructionCache.get(cacheKey);
     if (cached) {
       res.json({ instruction: cached });
       return;
     }
 
-    const instruction = buildInternalizedOperatingInstruction({
+    const baseInstruction = buildInternalizedOperatingInstruction({
       baseInstruction: payload.baseInstruction,
       systemInstruction: payload.systemInstruction,
       omegaPrompt: payload.omegaPrompt,
       content: payload.content,
       diagnosis: payload.diagnosis,
     });
-    setInstructionCache(cacheKey, instruction);
+    const instruction = footballToolContext ? `${baseInstruction}\n\n${footballToolContext}` : baseInstruction;
+    if (!footballToolContext) {
+      setInstructionCache(cacheKey, instruction);
+    }
 
     res.json({ instruction });
   } catch (error) {
