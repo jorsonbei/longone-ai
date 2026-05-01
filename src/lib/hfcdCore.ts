@@ -1226,6 +1226,24 @@ export function validateRows(rows: Array<Record<string, unknown>>, industry: HFC
   };
 }
 
+export function detectHFCDIndustry(rows: Array<Record<string, unknown>>, fallback: HFCDIndustry = 'quantum') {
+  if (!rows.length) return fallback;
+  const presentFields = new Set(rows.flatMap((row) => Object.keys(row).filter((key) => row[key] !== '')));
+  const scores = (Object.keys(HFCD_INDUSTRIES) as HFCDIndustry[]).map((candidate) => {
+    const spec = HFCD_INDUSTRIES[candidate];
+    const fieldKeys = spec.fields.map((field) => field.key);
+    const presentKnown = fieldKeys.filter((field) => presentFields.has(field)).length;
+    const requiredPresent = spec.fields.filter((field) => field.required && presentFields.has(field.key)).length;
+    const currentIndustryPenalty = candidate === fallback ? 0.1 : 0;
+    return {
+      candidate,
+      score: presentKnown + requiredPresent * 2 + currentIndustryPenalty,
+    };
+  });
+  scores.sort((a, b) => b.score - a.score);
+  return scores[0]?.score ? scores[0].candidate : fallback;
+}
+
 export function evaluateGates(gates: HFCDGates, thresholds: Partial<HFCDGates> = HFCD_THRESHOLDS): HFCDGateStatus {
   const safeThresholds = mergeThresholds(thresholds);
   return {

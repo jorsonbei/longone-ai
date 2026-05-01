@@ -24,6 +24,7 @@ import {
   getFieldProfile,
   getIndustryFieldProfiles,
   defaultHFCDFieldSimulationInput,
+  detectHFCDIndustry,
   HFCDFieldSimulationInput,
   HFCDFieldSimulationReport,
   HFCD_GATE_EXPLANATIONS,
@@ -1632,25 +1633,28 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
     try {
       const text = await file.text();
       const parsed = parseCsv(text);
+      const detectedIndustry = detectHFCDIndustry(parsed, industry);
       const nextProjectName = file.name.replace(/\.[^.]+$/, '') || '客户盲测验证';
-      const nextValidation = validateRows(parsed, industry);
+      const nextValidation = validateRows(parsed, detectedIndustry);
       if (!parsed.length) {
         setRows([]);
         setResults([]);
         setFileName(file.name);
         setProjectName(nextProjectName);
         setUploadError('CSV 没有检测到有效数据行。');
-        return;
+          return;
       }
       if (!nextValidation.isValid) {
+        setIndustry(detectedIndustry);
         setRows(parsed);
         setResults([]);
         setFileName(file.name);
         setProjectName(nextProjectName);
         setUploadError(nextValidation.missingRequired.length ? `缺少必填字段：${nextValidation.missingRequired.join(', ')}` : 'CSV 字段不完整，无法验证。');
-        return;
+          return;
       }
-      const nextResults = auditRecords(parsed, industry);
+      const nextResults = auditRecords(parsed, detectedIndustry);
+      setIndustry(detectedIndustry);
       setRows(parsed);
       setResults(nextResults);
       setFileName(file.name);
@@ -1660,7 +1664,7 @@ export function HFCDWorkbench({ copy: incomingCopy }: { copy?: HFCDWorkbenchCopy
         nextRows: parsed,
         nextFileName: file.name,
         nextProjectName,
-        nextIndustry: industry,
+        nextIndustry: detectedIndustry,
       });
       setActiveTab('blind');
     } catch (error) {

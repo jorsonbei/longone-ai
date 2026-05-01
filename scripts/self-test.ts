@@ -9,6 +9,7 @@ import {
   auditRecords,
   generateMarkdownReport,
   HFCD_INDUSTRIES,
+  detectHFCDIndustry,
   learnHFCDParameters,
   parseCsv,
   runHFCDFieldSimulation,
@@ -117,6 +118,8 @@ async function main() {
   console.log('[self-test] message ordering OK');
 
   const quantumRows = parseCsv(templateToCsv('quantum'));
+  const materialsRows = parseCsv(templateToCsv('materials'));
+  assert(detectHFCDIndustry(materialsRows, 'quantum') === 'materials', 'HFCD upload should auto-detect materials CSV even when current UI industry is quantum.');
   const quantumValidation = validateRows(quantumRows, 'quantum');
   assert(quantumValidation.isValid, 'HFCD quantum template should pass required-field validation.');
   assert(
