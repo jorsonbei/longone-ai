@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity, Trophy } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity, Trophy, Zap } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -18,6 +18,7 @@ interface SidebarProps {
   onOpenOfficialSite: () => void;
   onOpenHFCD: () => void;
   onOpenFootball: () => void;
+  onOpenEnergy: () => void;
   onOpenAdmin: () => void;
   canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
@@ -29,7 +30,7 @@ interface SidebarProps {
   onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenEnergy, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -61,6 +62,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     vi: { title: 'Du doan bong da', subtitle: 'Tran dau, tin hieu, parlay' },
     de: { title: 'Fussballprognose', subtitle: 'Spiele, Signale und Kombis' },
     ja: { title: 'サッカー予測', subtitle: '試合、信号、組み合わせ' },
+  };
+  const energyLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
+    en: { title: 'Energy Predictor', subtitle: 'Load, battery, renewables' },
+    zh: { title: '能源预测', subtitle: '负载、电池与新能源' },
+    fr: { title: 'Prédiction énergie', subtitle: 'Charge, batterie, renouvelables' },
+    es: { title: 'Predicción energía', subtitle: 'Carga, batería y renovables' },
+    vi: { title: 'Du doan nang luong', subtitle: 'Tai, pin, tai tao' },
+    de: { title: 'Energieprognose', subtitle: 'Last, Batterie, Erneuerbare' },
+    ja: { title: 'エネルギー予測', subtitle: '負荷、電池、再エネ' },
   };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
@@ -122,6 +132,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-slate-100">{footballLabelByLocale[locale].title}</span>
             <span className="text-[11px] text-slate-500">{footballLabelByLocale[locale].subtitle}</span>
+          </div>
+        </button>
+        <button onClick={onOpenEnergy} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(20,184,166,0.12),rgba(20,184,166,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(20,184,166,0.18),rgba(20,184,166,0.08))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-300/15 text-teal-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Zap className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{energyLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{energyLabelByLocale[locale].subtitle}</span>
           </div>
         </button>
         {canAccessAdmin ? (

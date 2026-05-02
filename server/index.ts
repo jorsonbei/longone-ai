@@ -30,6 +30,7 @@ import {
   buildHFCDResearchJobPlan,
   HFCDResearchJobRequest,
 } from '../src/lib/hfcdResearchJobs';
+import { ENERGY_RUNTIME_FEED } from '../src/lib/generated/energyRuntimeFeed';
 
 type Attachment = {
   name: string;
@@ -263,6 +264,41 @@ function readJsonFile(filePath: string) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function getEnergyRuntimeFeed() {
+  return ENERGY_RUNTIME_FEED as any;
+}
+
+function getEnergySummaryPayload() {
+  const feed = getEnergyRuntimeFeed();
+  return {
+    ok: true,
+    version: feed.version,
+    generated_at: feed.generated_at,
+    v3_0: feed.summary,
+    smoke: feed.smoke,
+    manifest: feed.manifest,
+    new_energy_source_types: Object.keys(feed.templates || {}),
+    public_new_energy_sources: feed.public_new_energy_sources || [],
+  };
+}
+
+function filterEnergyHeads(status?: unknown) {
+  const feed = getEnergyRuntimeFeed();
+  const normalized = String(status || '').trim();
+  const rows = Array.isArray(feed.heads) ? feed.heads : [];
+  if (!normalized) return rows;
+  return rows.filter((row: Record<string, any>) => row.head_status === normalized);
+}
+
+function getEnergyTemplatesPayload() {
+  const feed = getEnergyRuntimeFeed();
+  return {
+    ok: true,
+    templates: feed.templates || {},
+    template_ids: Object.keys(feed.templates || {}),
+  };
+}
+
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
 
 function safeFootballNumber(value: unknown, fallback = 0) {
@@ -433,6 +469,11 @@ function normalizeFootballSimpleFeed(feed: any) {
   const noSignalCount = matches.length - officialCount - watchlistCount;
   feed.model_version = HFCD_FOOTBALL_ACCURACY_MODEL;
   feed.accuracy_mode = true;
+  feed.odds_source_policy = {
+    ...(feed.odds_source_policy || {}),
+    official_requires_odds: false,
+    note: 'V9 Accuracy-First 模式下，赔率只作为参考特征和赛前复核信息；高置信预测由模型概率、历史命中率、Brier/log-loss、校准误差和模型一致性决定。',
+  };
   feed.summary = {
     ...(feed.summary || {}),
     matches_with_official: officialCount,
@@ -1079,6 +1120,87 @@ app.post('/api/hfcd/football/refresh', async (req, res) => {
   }
 });
 
+app.get('/api/energy/health', (_req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    version: feed.version,
+    generated_at: feed.generated_at,
+    mode: 'embedded_energy_runtime_feed',
+    summary_version: feed.smoke?.summary_version || feed.version,
+  });
+});
+
+app.get('/api/energy/summary', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(getEnergySummaryPayload());
+});
+
+app.get('/api/energy/registry', (_req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, records: feed.registry || [] });
+});
+
+app.get('/api/energy/heads', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, records: filterEnergyHeads(req.query.status) });
+});
+
+app.get('/api/energy/cards', (_req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  const cards = Array.isArray(feed.cards) ? feed.cards : [];
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    runtime_cards_count: cards.filter((card: Record<string, any>) => card.card_type === 'load_forecast_runtime_card').length,
+    capability_cards_count: cards.filter((card: Record<string, any>) => card.card_type === 'capability_card').length,
+    cards,
+  });
+});
+
+app.get('/api/energy/watchlist', (_req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, records: feed.watchlist || [] });
+});
+
+app.get('/api/energy/templates', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(getEnergyTemplatesPayload());
+});
+
+app.post('/api/energy/adapt-csv', (req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  const body = req.body || {};
+  res.json({
+    ok: true,
+    mode: 'schema_preview',
+    message: '主服务已接入能源运行接口。当前端上传 CSV 后，可按模板字段做 schema 体检；完整在线适配将在下一轮接入真实任务队列。',
+    received: {
+      industry: body.industry || body.dataset_type || null,
+      rows: Array.isArray(body.rows) ? body.rows.length : null,
+    },
+    templates: Object.keys(feed.templates || {}),
+  });
+});
+
+app.post('/api/energy/predict-load', (req, res) => {
+  const feed = getEnergyRuntimeFeed();
+  const body = req.body || {};
+  res.json({
+    ok: true,
+    mode: 'embedded_runtime_cards',
+    message: '返回当前已验证的能源预测运行卡片；如需实时预测，请提交 CSV 接入任务。',
+    request: {
+      dataset: body.dataset || null,
+      horizon: body.horizon || null,
+    },
+    cards: feed.cards || [],
+  });
+});
+
 function assertHfcdApiKey(req: express.Request) {
   const configuredKeys = (process.env.HFCD_API_KEYS || '')
     .split(',')
@@ -1532,7 +1654,15 @@ app.post('/api/wuxing/instruction', async (req, res) => {
   }
 });
 
-app.use(express.static(distDir));
+app.use(
+  express.static(distDir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    },
+  }),
+);
 
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) {
@@ -1540,6 +1670,7 @@ app.get('*', (req, res, next) => {
     return;
   }
 
+  res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 

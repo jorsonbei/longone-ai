@@ -21,12 +21,62 @@ import { useAdminContent } from './hooks/useAdminContent';
 import { AdminDashboard } from './components/AdminDashboard';
 import { HFCDWorkbench } from './components/HFCDWorkbench';
 import { FootballPredictor } from './components/FootballPredictor';
+import EnergyRuntimePage from './components/EnergyRuntimePage';
 import { analyzeWuxingInput } from './lib/wuxingKernel';
 import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
 import { getUiText } from './content/uiText';
 import { getOfficialSiteContent } from './content/officialSiteContent';
 import { LOCALE_OPTIONS, type Locale } from './lib/locale';
+
+type ActiveView = 'chat' | 'official-site' | 'admin' | 'hfcd' | 'football' | 'energy';
+
+function normalizeActiveView(value: string | null): ActiveView | null {
+  if (
+    value === 'official-site' ||
+    value === 'admin' ||
+    value === 'hfcd' ||
+    value === 'football' ||
+    value === 'energy'
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function getHashActiveView(hash: string): ActiveView | null {
+  const value = decodeURIComponent(hash)
+    .replace(/^#\/?/, '')
+    .split(/[?&]/)[0]
+    .trim()
+    .toLowerCase();
+
+  if (!value) return null;
+
+  if (
+    value === 'industries' ||
+    value === 'official' ||
+    value === 'official-site' ||
+    value === 'book' ||
+    value === 'evidence' ||
+    value === 'home'
+  ) {
+    return 'official-site';
+  }
+
+  if (value === 'football' || value === 'football-predictor') return 'football';
+  if (value === 'energy' || value === 'energy-runtime' || value === 'new-energy') return 'energy';
+  if (value === 'hfcd' || value === 'risk-diagnosis') return 'hfcd';
+  if (value === 'admin') return 'admin';
+
+  return null;
+}
+
+function getInitialActiveView(): ActiveView {
+  if (typeof window === 'undefined') return 'chat';
+  const queryView = normalizeActiveView(new URLSearchParams(window.location.search).get('view'));
+  return queryView || getHashActiveView(window.location.hash) || 'chat';
+}
 
 const LIGHTWEIGHT_MESSAGE_RE =
   /^(hi|hello|hey|yo|sup|test|ping|ok|okay|在吗|在？|在么|你好|您好|嗨|哈喽|测试|1)\s*[!.?。！，、~～]*$/i;
@@ -137,7 +187,7 @@ export default function App() {
   } = useChats();
 
   const [model, setModel] = useState<string>(MODELS.FLASH);
-  const [activeView, setActiveView] = useState<'chat' | 'official-site' | 'admin' | 'hfcd' | 'football'>('chat');
+  const [activeView, setActiveView] = useState<ActiveView>(() => getInitialActiveView());
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -184,6 +234,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const syncViewFromUrl = () => {
+      const nextView = getInitialActiveView();
+      setActiveView((current) => (current === nextView ? current : nextView));
+    };
+
+    window.addEventListener('popstate', syncViewFromUrl);
+    window.addEventListener('hashchange', syncViewFromUrl);
+    return () => {
+      window.removeEventListener('popstate', syncViewFromUrl);
+      window.removeEventListener('hashchange', syncViewFromUrl);
+    };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.classList.remove('dark');
   }, []);
 
@@ -226,6 +290,22 @@ export default function App() {
       return;
     }
 
+    if (activeView === 'energy') {
+      const energyTitle = locale === 'zh'
+        ? `能源预测 | ${ui.brand.appTitle}`
+        : `HFCD Energy Predictor | ${ui.brand.appTitle}`;
+      const energyDescription = locale === 'zh'
+        ? '能源负载预测、电池健康、光伏风电储能数据接入。'
+        : 'HFCD energy load forecast, battery health, and renewable data adapters.';
+      document.title = energyTitle;
+      setMeta('description', energyDescription);
+      setMeta('og:title', energyTitle, 'property');
+      setMeta('og:description', energyDescription, 'property');
+      setMeta('twitter:title', energyTitle);
+      setMeta('twitter:description', energyDescription);
+      return;
+    }
+
     document.title = ui.brand.appTitle;
     setMeta('description', ui.brand.appDescription);
     setMeta('og:title', ui.brand.appTitle, 'property');
@@ -249,6 +329,11 @@ export default function App() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    if (activeView === 'chat') {
+      url.searchParams.delete('view');
+    } else {
+      url.searchParams.set('view', activeView);
+    }
     if (activeView === 'chat' && activeChatId) {
       url.searchParams.set('chat', activeChatId);
     } else {
@@ -544,6 +629,7 @@ export default function App() {
           onOpenOfficialSite={() => setActiveView('official-site')}
           onOpenHFCD={() => setActiveView('hfcd')}
           onOpenFootball={() => setActiveView('football')}
+          onOpenEnergy={() => setActiveView('energy')}
           onOpenAdmin={() => setActiveView('admin')}
           canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
@@ -815,6 +901,8 @@ export default function App() {
             <HFCDWorkbench copy={adminDraft.hfcdWorkbench} />
           ) : activeView === 'football' ? (
             <FootballPredictor locale={locale} />
+          ) : activeView === 'energy' ? (
+            <EnergyRuntimePage />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}

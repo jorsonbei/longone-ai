@@ -2,6 +2,7 @@ import React from 'react';
 import { RefreshCw, Search, ShieldAlert, Trophy, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Locale } from '../lib/locale';
+import { FOOTBALL_ACCURACY_FEED } from '../lib/generated/footballAccuracyFeed';
 
 type Recommendation = {
   original_status?: string | null;
@@ -831,6 +832,62 @@ function pickDefaultMatch(matches: MatchItem[]) {
   );
 }
 
+async function fetchFootballFeed(): Promise<Feed> {
+  const endpoints = [
+    `/api/hfcd/football/simple-predict?t=${Date.now()}`,
+    `/api/football/predict?t=${Date.now()}`,
+  ];
+  const errors: string[] = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, { cache: 'no-store' });
+      if (!response.ok) {
+        errors.push(`${endpoint}: HTTP ${response.status}`);
+        continue;
+      }
+      const data = await response.json();
+      if (data?.matches && Array.isArray(data.matches)) {
+        return data as Feed;
+      }
+      if (data?.fixtures && Array.isArray(data.fixtures) && data?.parlays) {
+        return {
+          generated_at: data.generated_at,
+          version: data.version,
+          summary: data.summary,
+          supported_competitions: data.supported_competitions || [],
+          matches: data.fixtures.map((fixture: any) => ({
+            event_id: fixture.match_id,
+            competition: fixture.league,
+            commence_time: fixture.kickoff,
+            home_team: fixture.home_team,
+            away_team: fixture.away_team,
+            prediction_state:
+              fixture.top_signal?.model_conclusion === 'official_accuracy'
+                ? 'official_available'
+                : fixture.top_signal?.model_conclusion === 'watchlist'
+                  ? 'watchlist_available'
+                  : 'no_strong_signal',
+            top_recommendation: fixture.top_signal || null,
+            recommendations: fixture.top_signal ? [fixture.top_signal] : [],
+            all_candidate_count: fixture.candidate_count || 0,
+            refresh_context: fixture.refresh_context || null,
+          })),
+          parlays: data.parlays,
+          model_version: data.model_version,
+          accuracy_mode: Boolean(data.accuracy_mode),
+        } as Feed;
+      }
+      errors.push(`${endpoint}: invalid feed shape`);
+    } catch (error) {
+      errors.push(`${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  console.warn('Football API failed; using embedded feed.', errors);
+  return FOOTBALL_ACCURACY_FEED as unknown as Feed;
+}
+
 export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
   const copy = React.useMemo(() => copyForLocale(locale), [locale]);
   const accuracyLabels = React.useMemo(() => footballAccuracyLabels(locale), [locale]);
@@ -846,11 +903,7 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
   const loadFeed = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/hfcd/football/simple-predict?t=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const data = (await response.json()) as Feed;
+      const data = await fetchFootballFeed();
       setFeed(data);
       setSelectedId((current) => current || pickDefaultMatch(data.matches)?.event_id || null);
       setError(null);
