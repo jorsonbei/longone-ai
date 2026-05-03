@@ -115,9 +115,25 @@ type Parlay = {
   }>;
 };
 
+type PredictionHistoryEntry = {
+  recorded_at?: string;
+  generated_at?: string;
+  reason?: string;
+  mode?: string;
+  model_version?: string;
+  fixtures_current?: number;
+  fixtures_raw?: number;
+  expired_filtered?: number;
+  official?: number;
+  watchlist?: number;
+  no_signal?: number;
+  parlay_candidates?: number;
+};
+
 type Feed = {
   generated_at: string;
   version: string;
+  model_version?: string;
   disclaimer?: string;
   odds_source_policy?: {
     preferred_provider?: string;
@@ -141,19 +157,7 @@ type Feed = {
   supported_competitions: string[];
   matches: MatchItem[];
   parlays: Parlay[];
-  prediction_history?: Array<{
-    recorded_at?: string;
-    generated_at?: string;
-    reason?: string;
-    mode?: string;
-    fixtures_current?: number;
-    fixtures_raw?: number;
-    expired_filtered?: number;
-    official?: number;
-    watchlist?: number;
-    no_signal?: number;
-    parlay_candidates?: number;
-  }>;
+  prediction_history?: PredictionHistoryEntry[];
 };
 
 type SummaryMode = 'all' | 'official' | 'watchlist' | 'parlay';
@@ -697,6 +701,38 @@ function fmtDate(value?: string, locale: Locale = 'zh') {
   });
 }
 
+function predictionHistoryKey(row: PredictionHistoryEntry, index: number) {
+  return `${row.recorded_at || row.generated_at || 'history'}-${index}`;
+}
+
+function predictionModeLabel(mode?: string) {
+  const labels: Record<string, string> = {
+    cache: '读取缓存数据',
+    live: '实时刷新数据',
+    scores: '赛果刷新',
+    embedded: '内置静态数据',
+  };
+  return mode ? labels[mode] || mode : '-';
+}
+
+function predictionReasonLabel(reason?: string) {
+  const labels: Record<string, string> = {
+    current_feed_read: '读取当前预测源',
+    worker_runtime_filter: '线上运行时过滤',
+    frontend_runtime_filter: '前端兜底过滤',
+    manual_refresh: '手动刷新',
+    scheduled_refresh: '定时刷新',
+    daily_refresh: '每日刷新',
+  };
+  return reason ? labels[reason] || reason : '-';
+}
+
+function predictionHistoryConclusion(row: PredictionHistoryEntry) {
+  if ((row.fixtures_current ?? 0) <= 0) return '本次没有可预测的未开赛比赛，需要刷新赛程源。';
+  if ((row.expired_filtered ?? 0) > 0) return '本次已按开赛时间过滤过期比赛，页面只保留未开赛场次。';
+  return '本次没有发现过期场次，当前预测列表可直接审计。';
+}
+
 const TEAM_NAME_ZH: Record<string, string> = {
   '1. FC Heidenheim': '海登海姆',
   '1. FC Köln': '科隆',
@@ -974,6 +1010,7 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
   const [stateFilter, setStateFilter] = React.useState<'all' | MatchItem['prediction_state']>('all');
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [summaryMode, setSummaryMode] = React.useState<SummaryMode>('all');
+  const [selectedHistoryKey, setSelectedHistoryKey] = React.useState<string | null>(null);
 
   const loadFeed = React.useCallback(async () => {
     setIsLoading(true);
@@ -1030,6 +1067,25 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
     () => [...(feed?.prediction_history || [])].slice(-6).reverse(),
     [feed?.prediction_history],
   );
+
+  const selectedHistory = React.useMemo(() => {
+    if (!predictionHistory.length) return null;
+    return (
+      predictionHistory.find((row, index) => predictionHistoryKey(row, index) === selectedHistoryKey) ||
+      predictionHistory[0]
+    );
+  }, [predictionHistory, selectedHistoryKey]);
+
+  React.useEffect(() => {
+    if (!predictionHistory.length) {
+      setSelectedHistoryKey(null);
+      return;
+    }
+    const stillExists = predictionHistory.some((row, index) => predictionHistoryKey(row, index) === selectedHistoryKey);
+    if (!stillExists) {
+      setSelectedHistoryKey(predictionHistoryKey(predictionHistory[0], 0));
+    }
+  }, [predictionHistory, selectedHistoryKey]);
 
   const relatedParlays = React.useMemo(() => {
     if (!feed || !selectedMatch) return [];
@@ -1134,8 +1190,19 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
             记录每次服务器生成预测后的场次数、过滤数量、高置信和观察候选数量，用于审计每天是否真实更新。
           </p>
           <div className="mt-4 grid gap-3 lg:grid-cols-3">
-            {predictionHistory.map((row, index) => (
-              <div key={`${row.recorded_at || index}-${row.generated_at || index}`} className="rounded-2xl border border-white/8 bg-black/18 p-4">
+            {predictionHistory.map((row, index) => {
+              const key = predictionHistoryKey(row, index);
+              const isSelected = key === selectedHistoryKey || (!selectedHistoryKey && index === 0);
+              return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSelectedHistoryKey(key)}
+                className={cn(
+                  'rounded-2xl border bg-black/18 p-4 text-left transition hover:border-emerald-200/40 hover:bg-emerald-300/8',
+                  isSelected ? 'border-emerald-200/55 shadow-[0_0_0_1px_rgba(167,243,208,0.24)]' : 'border-white/8',
+                )}
+              >
                 <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
                   {fmtDate(row.recorded_at || row.generated_at, locale)}
                 </div>
@@ -1145,9 +1212,42 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
                 <div className="mt-2 text-sm font-semibold leading-6 text-slate-400">
                   高置信 {row.official ?? 0} · 观察 {row.watchlist ?? 0} · 组合 {row.parlay_candidates ?? 0} · 过滤 {row.expired_filtered ?? 0}
                 </div>
-              </div>
-            ))}
+                <div className="mt-3 text-xs font-black text-emerald-200">
+                  点击查看详情
+                </div>
+              </button>
+              );
+            })}
           </div>
+          {selectedHistory ? (
+            <div className="mt-4 rounded-3xl border border-emerald-200/20 bg-emerald-300/[0.06] p-5">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h3 className="text-xl font-black tracking-[-0.04em] text-white">本次预测生成详情</h3>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-400">
+                    {predictionHistoryConclusion(selectedHistory)}
+                  </p>
+                </div>
+                <div className="rounded-full border border-white/10 bg-black/25 px-4 py-2 text-xs font-black text-emerald-100">
+                  {predictionModeLabel(selectedHistory.mode)}
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <HistoryMetric label="记录时间" value={fmtDate(selectedHistory.recorded_at, locale)} />
+                <HistoryMetric label="预测生成时间" value={fmtDate(selectedHistory.generated_at, locale)} />
+                <HistoryMetric label="触发原因" value={predictionReasonLabel(selectedHistory.reason)} />
+                <HistoryMetric label="模型版本" value={selectedHistory.model_version || feed.model_version || '-'} />
+                <HistoryMetric label="当前未开赛场次" value={selectedHistory.fixtures_current ?? '-'} />
+                <HistoryMetric label="原始场次数" value={selectedHistory.fixtures_raw ?? '-'} />
+                <HistoryMetric label="已过滤过期场次" value={selectedHistory.expired_filtered ?? 0} />
+                <HistoryMetric label="正式建议" value={selectedHistory.official ?? 0} />
+                <HistoryMetric label="观察候选" value={selectedHistory.watchlist ?? 0} />
+                <HistoryMetric label="无强信号" value={selectedHistory.no_signal ?? 0} />
+                <HistoryMetric label="串关候选" value={selectedHistory.parlay_candidates ?? 0} />
+                <HistoryMetric label="审计状态" value={(selectedHistory.fixtures_current ?? 0) > 0 ? '可审计' : '需刷新'} />
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -1279,6 +1379,15 @@ function StatCard({
       <div className={cn('mt-3 text-4xl font-black tracking-[-0.05em]', tone)}>{value}</div>
       {hint ? <div className="mt-3 text-xs font-bold text-slate-500">{hint}</div> : null}
     </button>
+  );
+}
+
+function HistoryMetric({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+      <div className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">{label}</div>
+      <div className="mt-2 break-words text-sm font-black text-slate-100">{value}</div>
+    </div>
   );
 }
 
