@@ -99,6 +99,7 @@ const hfcdFootballDataDir = path.join(hfcdFootballModuleDir, 'data');
 const hfcdFootballEnvPath = path.join(hfcdFootballModuleDir, '.env.hfcd_football');
 const hfcdFootballRefreshScript = path.join(hfcdFootballModuleDir, 'run_hfcd_football_refresh.sh');
 const hfcdFootballSimpleFeed = path.join(hfcdFootballDataDir, 'football_simple_predict_feed.json');
+const hfcdFootballPredictionHistory = path.join(hfcdFootballDataDir, 'football_prediction_history.json');
 dotenv.config({ path: hfcdFootballEnvPath });
 dotenv.config({ path: hfcdFootballHandoffPrivateEnvPath });
 
@@ -353,6 +354,35 @@ function footballAccuracyThreshold(recommendation?: Record<string, any> | null) 
   return 0.52;
 }
 
+function footballKickoffTime(match: Record<string, any>) {
+  const value = match.commence_time || match.kickoff || match.match_date;
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isUpcomingFootballMatch(match: Record<string, any>, now = Date.now()) {
+  const kickoff = footballKickoffTime(match);
+  if (kickoff === null) return true;
+  return kickoff >= now;
+}
+
+function readFootballPredictionHistory() {
+  if (!fs.existsSync(hfcdFootballPredictionHistory)) return [];
+  try {
+    const parsed = readJsonFile(hfcdFootballPredictionHistory);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('Football prediction history read failed:', error);
+    return [];
+  }
+}
+
+function writeFootballPredictionHistory(rows: Record<string, unknown>[]) {
+  fs.mkdirSync(path.dirname(hfcdFootballPredictionHistory), { recursive: true });
+  fs.writeFileSync(hfcdFootballPredictionHistory, JSON.stringify(rows.slice(-240), null, 2));
+}
+
 function footballBaselineHitRate(recommendation?: Record<string, any> | null) {
   const text = footballMarketText(recommendation);
   if (text.includes('plus_0p5') || text.includes('+0.5') || text.includes('double')) return 0.62;
@@ -459,7 +489,10 @@ function normalizeFootballRecommendation(recommendation: Record<string, any>) {
 }
 
 function normalizeFootballSimpleFeed(feed: any) {
-  for (const match of feed?.matches || []) {
+  const rawMatches = Array.isArray(feed?.matches) ? feed.matches : [];
+  let expiredFiltered = 0;
+
+  for (const match of rawMatches) {
     if (match?.official_recommendation && typeof match.official_recommendation === 'object') {
       normalizeFootballRecommendation(match.official_recommendation);
     }
@@ -483,7 +516,10 @@ function normalizeFootballSimpleFeed(feed: any) {
       match.prediction_state = 'watchlist_available';
     }
   }
-  const matches = feed?.matches || [];
+
+  const matches = rawMatches.filter((match: Record<string, any>) => isUpcomingFootballMatch(match));
+  expiredFiltered = rawMatches.length - matches.length;
+  feed.matches = matches;
   const officialCount = matches.filter((match: Record<string, any>) => match.prediction_state === 'official_available').length;
   const watchlistCount = matches.filter((match: Record<string, any>) => match.prediction_state === 'watchlist_available').length;
   const noSignalCount = matches.length - officialCount - watchlistCount;
@@ -496,12 +532,18 @@ function normalizeFootballSimpleFeed(feed: any) {
   };
   feed.summary = {
     ...(feed.summary || {}),
+    raw_fixtures: rawMatches.length,
+    expired_filtered: expiredFiltered,
+    current_fixtures: matches.length,
+    fixtures: matches.length,
     matches_with_official: officialCount,
     matches_with_watchlist: watchlistCount,
     matches_without_signal: noSignalCount,
   };
   feed.parlays = buildAccuracyFirstParlays(feed);
   feed.summary.parlay_candidates = feed.parlays.length;
+  const history = readFootballPredictionHistory();
+  feed.prediction_history = history.length ? history : [footballPredictionSnapshot('current_feed_read', 'cache', feed)];
   return feed;
 }
 
@@ -510,6 +552,45 @@ function readFootballFeed() {
     throw new Error(`HFCD football simple predict feed has not been generated: ${hfcdFootballSimpleFeed}`);
   }
   return normalizeFootballSimpleFeed(readJsonFile(hfcdFootballSimpleFeed));
+}
+
+function footballPredictionSnapshot(reason: string, mode: 'cache' | 'live' | 'scores', feed: Record<string, any>) {
+  const summary = feed.summary || {};
+  return {
+    recorded_at: new Date().toISOString(),
+    generated_at: feed.generated_at || null,
+    reason,
+    mode,
+    model_version: feed.model_version || HFCD_FOOTBALL_ACCURACY_MODEL,
+    fixtures_current: safeFootballNumber(summary.current_fixtures ?? summary.fixtures, 0),
+    fixtures_raw: safeFootballNumber(summary.raw_fixtures, safeFootballNumber(summary.fixtures, 0)),
+    expired_filtered: safeFootballNumber(summary.expired_filtered, 0),
+    official: safeFootballNumber(summary.matches_with_official, 0),
+    watchlist: safeFootballNumber(summary.matches_with_watchlist, 0),
+    no_signal: safeFootballNumber(summary.matches_without_signal, 0),
+    parlay_candidates: safeFootballNumber(summary.parlay_candidates, 0),
+  };
+}
+
+function appendFootballPredictionHistory(reason: string, mode: 'cache' | 'live' | 'scores') {
+  const feed = readFootballFeed();
+  const history = readFootballPredictionHistory();
+  const next = footballPredictionSnapshot(reason, mode, feed);
+  const last = history[history.length - 1] as Record<string, unknown> | undefined;
+  if (
+    last &&
+    last.generated_at === next.generated_at &&
+    last.fixtures_current === next.fixtures_current &&
+    last.official === next.official &&
+    last.watchlist === next.watchlist &&
+    last.parlay_candidates === next.parlay_candidates
+  ) {
+    history[history.length - 1] = { ...last, ...next, recorded_at: next.recorded_at };
+  } else {
+    history.push(next);
+  }
+  writeFootballPredictionHistory(history);
+  return next;
 }
 
 function hasExecutableFootballOdds(recommendation?: Record<string, any> | null) {
@@ -818,6 +899,8 @@ async function runFootballRefreshOnce(reason: string, mode: 'cache' | 'live' | '
   footballRefreshInFlight = runFootballRefresh(mode)
     .then((result) => {
       const payload = result as Record<string, unknown>;
+      const snapshot = appendFootballPredictionHistory(reason, mode);
+      payload.predictionHistorySnapshot = snapshot;
       footballLastRefresh = {
         ok: true,
         reason,
@@ -1027,6 +1110,7 @@ app.get('/api/hfcd/football/status', (_req, res) => {
     moduleDir: hfcdFootballModuleDir,
     dataDir: hfcdFootballDataDir,
     simpleFeed: getFileMeta(hfcdFootballSimpleFeed),
+    predictionHistory: getFileMeta(hfcdFootballPredictionHistory),
     refreshScript: getFileMeta(hfcdFootballRefreshScript),
     handoffSimplePredictScript: getFileMeta(hfcdFootballHandoffSimplePredictScript),
     refresh: getFootballRefreshStatus(),

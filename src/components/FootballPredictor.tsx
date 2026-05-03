@@ -127,6 +127,9 @@ type Feed = {
   };
   summary: {
     fixtures: number;
+    raw_fixtures?: number;
+    expired_filtered?: number;
+    current_fixtures?: number;
     matches_with_official: number;
     matches_with_watchlist: number;
     matches_without_signal: number;
@@ -138,6 +141,19 @@ type Feed = {
   supported_competitions: string[];
   matches: MatchItem[];
   parlays: Parlay[];
+  prediction_history?: Array<{
+    recorded_at?: string;
+    generated_at?: string;
+    reason?: string;
+    mode?: string;
+    fixtures_current?: number;
+    fixtures_raw?: number;
+    expired_filtered?: number;
+    official?: number;
+    watchlist?: number;
+    no_signal?: number;
+    parlay_candidates?: number;
+  }>;
 };
 
 type SummaryMode = 'all' | 'official' | 'watchlist' | 'parlay';
@@ -874,6 +890,7 @@ async function fetchFootballFeed(): Promise<Feed> {
             refresh_context: fixture.refresh_context || null,
           })),
           parlays: data.parlays,
+          prediction_history: data.prediction_history || [],
           model_version: data.model_version,
           accuracy_mode: Boolean(data.accuracy_mode),
         } as Feed;
@@ -951,6 +968,11 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
     [feed?.matches],
   );
 
+  const predictionHistory = React.useMemo(
+    () => [...(feed?.prediction_history || [])].slice(-6).reverse(),
+    [feed?.prediction_history],
+  );
+
   const relatedParlays = React.useMemo(() => {
     if (!feed || !selectedMatch) return [];
     const exact = feed.parlays.filter((parlay) =>
@@ -1023,6 +1045,15 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
             <StatCard label={copy.parlays} value={feed.summary.parlay_candidates} active={summaryMode === 'parlay'} hint={copy.clickHint} onClick={() => handleSummaryClick('parlay')} />
           </div>
         ) : null}
+
+        {feed ? (
+          <div className="mt-4 rounded-3xl border border-white/10 bg-black/18 p-4 text-sm font-semibold text-slate-400">
+            当前预测只展示未开赛比赛；本次已过滤过期场次 {feed.summary.expired_filtered || 0} 场。
+            <span className="ml-3 text-slate-500">
+              原始场次 {feed.summary.raw_fixtures ?? feed.summary.fixtures}，当前可预测场次 {feed.summary.current_fixtures ?? feed.summary.fixtures}。
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {feed ? (
@@ -1036,6 +1067,30 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
           parlays={feed.parlays}
           onSelectMatch={setSelectedId}
         />
+      ) : null}
+
+      {feed && predictionHistory.length ? (
+        <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
+          <h2 className="text-2xl font-black tracking-[-0.04em] text-white">预测历史记录</h2>
+          <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+            记录每次服务器生成预测后的场次数、过滤数量、高置信和观察候选数量，用于审计每天是否真实更新。
+          </p>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {predictionHistory.map((row, index) => (
+              <div key={`${row.recorded_at || index}-${row.generated_at || index}`} className="rounded-2xl border border-white/8 bg-black/18 p-4">
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                  {fmtDate(row.recorded_at || row.generated_at, locale)}
+                </div>
+                <div className="mt-2 text-lg font-black text-white">
+                  当前 {row.fixtures_current ?? '-'} / 原始 {row.fixtures_raw ?? '-'}
+                </div>
+                <div className="mt-2 text-sm font-semibold leading-6 text-slate-400">
+                  高置信 {row.official ?? 0} · 观察 {row.watchlist ?? 0} · 组合 {row.parlay_candidates ?? 0} · 过滤 {row.expired_filtered ?? 0}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       {error ? (
