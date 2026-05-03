@@ -158,6 +158,64 @@ type Feed = {
 
 type SummaryMode = 'all' | 'official' | 'watchlist' | 'parlay';
 
+function kickoffTime(match: Pick<MatchItem, 'commence_time'> | Parlay['legs_detail'][number]) {
+  const value = 'commence_time' in match ? match.commence_time : match.match_date;
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isUpcomingMatch(match: Pick<MatchItem, 'commence_time'>, now = Date.now()) {
+  const time = kickoffTime(match);
+  return time === null || time >= now;
+}
+
+function filterUpcomingFeed(feed: Feed): Feed {
+  const rawMatches = feed.matches || [];
+  const matches = rawMatches.filter((match) => isUpcomingMatch(match));
+  const validIds = new Set(matches.map((match) => match.event_id));
+  const parlays = (feed.parlays || []).filter((parlay) =>
+    (parlay.legs_detail || []).every((leg) => validIds.has(leg.event_id) && isUpcomingMatch({ commence_time: leg.commence_time || leg.match_date || '' })),
+  );
+  const official = matches.filter((match) => match.prediction_state === 'official_available').length;
+  const watchlist = matches.filter((match) => match.prediction_state === 'watchlist_available').length;
+  const expiredFiltered = rawMatches.length - matches.length;
+  const history = feed.prediction_history?.length
+    ? feed.prediction_history
+    : [
+        {
+          recorded_at: new Date().toISOString(),
+          generated_at: feed.generated_at,
+          reason: 'frontend_runtime_filter',
+          mode: 'embedded',
+          fixtures_current: matches.length,
+          fixtures_raw: rawMatches.length,
+          expired_filtered: expiredFiltered,
+          official,
+          watchlist,
+          no_signal: matches.length - official - watchlist,
+          parlay_candidates: parlays.length,
+        },
+      ];
+  return {
+    ...feed,
+    matches,
+    parlays,
+    prediction_history: history,
+    summary: {
+      ...feed.summary,
+      raw_fixtures: rawMatches.length,
+      expired_filtered: expiredFiltered,
+      current_fixtures: matches.length,
+      fixtures: matches.length,
+      matches_with_official: official,
+      matches_with_watchlist: watchlist,
+      matches_without_signal: matches.length - official - watchlist,
+      parlay_candidates: parlays.length,
+    },
+  };
+}
+
 const FOOTBALL_COPY = {
   zh: {
     badge: '准确率优先预测模式',
@@ -864,10 +922,10 @@ async function fetchFootballFeed(): Promise<Feed> {
       }
       const data = await response.json();
       if (data?.matches && Array.isArray(data.matches)) {
-        return data as Feed;
+        return filterUpcomingFeed(data as Feed);
       }
       if (data?.fixtures && Array.isArray(data.fixtures) && data?.parlays) {
-        return {
+        return filterUpcomingFeed({
           generated_at: data.generated_at,
           version: data.version,
           summary: data.summary,
@@ -893,7 +951,7 @@ async function fetchFootballFeed(): Promise<Feed> {
           prediction_history: data.prediction_history || [],
           model_version: data.model_version,
           accuracy_mode: Boolean(data.accuracy_mode),
-        } as Feed;
+        } as Feed);
       }
       errors.push(`${endpoint}: invalid feed shape`);
     } catch (error) {
@@ -902,7 +960,7 @@ async function fetchFootballFeed(): Promise<Feed> {
   }
 
   console.warn('Football API failed; using embedded feed.', errors);
-  return FOOTBALL_ACCURACY_FEED as unknown as Feed;
+  return filterUpcomingFeed(FOOTBALL_ACCURACY_FEED as unknown as Feed);
 }
 
 export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {

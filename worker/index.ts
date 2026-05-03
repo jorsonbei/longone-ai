@@ -151,12 +151,65 @@ function filterWorkerEnergyHeads(status?: string | null) {
 
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
 
+function workerFootballKickoffTime(match: any) {
+  const value = match?.commence_time || match?.kickoff || match?.match_date;
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function workerIsUpcomingFootballMatch(match: any, now = Date.now()) {
+  const kickoff = workerFootballKickoffTime(match);
+  return kickoff === null || kickoff >= now;
+}
+
+function workerFilterFootballParlays(parlays: any[], validIds: Set<string>) {
+  return (parlays || []).filter((parlay: any) => {
+    const legs = Array.isArray(parlay?.legs_detail) ? parlay.legs_detail : [];
+    return legs.length > 0 && legs.every((leg: any) => validIds.has(String(leg.event_id || '')));
+  });
+}
+
 function getWorkerFootballFeed() {
   const feed = FOOTBALL_ACCURACY_FEED as any;
+  const rawMatches = Array.isArray(feed.matches) ? feed.matches : [];
+  const matches = rawMatches.filter((match: any) => workerIsUpcomingFootballMatch(match));
+  const validIds = new Set<string>(matches.map((match: any) => String(match.event_id || '')));
+  const parlays = workerFilterFootballParlays(feed.parlays || [], validIds);
+  const officialCount = matches.filter((match: any) => match.prediction_state === 'official_available').length;
+  const watchlistCount = matches.filter((match: any) => match.prediction_state === 'watchlist_available').length;
   return {
     ...feed,
+    matches,
+    parlays,
     model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
     accuracy_mode: true,
+    summary: {
+      ...(feed.summary || {}),
+      raw_fixtures: rawMatches.length,
+      expired_filtered: rawMatches.length - matches.length,
+      current_fixtures: matches.length,
+      fixtures: matches.length,
+      matches_with_official: officialCount,
+      matches_with_watchlist: watchlistCount,
+      matches_without_signal: matches.length - officialCount - watchlistCount,
+      parlay_candidates: parlays.length,
+    },
+    prediction_history: [
+      {
+        recorded_at: new Date().toISOString(),
+        generated_at: feed.generated_at,
+        reason: 'worker_runtime_filter',
+        mode: 'embedded',
+        fixtures_current: matches.length,
+        fixtures_raw: rawMatches.length,
+        expired_filtered: rawMatches.length - matches.length,
+        official: officialCount,
+        watchlist: watchlistCount,
+        no_signal: matches.length - officialCount - watchlistCount,
+        parlay_candidates: parlays.length,
+      },
+    ],
     odds_source_policy: {
       ...(feed.odds_source_policy || {}),
       official_requires_odds: false,
