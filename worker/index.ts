@@ -382,6 +382,10 @@ function markEnergyEquity(state: any) {
   state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), equity - Number(state.peak_equity_usd || equity));
 }
 
+function energyUnrealizedPnl(state: any) {
+  return (state.open_positions || []).reduce((sum: number, pos: any) => sum + Number(pos.unrealized_pnl_usd || 0), 0);
+}
+
 async function openEnergyPosition(env: Env, state: any, row: any) {
   const mwh = energyOrderSize(row, state);
   const entrySpread = Number(row.visible_spread || 0);
@@ -528,6 +532,7 @@ async function energyTradingDashboard(request: Request, env: Env, url: URL) {
   const state = await loadEnergyAccount(env, userId);
   const rows = buildEnergyMarketRows();
   markEnergyEquity(state);
+  const unrealizedPnl = energyUnrealizedPnl(state);
   const trades = await recentEnergyTrades(env, userId, 120);
   return json({
     ok: true,
@@ -547,7 +552,9 @@ async function energyTradingDashboard(request: Request, env: Env, url: URL) {
       mode: state.mode,
       equity_usd: state.equity_usd,
       cash_usd: state.cash_usd,
+      settled_equity_usd: state.cash_usd,
       realized_pnl_usd: state.realized_pnl_usd,
+      unrealized_pnl_usd: unrealizedPnl,
       open_positions: (state.open_positions || []).length,
       max_open_positions: state.config?.max_open_positions || 10,
       win_rate: (state.closed_trades || []).length
@@ -564,6 +571,8 @@ async function energyTradingHistory(request: Request, env: Env, url: URL) {
   const userId = energyUserId(request, url);
   const limit = Math.max(10, Math.min(Number(url.searchParams.get('limit') || 200), 500));
   const state = await loadEnergyAccount(env, userId);
+  markEnergyEquity(state);
+  const unrealizedPnl = energyUnrealizedPnl(state);
   const trades = await recentEnergyTrades(env, userId, limit);
   return json(
     {
@@ -574,7 +583,9 @@ async function energyTradingHistory(request: Request, env: Env, url: URL) {
         mode: state.mode,
         equity_usd: state.equity_usd,
         cash_usd: state.cash_usd,
+        settled_equity_usd: state.cash_usd,
         realized_pnl_usd: state.realized_pnl_usd,
+        unrealized_pnl_usd: unrealizedPnl,
         open_positions: (state.open_positions || []).length,
         closed_trades: (state.closed_trades || []).length,
       },

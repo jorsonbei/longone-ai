@@ -55,7 +55,9 @@ type Dashboard = {
     mode: string;
     equity_usd: number;
     cash_usd: number;
+    settled_equity_usd?: number;
     realized_pnl_usd: number;
+    unrealized_pnl_usd?: number;
     open_positions: number;
     max_open_positions: number;
     win_rate: number;
@@ -82,6 +84,7 @@ const COPY: Record<Locale, {
   status: string;
   equity: string;
   pnl: string;
+  unrealizedPnl: string;
   winOpen: string;
   market: string;
   latestSignals: string;
@@ -103,9 +106,9 @@ const COPY: Record<Locale, {
   zh: {
     eyebrow: 'HFCD 能源交易',
     title: 'AI 模拟交易沙盒',
-    subtitle: '线上 Worker + D1 模拟 CAISO 风格储能套利。它只做 paper trading，不会向真实市场下单。',
+    subtitle: '线上 Worker + D1 模拟 CAISO 风格储能套利；可接入真实交易所/CAISO 快照，但这里只做 paper trading，不会向真实市场下单。',
     model: '模型说明',
-    modelText: '当前主线包含 V3.36 一小时执行信号和 V3.28/V3.29 三小时、六小时 roundtrip 稳定门。AI 只在信号达标时开仓，并记录开仓、平仓、金额、盈亏和信号来源。',
+    modelText: '当前主线包含 V3.36 一小时执行信号和 V3.28/V3.29 三小时、六小时 roundtrip 稳定门。系统按真实交易所储能套利口径处理行情快照、价差、开平仓和结算；若后端接入 CAISO/OASIS 或交易所 API，则使用真实快照，但本页始终只记录模拟交易，不真实下单。',
     start: '启动 AI 自动交易',
     tick: 'AI 运行一轮',
     stop: '停止并清仓结算',
@@ -116,8 +119,9 @@ const COPY: Record<Locale, {
     stopLoss: '单笔止损',
     takeProfit: '单笔止盈',
     status: 'AI 状态',
-    equity: 'AI 总资产',
+    equity: 'AI 已结算资产',
     pnl: 'AI 已实现收益',
+    unrealizedPnl: 'AI 未实现盈亏',
     winOpen: 'AI 胜率 / 持仓',
     market: '数据质量 / 策略锁',
     latestSignals: '最新信号',
@@ -152,8 +156,9 @@ const COPY: Record<Locale, {
     stopLoss: 'Stop loss',
     takeProfit: 'Take profit',
     status: 'AI status',
-    equity: 'AI equity',
+    equity: 'Settled equity',
     pnl: 'Realized PnL',
+    unrealizedPnl: 'Unrealized PnL',
     winOpen: 'Win rate / Open',
     market: 'Data Quality / Strategy Lock',
     latestSignals: 'Latest Signals',
@@ -188,8 +193,9 @@ const COPY: Record<Locale, {
     stopLoss: 'Dung lo',
     takeProfit: 'Chot loi',
     status: 'Trang thai',
-    equity: 'Tai san',
+    equity: 'Tai san da quyet toan',
     pnl: 'Loi nhuan da thuc hien',
+    unrealizedPnl: 'Loi/lỗ chua thuc hien',
     winOpen: 'Ty le thang / vi the',
     market: 'Chat luong du lieu',
     latestSignals: 'Tin hieu moi',
@@ -224,8 +230,9 @@ const COPY: Record<Locale, {
     stopLoss: '損切り',
     takeProfit: '利確',
     status: 'AI状態',
-    equity: '総資産',
+    equity: '確定後資産',
     pnl: '確定損益',
+    unrealizedPnl: '未実現損益',
     winOpen: '勝率 / 建玉',
     market: 'データ品質',
     latestSignals: '最新シグナル',
@@ -367,7 +374,7 @@ export default function EnergyTradingPage({ locale }: Props) {
       <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
         <h2 className="text-xl font-black text-white">{copy.model}</h2>
         <p className="mt-2 text-sm leading-6 text-emerald-50/62">{copy.modelText}</p>
-        <p className="mt-2 text-xs text-amber-200/80">说明：这是线上模拟账户，不连接真实交易所；真实自动交易需要资产方 EMS/BMS、CAISO 参与者接口、报价/成交 API、合规与风控审批。</p>
+        <p className="mt-2 text-xs text-amber-200/80">说明：这是线上模拟账户；行情快照按真实交易所/CAISO 储能套利口径处理，当前页面不向真实交易所下单。真实自动交易还需要资产方 EMS/BMS、CAISO 参与者接口、报价/成交 API、合规与风控审批。</p>
       </section>
 
       <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
@@ -415,11 +422,12 @@ export default function EnergyTradingPage({ locale }: Props) {
         {message ? <div className="mt-4 rounded-2xl border border-emerald-200/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{message}</div> : null}
       </section>
 
-      <section className="mt-5 grid gap-4 md:grid-cols-4">
+      <section className="mt-5 grid gap-4 md:grid-cols-5">
         {[
           [copy.status, dashboard?.summary?.mode || 'loading'],
-          [copy.equity, money(dashboard?.summary?.equity_usd)],
+          [copy.equity, money(dashboard?.summary?.settled_equity_usd ?? dashboard?.summary?.cash_usd)],
           [copy.pnl, money(dashboard?.summary?.realized_pnl_usd)],
+          [copy.unrealizedPnl, money(dashboard?.summary?.unrealized_pnl_usd)],
           [copy.winOpen, `${((dashboard?.summary?.win_rate || 0) * 100).toFixed(1)}% / ${dashboard?.summary?.open_positions || 0}/${dashboard?.summary?.max_open_positions || 0}`],
         ].map(([label, value]) => (
           <div key={label} className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-5">
