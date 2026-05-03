@@ -918,6 +918,13 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
     loadFeed();
   }, [loadFeed]);
 
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadFeed();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [loadFeed]);
+
   const filteredMatches = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return (feed?.matches || []).filter((match) => {

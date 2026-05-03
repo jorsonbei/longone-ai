@@ -102,6 +102,12 @@ const hfcdFootballSimpleFeed = path.join(hfcdFootballDataDir, 'football_simple_p
 dotenv.config({ path: hfcdFootballEnvPath });
 dotenv.config({ path: hfcdFootballHandoffPrivateEnvPath });
 
+const FOOTBALL_AUTO_REFRESH_INTERVAL_MS = Number(
+  process.env.FOOTBALL_AUTO_REFRESH_INTERVAL_MS || 24 * 60 * 60 * 1000,
+);
+const FOOTBALL_STARTUP_REFRESH_DELAY_MS = Number(process.env.FOOTBALL_STARTUP_REFRESH_DELAY_MS || 15 * 1000);
+const FOOTBALL_AUTO_REFRESH_ENABLED = process.env.FOOTBALL_AUTO_REFRESH_ENABLED !== 'false';
+
 const app = express();
 const instructionCache = new Map<string, string>();
 const MAX_INSTRUCTION_CACHE = 120;
@@ -300,6 +306,20 @@ function getEnergyTemplatesPayload() {
 }
 
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
+let footballRefreshInFlight: Promise<Record<string, unknown>> | null = null;
+let footballLastRefresh:
+  | {
+      ok: boolean;
+      reason: string;
+      mode: 'cache' | 'live' | 'scores';
+      startedAt: string;
+      finishedAt: string;
+      error?: string;
+      result?: Record<string, unknown>;
+    }
+  | null = null;
+let footballNextRefreshAt: string | null = null;
+let footballRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 function safeFootballNumber(value: unknown, fallback = 0) {
   const numeric = Number(value);
@@ -789,6 +809,77 @@ async function runFootballRefresh(mode: 'cache' | 'live' | 'scores' = 'cache') {
   };
 }
 
+async function runFootballRefreshOnce(reason: string, mode: 'cache' | 'live' | 'scores' = 'cache') {
+  if (footballRefreshInFlight) {
+    return footballRefreshInFlight;
+  }
+
+  const startedAt = new Date().toISOString();
+  footballRefreshInFlight = runFootballRefresh(mode)
+    .then((result) => {
+      const payload = result as Record<string, unknown>;
+      footballLastRefresh = {
+        ok: true,
+        reason,
+        mode,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        result: payload,
+      };
+      return payload;
+    })
+    .catch((error) => {
+      footballLastRefresh = {
+        ok: false,
+        reason,
+        mode,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      };
+      throw error;
+    })
+    .finally(() => {
+      footballRefreshInFlight = null;
+    });
+
+  return footballRefreshInFlight;
+}
+
+function getFootballRefreshStatus() {
+  return {
+    enabled: FOOTBALL_AUTO_REFRESH_ENABLED,
+    intervalMs: FOOTBALL_AUTO_REFRESH_INTERVAL_MS,
+    inFlight: Boolean(footballRefreshInFlight),
+    nextRefreshAt: footballNextRefreshAt,
+    lastRefresh: footballLastRefresh,
+  };
+}
+
+function scheduleFootballDailyRefresh() {
+  if (!FOOTBALL_AUTO_REFRESH_ENABLED || footballRefreshTimer) {
+    return;
+  }
+
+  const scheduleNext = () => {
+    footballNextRefreshAt = new Date(Date.now() + FOOTBALL_AUTO_REFRESH_INTERVAL_MS).toISOString();
+  };
+
+  setTimeout(() => {
+    void runFootballRefreshOnce('startup_auto_refresh', 'cache').catch((error) => {
+      console.error('Football startup auto-refresh failed:', error);
+    });
+  }, Math.max(0, FOOTBALL_STARTUP_REFRESH_DELAY_MS));
+
+  scheduleNext();
+  footballRefreshTimer = setInterval(() => {
+    scheduleNext();
+    void runFootballRefreshOnce('daily_auto_refresh', 'cache').catch((error) => {
+      console.error('Football daily auto-refresh failed:', error);
+    });
+  }, FOOTBALL_AUTO_REFRESH_INTERVAL_MS);
+}
+
 function selectedTeamFromRecommendation(match: Record<string, any>, recommendation: Record<string, any>) {
   const selection = String(recommendation.selection || '').toLowerCase();
   const home = String(match.home_team || '').toLowerCase();
@@ -938,6 +1029,7 @@ app.get('/api/hfcd/football/status', (_req, res) => {
     simpleFeed: getFileMeta(hfcdFootballSimpleFeed),
     refreshScript: getFileMeta(hfcdFootballRefreshScript),
     handoffSimplePredictScript: getFileMeta(hfcdFootballHandoffSimplePredictScript),
+    refresh: getFootballRefreshStatus(),
     keys: getFootballKeyStatus(),
     security: 'API keys are loaded on the server only and are never returned to the browser.',
   });
@@ -1053,7 +1145,7 @@ app.post('/api/football/refresh-odds', async (req, res) => {
 
   try {
     const body = (req.body || {}) as { mode?: 'cache' | 'live' | 'scores' };
-    res.json(await runFootballRefresh(body.mode || 'cache'));
+    res.json(await runFootballRefreshOnce('api_refresh_odds', body.mode || 'cache'));
   } catch (error) {
     console.error('Football refresh-odds API failed:', error);
     res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football refresh failed.' });
@@ -1113,7 +1205,7 @@ app.post('/api/hfcd/football/refresh', async (req, res) => {
 
   try {
     const body = (req.body || {}) as { mode?: 'cache' | 'live' | 'scores' };
-    res.json(await runFootballRefresh(body.mode || 'cache'));
+    res.json(await runFootballRefreshOnce('api_hfcd_football_refresh', body.mode || 'cache'));
   } catch (error) {
     console.error('HFCD football refresh failed:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'Football refresh failed.' });
@@ -1675,5 +1767,6 @@ app.get('*', (req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
+  scheduleFootballDailyRefresh();
   console.log(`ThingNature OS server listening on http://0.0.0.0:${PORT}`);
 });
