@@ -8,6 +8,11 @@ directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+[[d1_databases]]
+binding = "ENERGY_TRADING_DB"
+database_name = "hfcd-energy-trading"
+database_id = "ea68178f-0f55-4763-af58-1aee7d11ade9"
+
 [vars]
 NODE_ENV = "production"
 VERTEX_TUNED_MODEL = "projects/1012420023845/locations/us-central1/endpoints/573558591361908736"
