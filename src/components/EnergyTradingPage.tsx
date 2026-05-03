@@ -357,7 +357,7 @@ export default function EnergyTradingPage({ locale }: Props) {
   const decisions = dashboard?.decisions || [];
 
   return (
-    <div className="min-h-full bg-[#0b1512] px-5 py-6 text-slate-100">
+    <div className="min-h-full bg-[#0b1512] px-5 py-6 pb-14 text-slate-100">
       <div className="rounded-[28px] border border-emerald-200/15 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_32rem),linear-gradient(180deg,#10211c_0%,#0b1512_100%)] p-6">
         <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-200/70">{copy.eyebrow}</p>
         <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{copy.title}</h1>

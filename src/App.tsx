@@ -667,7 +667,7 @@ export default function App() {
         />
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col h-full relative bg-[#13151A] overflow-hidden">
+        <main className={`flex-1 flex flex-col h-full min-h-0 relative bg-[#13151A] ${activeView === 'energy-trading' ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
           
           {/* Header */}
           <header className="h-16 flex items-center justify-between px-6 border-none bg-transparent sticky top-0 z-10">
