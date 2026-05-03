@@ -22,6 +22,7 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { HFCDWorkbench } from './components/HFCDWorkbench';
 import { FootballPredictor } from './components/FootballPredictor';
 import EnergyRuntimePage from './components/EnergyRuntimePage';
+import EnergyTradingPage from './components/EnergyTradingPage';
 import { analyzeWuxingInput } from './lib/wuxingKernel';
 import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
@@ -29,7 +30,7 @@ import { getUiText } from './content/uiText';
 import { getOfficialSiteContent } from './content/officialSiteContent';
 import { LOCALE_OPTIONS, type Locale } from './lib/locale';
 
-type ActiveView = 'chat' | 'official-site' | 'admin' | 'hfcd' | 'football' | 'energy';
+type ActiveView = 'chat' | 'official-site' | 'admin' | 'hfcd' | 'football' | 'energy' | 'energy-trading';
 
 function normalizeActiveView(value: string | null): ActiveView | null {
   if (
@@ -37,7 +38,8 @@ function normalizeActiveView(value: string | null): ActiveView | null {
     value === 'admin' ||
     value === 'hfcd' ||
     value === 'football' ||
-    value === 'energy'
+    value === 'energy' ||
+    value === 'energy-trading'
   ) {
     return value;
   }
@@ -66,6 +68,7 @@ function getHashActiveView(hash: string): ActiveView | null {
 
   if (value === 'football' || value === 'football-predictor') return 'football';
   if (value === 'energy' || value === 'energy-runtime' || value === 'new-energy') return 'energy';
+  if (value === 'energy-trading' || value === 'ai-energy-trading' || value === 'energy-paper-trading') return 'energy-trading';
   if (value === 'hfcd' || value === 'risk-diagnosis') return 'hfcd';
   if (value === 'admin') return 'admin';
 
@@ -252,6 +255,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (activeView === 'energy-trading' && !isAdmin) {
+      setActiveView('chat');
+    }
+  }, [activeView, isAdmin]);
+
+  useEffect(() => {
     const setMeta = (name: string, content: string, attr: 'name' | 'property' = 'name') => {
       let element = document.head.querySelector(`meta[${attr}="${name}"]`) as HTMLMetaElement | null;
       if (!element) {
@@ -303,6 +312,22 @@ export default function App() {
       setMeta('og:description', energyDescription, 'property');
       setMeta('twitter:title', energyTitle);
       setMeta('twitter:description', energyDescription);
+      return;
+    }
+
+    if (activeView === 'energy-trading') {
+      const energyTradingTitle = locale === 'zh'
+        ? `能源 AI 交易 | ${ui.brand.appTitle}`
+        : `HFCD Energy AI Trading | ${ui.brand.appTitle}`;
+      const energyTradingDescription = locale === 'zh'
+        ? '能源 AI 模拟交易、paper-trading 账户、策略信号和结算审计。'
+        : 'HFCD energy AI paper-trading, simulated account, strategy signals, and settlement audit.';
+      document.title = energyTradingTitle;
+      setMeta('description', energyTradingDescription);
+      setMeta('og:title', energyTradingTitle, 'property');
+      setMeta('og:description', energyTradingDescription, 'property');
+      setMeta('twitter:title', energyTradingTitle);
+      setMeta('twitter:description', energyTradingDescription);
       return;
     }
 
@@ -629,7 +654,7 @@ export default function App() {
           onOpenOfficialSite={() => setActiveView('official-site')}
           onOpenHFCD={() => setActiveView('hfcd')}
           onOpenFootball={() => setActiveView('football')}
-          onOpenEnergy={() => setActiveView('energy')}
+          onOpenEnergyTrading={() => setActiveView('energy-trading')}
           onOpenAdmin={() => setActiveView('admin')}
           canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
@@ -903,6 +928,8 @@ export default function App() {
             <FootballPredictor locale={locale} />
           ) : activeView === 'energy' ? (
             <EnergyRuntimePage />
+          ) : activeView === 'energy-trading' && isAdmin ? (
+            <EnergyTradingPage locale={locale} />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}

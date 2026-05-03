@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity, Trophy, Zap } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Menu, User, Settings, HelpCircle, LogOut, Globe, Shield, Languages, Activity, Trophy } from 'lucide-react';
 import { ChatSession } from '../types';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -18,7 +18,7 @@ interface SidebarProps {
   onOpenOfficialSite: () => void;
   onOpenHFCD: () => void;
   onOpenFootball: () => void;
-  onOpenEnergy: () => void;
+  onOpenEnergyTrading: () => void;
   onOpenAdmin: () => void;
   canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
@@ -30,7 +30,7 @@ interface SidebarProps {
   onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenEnergy, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenEnergyTrading, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -63,14 +63,14 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     de: { title: 'Fussballprognose', subtitle: 'Spiele, Signale und Kombis' },
     ja: { title: 'サッカー予測', subtitle: '試合、信号、組み合わせ' },
   };
-  const energyLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
-    en: { title: 'Energy Predictor', subtitle: 'Load, battery, renewables' },
-    zh: { title: '能源预测', subtitle: '负载、电池与新能源' },
-    fr: { title: 'Prédiction énergie', subtitle: 'Charge, batterie, renouvelables' },
-    es: { title: 'Predicción energía', subtitle: 'Carga, batería y renovables' },
-    vi: { title: 'Du doan nang luong', subtitle: 'Tai, pin, tai tao' },
-    de: { title: 'Energieprognose', subtitle: 'Last, Batterie, Erneuerbare' },
-    ja: { title: 'エネルギー予測', subtitle: '負荷、電池、再エネ' },
+  const energyTradingLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
+    en: { title: 'AI Energy Trading', subtitle: 'Paper trading sandbox' },
+    zh: { title: '能源 AI 交易', subtitle: '模拟交易与策略回放' },
+    fr: { title: 'Trading IA énergie', subtitle: 'Bac à sable paper trading' },
+    es: { title: 'Trading IA energía', subtitle: 'Simulación y auditoría' },
+    vi: { title: 'Giao dịch AI năng lượng', subtitle: 'Mô phỏng paper trading' },
+    de: { title: 'KI-Energiehandel', subtitle: 'Paper-Trading-Sandbox' },
+    ja: { title: 'AIエネルギー取引', subtitle: 'ペーパートレード検証' },
   };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
@@ -134,15 +134,17 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <span className="text-[11px] text-slate-500">{footballLabelByLocale[locale].subtitle}</span>
           </div>
         </button>
-        <button onClick={onOpenEnergy} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(20,184,166,0.12),rgba(20,184,166,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(20,184,166,0.18),rgba(20,184,166,0.08))]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-300/15 text-teal-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-            <Zap className="w-3.5 h-3.5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-100">{energyLabelByLocale[locale].title}</span>
-            <span className="text-[11px] text-slate-500">{energyLabelByLocale[locale].subtitle}</span>
-          </div>
-        </button>
+        {canAccessAdmin ? (
+          <button onClick={onOpenEnergyTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(45,212,191,0.16),rgba(45,212,191,0.05))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(45,212,191,0.22),rgba(45,212,191,0.09))]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              <Activity className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-100">{energyTradingLabelByLocale[locale].title}</span>
+              <span className="text-[11px] text-slate-500">{energyTradingLabelByLocale[locale].subtitle}</span>
+            </div>
+          </button>
+        ) : null}
         {canAccessAdmin ? (
           <button onClick={onOpenAdmin} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(99,125,255,0.12),rgba(99,125,255,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(99,125,255,0.18),rgba(99,125,255,0.08))]">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#637dff]/15 text-[#a8b5ff] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
