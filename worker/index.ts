@@ -371,6 +371,10 @@ function canOpenEnergyPosition(row: any, state: any) {
   if (Math.abs(Number(row.model_prediction_mw || 0)) < Number(cfg.min_abs_prediction_mw || 100)) return '预测功率不足';
   if (tierRank(row.tier) < Number(cfg.min_tier_rank || 2)) return '置信等级不足';
   if (!String(row.paper_action || '').match(/CHARGE|DISCHARGE/i)) return '没有可执行方向';
+  const segment = energySegmentStats(state, row);
+  if (segment.count >= 8 && segment.expectancy_usd < 0 && segment.profit_factor < 1) {
+    return '该信号源历史期望为负';
+  }
   return '';
 }
 
@@ -386,10 +390,268 @@ function energyUnrealizedPnl(state: any) {
   return (state.open_positions || []).reduce((sum: number, pos: any) => sum + Number(pos.unrealized_pnl_usd || 0), 0);
 }
 
+function energyTradePct(value: number, stateOrConfig: any) {
+  const cfg = stateOrConfig?.config || stateOrConfig || {};
+  const base = Math.max(Number(cfg.fixed_trade_usd || 10_000), 1);
+  return Number((Number(value || 0) / base).toFixed(4));
+}
+
+function energyClosedTrades(state: any) {
+  return (state.closed_trades || []).filter((trade: any) => Number.isFinite(Number(trade.net_pnl_usd)));
+}
+
+function energyProfitFactor(wins: number, lossesAbs: number) {
+  if (lossesAbs <= 0) return wins > 0 ? 99 : 0;
+  return wins / lossesAbs;
+}
+
+function energyGroupStats(trades: any[], keyFn: (trade: any) => string) {
+  const groups: Record<string, any> = {};
+  for (const trade of trades) {
+    const key = keyFn(trade) || 'unknown';
+    const pnl = Number(trade.net_pnl_usd || 0);
+    const g = groups[key] || {
+      key,
+      count: 0,
+      wins: 0,
+      losses: 0,
+      net_pnl_usd: 0,
+      gross_win_usd: 0,
+      gross_loss_usd: 0,
+      avg_pnl_usd: 0,
+      win_rate: 0,
+      profit_factor: 0,
+    };
+    g.count += 1;
+    g.net_pnl_usd += pnl;
+    if (pnl > 0) {
+      g.wins += 1;
+      g.gross_win_usd += pnl;
+    } else if (pnl < 0) {
+      g.losses += 1;
+      g.gross_loss_usd += Math.abs(pnl);
+    }
+    groups[key] = g;
+  }
+  return Object.values(groups).map((g: any) => ({
+    ...g,
+    net_pnl_usd: Number(g.net_pnl_usd.toFixed(2)),
+    gross_win_usd: Number(g.gross_win_usd.toFixed(2)),
+    gross_loss_usd: Number(g.gross_loss_usd.toFixed(2)),
+    avg_pnl_usd: Number((g.net_pnl_usd / Math.max(g.count, 1)).toFixed(2)),
+    win_rate: Number((g.wins / Math.max(g.count, 1)).toFixed(4)),
+    profit_factor: Number(energyProfitFactor(g.gross_win_usd, g.gross_loss_usd).toFixed(3)),
+  })).sort((a: any, b: any) => b.net_pnl_usd - a.net_pnl_usd);
+}
+
+function energySegmentStats(state: any, row: any) {
+  const trades = energyClosedTrades(state).filter((trade: any) => {
+    const sameHorizon = !row?.horizon || String(trade.horizon || '') === String(row.horizon || '');
+    const sameAction = !row?.paper_action || String(trade.entry_action || trade.action || '') === String(row.paper_action || '');
+    return sameHorizon && sameAction;
+  });
+  const total = trades.reduce((sum: number, trade: any) => sum + Number(trade.net_pnl_usd || 0), 0);
+  const wins = trades.filter((trade: any) => Number(trade.net_pnl_usd || 0) > 0).length;
+  const grossWin = trades.reduce((sum: number, trade: any) => sum + Math.max(Number(trade.net_pnl_usd || 0), 0), 0);
+  const grossLoss = trades.reduce((sum: number, trade: any) => sum + Math.max(-Number(trade.net_pnl_usd || 0), 0), 0);
+  return {
+    count: trades.length,
+    win_rate: trades.length ? wins / trades.length : 0,
+    net_pnl_usd: total,
+    expectancy_usd: trades.length ? total / trades.length : 0,
+    profit_factor: energyProfitFactor(grossWin, grossLoss),
+  };
+}
+
+function energyRiskCandidateValues(base: number, current: number, ratios: number[]) {
+  const values = ratios.map((ratio) => Math.round(base * ratio));
+  values.push(Math.round(current || 0));
+  return Array.from(new Set(values.filter((value) => value > 0))).sort((a, b) => a - b);
+}
+
+function energySimulateTradeRisk(trade: any, stopLoss: number, takeProfit: number) {
+  const marks = Array.isArray(trade.mtm_path) ? trade.mtm_path : [];
+  for (const mark of marks) {
+    const unrealized = Number(mark.unrealized_pnl_usd || 0);
+    if (unrealized >= takeProfit || unrealized <= -stopLoss) {
+      return {
+        pnl: unrealized,
+        exit_reason: unrealized >= takeProfit ? '模拟止盈' : '模拟止损',
+        path_used: true,
+      };
+    }
+  }
+  const realized = Number(trade.net_pnl_usd || 0);
+  if (!marks.length) {
+    return {
+      pnl: Math.max(Math.min(realized, takeProfit), -stopLoss),
+      exit_reason: '粗略截断估计',
+      path_used: false,
+    };
+  }
+  return {
+    pnl: realized,
+    exit_reason: trade.reason || '实际结算',
+    path_used: true,
+  };
+}
+
+function energyRiskOptimization(state: any) {
+  const trades = energyClosedTrades(state);
+  const cfg = state.config || {};
+  const base = Math.max(Number(cfg.fixed_trade_usd || 10_000), 1);
+  if (trades.length < 5) {
+    return {
+      status: 'collecting_data',
+      message: '已结算交易少于 5 笔，先继续积累样本；暂不自动推荐止盈止损。',
+      sample_count: trades.length,
+      recommended: {
+        stop_loss_usd: Number(cfg.stop_loss_usd || 450),
+        take_profit_usd: Number(cfg.take_profit_usd || 900),
+        stop_loss_pct: energyTradePct(cfg.stop_loss_usd || 450, cfg),
+        take_profit_pct: energyTradePct(cfg.take_profit_usd || 900, cfg),
+      },
+      top_candidates: [],
+    };
+  }
+  const stopValues = energyRiskCandidateValues(base, Number(cfg.stop_loss_usd || 450), [0.015, 0.025, 0.035, 0.045, 0.06, 0.08, 0.1]);
+  const takeValues = energyRiskCandidateValues(base, Number(cfg.take_profit_usd || 900), [0.03, 0.05, 0.075, 0.09, 0.12, 0.15, 0.2]);
+  const candidates: any[] = [];
+  for (const stopLoss of stopValues) {
+    for (const takeProfit of takeValues) {
+      let net = 0;
+      let wins = 0;
+      let grossWin = 0;
+      let grossLoss = 0;
+      let pathUsed = 0;
+      let equity = 0;
+      let peak = 0;
+      let maxDrawdown = 0;
+      for (const trade of trades) {
+        const simulated = energySimulateTradeRisk(trade, stopLoss, takeProfit);
+        const pnl = Number(simulated.pnl || 0);
+        if (simulated.path_used) pathUsed += 1;
+        net += pnl;
+        equity += pnl;
+        peak = Math.max(peak, equity);
+        maxDrawdown = Math.min(maxDrawdown, equity - peak);
+        if (pnl > 0) {
+          wins += 1;
+          grossWin += pnl;
+        } else if (pnl < 0) {
+          grossLoss += Math.abs(pnl);
+        }
+      }
+      candidates.push({
+        stop_loss_usd: stopLoss,
+        take_profit_usd: takeProfit,
+        stop_loss_pct: Number((stopLoss / base).toFixed(4)),
+        take_profit_pct: Number((takeProfit / base).toFixed(4)),
+        simulated_net_pnl_usd: Number(net.toFixed(2)),
+        simulated_win_rate: Number((wins / Math.max(trades.length, 1)).toFixed(4)),
+        profit_factor: Number(energyProfitFactor(grossWin, grossLoss).toFixed(3)),
+        max_drawdown_usd: Number(maxDrawdown.toFixed(2)),
+        path_coverage: Number((pathUsed / Math.max(trades.length, 1)).toFixed(4)),
+      });
+    }
+  }
+  candidates.sort((a, b) =>
+    b.simulated_net_pnl_usd - a.simulated_net_pnl_usd ||
+    b.profit_factor - a.profit_factor ||
+    b.simulated_win_rate - a.simulated_win_rate,
+  );
+  const best = candidates[0] || null;
+  return {
+    status: best ? 'ready' : 'no_candidate',
+    sample_count: trades.length,
+    path_quality: best?.path_coverage === 1 ? 'exact_mtm_path' : best?.path_coverage > 0 ? 'mixed_mtm_path' : 'coarse_realized_only',
+    message: best?.path_coverage === 1
+      ? '基于逐轮浮盈路径扫描得到推荐止盈止损。'
+      : '部分旧交易缺少逐轮浮盈路径，当前推荐含粗略回放；之后新交易会自动记录路径，推荐会更精确。',
+    recommended: best,
+    top_candidates: candidates.slice(0, 8),
+  };
+}
+
+function energyWinRateDiagnostics(state: any) {
+  const trades = energyClosedTrades(state);
+  const wins = trades.filter((trade: any) => Number(trade.net_pnl_usd || 0) > 0);
+  const losses = trades.filter((trade: any) => Number(trade.net_pnl_usd || 0) < 0);
+  const grossWin = wins.reduce((sum: number, trade: any) => sum + Number(trade.net_pnl_usd || 0), 0);
+  const grossLoss = losses.reduce((sum: number, trade: any) => sum + Math.abs(Number(trade.net_pnl_usd || 0)), 0);
+  const winRate = trades.length ? wins.length / trades.length : 0;
+  const avgWin = wins.length ? grossWin / wins.length : 0;
+  const avgLoss = losses.length ? grossLoss / losses.length : 0;
+  const byHorizon = energyGroupStats(trades, (trade) => String(trade.horizon || 'unknown'));
+  const byAction = energyGroupStats(trades, (trade) => String(trade.entry_action || trade.action || 'unknown'));
+  const bySource = energyGroupStats(trades, (trade) => String(trade.signal_source || 'unknown'));
+  const causes: string[] = [];
+  const recommendations: string[] = [];
+  if (trades.length < 10) {
+    causes.push('样本仍偏少，胜率波动会很大。');
+    recommendations.push('继续记录至少 30 笔已结算交易后再用胜率做强判断。');
+  }
+  if (winRate < 0.5 && grossWin > grossLoss) {
+    causes.push('胜率低但总利润为正，说明当前策略靠较大的盈利单覆盖较多小亏单。');
+    recommendations.push('不要只追求胜率；优先看净收益、平均盈亏比和最大回撤。');
+  }
+  if (avgLoss > avgWin && losses.length >= 3) {
+    causes.push('平均亏损大于平均盈利，止损可能偏宽或止盈偏早。');
+    recommendations.push('优先采用止盈/止损扫描里利润最高且回撤更低的一组参数。');
+  }
+  for (const group of byAction) {
+    if (group.count >= 5 && group.avg_pnl_usd < 0) {
+      causes.push(`${group.key} 历史期望为负。`);
+      recommendations.push(`暂时降低或拦截 ${group.key}，直到该方向重新转正。`);
+    }
+  }
+  return {
+    sample_count: trades.length,
+    wins: wins.length,
+    losses: losses.length,
+    win_rate: Number(winRate.toFixed(4)),
+    net_pnl_usd: Number((grossWin - grossLoss).toFixed(2)),
+    avg_win_usd: Number(avgWin.toFixed(2)),
+    avg_loss_usd: Number(avgLoss.toFixed(2)),
+    payoff_ratio: Number((avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 99 : 0).toFixed(3)),
+    profit_factor: Number(energyProfitFactor(grossWin, grossLoss).toFixed(3)),
+    by_horizon: byHorizon,
+    by_action: byAction,
+    by_source: bySource.slice(0, 8),
+    causes,
+    recommendations,
+  };
+}
+
+function energyActiveRisk(state: any) {
+  const cfg = state.config || {};
+  const optimized = energyRiskOptimization(state);
+  if (cfg.auto_optimize_risk !== false && optimized.status === 'ready' && optimized.recommended) {
+    return {
+      stop_loss_usd: Number(optimized.recommended.stop_loss_usd || cfg.stop_loss_usd || 450),
+      take_profit_usd: Number(optimized.recommended.take_profit_usd || cfg.take_profit_usd || 900),
+      stop_loss_pct: optimized.recommended.stop_loss_pct,
+      take_profit_pct: optimized.recommended.take_profit_pct,
+      source: 'history_optimized',
+      path_quality: optimized.path_quality,
+    };
+  }
+  return {
+    stop_loss_usd: Number(cfg.stop_loss_usd || 450),
+    take_profit_usd: Number(cfg.take_profit_usd || 900),
+    stop_loss_pct: energyTradePct(cfg.stop_loss_usd || 450, state),
+    take_profit_pct: energyTradePct(cfg.take_profit_usd || 900, state),
+    source: 'user_config',
+    path_quality: 'not_enough_data',
+  };
+}
+
 async function openEnergyPosition(env: Env, state: any, row: any) {
   const mwh = energyOrderSize(row, state);
   const entrySpread = Number(row.visible_spread || 0);
   const now = new Date();
+  const openPositionsBefore = (state.open_positions || []).length;
+  const activeRisk = energyActiveRisk(state);
   const pos = {
     position_id: `ET-${Date.now()}-${row.horizon}`,
     decision_id: row.decision_id,
@@ -409,6 +671,13 @@ async function openEnergyPosition(env: Env, state: any, row: any) {
     tier: row.tier,
     model_prediction_mw: row.model_prediction_mw,
     soc: row.soc,
+    stop_loss_usd: activeRisk.stop_loss_usd,
+    take_profit_usd: activeRisk.take_profit_usd,
+    stop_loss_pct: activeRisk.stop_loss_pct,
+    take_profit_pct: activeRisk.take_profit_pct,
+    risk_source: activeRisk.source,
+    risk_path_quality: activeRisk.path_quality,
+    mtm_path: [] as any[],
   };
   state.open_positions.push(pos);
   state.seen_decision_ids.push(String(row.decision_id));
@@ -432,7 +701,17 @@ async function openEnergyPosition(env: Env, state: any, row: any) {
     gross_pnl_usd: 0,
     cost_usd: 0,
     net_pnl_usd: 0,
+    pnl_pct_of_trade: 0,
     cash_usd: state.cash_usd,
+    equity_usd: state.equity_usd,
+    open_positions_before: openPositionsBefore,
+    open_positions_after: state.open_positions.length,
+    stop_loss_usd: pos.stop_loss_usd,
+    take_profit_usd: pos.take_profit_usd,
+    stop_loss_pct: pos.stop_loss_pct,
+    take_profit_pct: pos.take_profit_pct,
+    risk_source: pos.risk_source,
+    risk_path_quality: pos.risk_path_quality,
     reason: 'AI自动开仓',
   };
   await insertEnergyTrade(env, state.user_id, trade);
@@ -444,8 +723,10 @@ async function settleEnergyPosition(env: Env, state: any, pos: any, exitSpread: 
   const gross = energyGrossPnl(pos.action, Number(pos.entry_spread || 0), exitSpread, Number(pos.mwh || 0));
   const cost = Number(state.config?.variable_cost_per_mwh || ENERGY_VARIABLE_COST_PER_MWH) * mwhAbs;
   const net = gross - cost;
+  const cashBefore = Number(state.cash_usd || 0);
   state.cash_usd = Number(state.cash_usd || 0) + net;
   state.realized_pnl_usd = Number(state.realized_pnl_usd || 0) + net;
+  const entryValue = pos.entry_trade_value_usd || energyTradeAmount(pos.entry_spread, pos.mwh);
   const trade = {
     ts: energyIso(),
     event: 'CLOSE',
@@ -461,13 +742,21 @@ async function settleEnergyPosition(env: Env, state: any, pos: any, exitSpread: 
     price_spread: exitSpread,
     entry_spread: pos.entry_spread,
     exit_spread: exitSpread,
+    spread_delta: Number((exitSpread - Number(pos.entry_spread || 0)).toFixed(4)),
     mwh: pos.mwh,
-    entry_trade_value_usd: pos.entry_trade_value_usd || energyTradeAmount(pos.entry_spread, pos.mwh),
+    entry_trade_value_usd: entryValue,
     exit_trade_value_usd: energyTradeAmount(exitSpread, pos.mwh),
     gross_pnl_usd: gross,
     cost_usd: cost,
     net_pnl_usd: net,
+    pnl_pct_of_trade: Number((net / Math.max(Number(entryValue || state.config?.fixed_trade_usd || 1), 1)).toFixed(4)),
+    cash_before_usd: cashBefore,
     cash_usd: state.cash_usd,
+    mtm_path: pos.mtm_path || [],
+    stop_loss_usd: pos.stop_loss_usd || state.config?.stop_loss_usd || 450,
+    take_profit_usd: pos.take_profit_usd || state.config?.take_profit_usd || 900,
+    stop_loss_pct: pos.stop_loss_pct || energyTradePct(state.config?.stop_loss_usd || 450, state),
+    take_profit_pct: pos.take_profit_pct || energyTradePct(state.config?.take_profit_usd || 900, state),
     reason,
   };
   state.closed_trades.push({ ...pos, ...trade, status: 'closed' });
@@ -480,17 +769,28 @@ async function energyTick(env: Env, state: any, forceSettle = false) {
   const rows = buildEnergyMarketRows(now);
   const currentSpread = Number(rows[0]?.visible_spread || 0);
   const remaining: any[] = [];
+  const activeRisk = energyActiveRisk(state);
   let settled = 0;
   let opened = 0;
   for (const pos of state.open_positions || []) {
     const due = forceSettle || new Date(pos.target_exit_at).getTime() <= now.getTime();
     const unrealized = energyGrossPnl(pos.action, Number(pos.entry_spread || 0), currentSpread, Number(pos.mwh || 0)) -
       Number(state.config?.variable_cost_per_mwh || ENERGY_VARIABLE_COST_PER_MWH) * Math.abs(Number(pos.mwh || 0));
-    if (due || unrealized >= Number(state.config?.take_profit_usd || 900) || unrealized <= -Number(state.config?.stop_loss_usd || 450)) {
-      await settleEnergyPosition(env, state, pos, currentSpread, due ? '到期结算' : (unrealized > 0 ? '止盈结算' : '止损结算'));
+    const mtmPath = Array.isArray(pos.mtm_path) ? pos.mtm_path : [];
+    mtmPath.push({
+      ts: energyIso(now),
+      price_spread: currentSpread,
+      unrealized_pnl_usd: Number(unrealized.toFixed(2)),
+      pnl_pct_of_trade: Number((unrealized / Math.max(Number(pos.entry_trade_value_usd || state.config?.fixed_trade_usd || 1), 1)).toFixed(4)),
+    });
+    const nextPos = { ...pos, mtm_path: mtmPath.slice(-240), unrealized_pnl_usd: unrealized };
+    const takeProfit = Number(pos.take_profit_usd || activeRisk.take_profit_usd || state.config?.take_profit_usd || 900);
+    const stopLoss = Number(pos.stop_loss_usd || activeRisk.stop_loss_usd || state.config?.stop_loss_usd || 450);
+    if (due || unrealized >= takeProfit || unrealized <= -stopLoss) {
+      await settleEnergyPosition(env, state, nextPos, currentSpread, due ? '到期结算' : (unrealized > 0 ? '止盈结算' : '止损结算'));
       settled += 1;
     } else {
-      remaining.push({ ...pos, unrealized_pnl_usd: unrealized });
+      remaining.push(nextPos);
     }
   }
   state.open_positions = remaining;
@@ -504,6 +804,7 @@ async function energyTick(env: Env, state: any, forceSettle = false) {
         await openEnergyPosition(env, state, row);
         opened += 1;
       } else {
+        const segment = energySegmentStats(state, row);
         await insertEnergyTrade(env, state.user_id, {
           ts: energyIso(now),
           event: 'SKIP',
@@ -517,6 +818,10 @@ async function energyTick(env: Env, state: any, forceSettle = false) {
           entry_trade_value_usd: 0,
           exit_trade_value_usd: 0,
           net_pnl_usd: 0,
+          segment_count: segment.count,
+          segment_win_rate: Number(segment.win_rate.toFixed(4)),
+          segment_expectancy_usd: Number(segment.expectancy_usd.toFixed(2)),
+          segment_profit_factor: Number(segment.profit_factor.toFixed(3)),
           reason,
         });
         state.seen_decision_ids.push(String(row.decision_id));
@@ -534,6 +839,8 @@ async function energyTradingDashboard(request: Request, env: Env, url: URL) {
   markEnergyEquity(state);
   const unrealizedPnl = energyUnrealizedPnl(state);
   const trades = await recentEnergyTrades(env, userId, 120);
+  const riskOptimization = energyRiskOptimization(state);
+  const winRateDiagnostics = energyWinRateDiagnostics(state);
   return json({
     ok: true,
     online_backend: Boolean(env.ENERGY_TRADING_DB),
@@ -564,6 +871,8 @@ async function energyTradingDashboard(request: Request, env: Env, url: URL) {
     },
     account: state,
     recent_trades: trades,
+    risk_optimization: riskOptimization,
+    win_rate_diagnostics: winRateDiagnostics,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
@@ -574,6 +883,8 @@ async function energyTradingHistory(request: Request, env: Env, url: URL) {
   markEnergyEquity(state);
   const unrealizedPnl = energyUnrealizedPnl(state);
   const trades = await recentEnergyTrades(env, userId, limit);
+  const riskOptimization = energyRiskOptimization(state);
+  const winRateDiagnostics = energyWinRateDiagnostics(state);
   return json(
     {
       ok: true,
@@ -590,6 +901,8 @@ async function energyTradingHistory(request: Request, env: Env, url: URL) {
         closed_trades: (state.closed_trades || []).length,
       },
       records: trades,
+      risk_optimization: riskOptimization,
+      win_rate_diagnostics: winRateDiagnostics,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );

@@ -22,6 +22,12 @@ type EnergyTrade = {
   entry_trade_value_usd?: number;
   exit_trade_value_usd?: number;
   net_pnl_usd?: number;
+  pnl_pct_of_trade?: number;
+  stop_loss_usd?: number;
+  take_profit_usd?: number;
+  risk_source?: string;
+  segment_expectancy_usd?: number;
+  segment_profit_factor?: number;
   reason?: string;
 };
 
@@ -64,6 +70,49 @@ type Dashboard = {
     config?: Record<string, unknown>;
   };
   recent_trades: EnergyTrade[];
+  risk_optimization?: {
+    status?: string;
+    message?: string;
+    sample_count?: number;
+    path_quality?: string;
+    recommended?: {
+      stop_loss_usd?: number;
+      take_profit_usd?: number;
+      stop_loss_pct?: number;
+      take_profit_pct?: number;
+      simulated_net_pnl_usd?: number;
+      simulated_win_rate?: number;
+      profit_factor?: number;
+      max_drawdown_usd?: number;
+      path_coverage?: number;
+    };
+    top_candidates?: Array<{
+      stop_loss_usd?: number;
+      take_profit_usd?: number;
+      stop_loss_pct?: number;
+      take_profit_pct?: number;
+      simulated_net_pnl_usd?: number;
+      simulated_win_rate?: number;
+      profit_factor?: number;
+      max_drawdown_usd?: number;
+    }>;
+  };
+  win_rate_diagnostics?: {
+    sample_count?: number;
+    wins?: number;
+    losses?: number;
+    win_rate?: number;
+    net_pnl_usd?: number;
+    avg_win_usd?: number;
+    avg_loss_usd?: number;
+    payoff_ratio?: number;
+    profit_factor?: number;
+    causes?: string[];
+    recommendations?: string[];
+    by_horizon?: Array<Record<string, unknown>>;
+    by_action?: Array<Record<string, unknown>>;
+    by_source?: Array<Record<string, unknown>>;
+  };
 };
 
 const COPY: Record<Locale, {
@@ -283,6 +332,10 @@ const reasonText: Record<string, string> = {
   '预测功率不足': '预测功率不足',
   '置信等级不足': '置信等级不足',
   '没有可执行方向': '没有可执行方向',
+  '该信号源历史期望为负': '该信号源历史期望为负',
+  '模拟止盈': '模拟止盈',
+  '模拟止损': '模拟止损',
+  '粗略截断估计': '粗略截断估计',
 };
 
 function money(value?: number) {
@@ -292,6 +345,10 @@ function money(value?: number) {
 
 function num(value?: number, digits = 2) {
   return Number(value || 0).toFixed(digits);
+}
+
+function pct(value?: number) {
+  return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
 function text(value?: string) {
@@ -362,6 +419,8 @@ export default function EnergyTradingPage({ locale }: Props) {
 
   const trades = dashboard?.recent_trades || [];
   const decisions = dashboard?.decisions || [];
+  const risk = dashboard?.risk_optimization;
+  const diag = dashboard?.win_rate_diagnostics;
 
   return (
     <div className="min-h-full bg-[#0b1512] px-5 py-6 pb-14 text-slate-100">
@@ -444,6 +503,85 @@ export default function EnergyTradingPage({ locale }: Props) {
         </div>
       </section>
 
+      <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-black text-white">止盈/止损优化与胜率归因</h2>
+            <p className="mt-2 text-sm leading-6 text-emerald-50/60">
+              系统会记录开仓、跳过、逐轮浮盈路径和平仓结果；有足够样本后，用真实结算路径扫描每笔交易金额对应的最佳止损/止盈。
+            </p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/12 bg-black/20 px-4 py-3 text-xs text-emerald-50/70">
+            样本：{risk?.sample_count ?? 0} · 路径质量：{risk?.path_quality || '-'}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/25 p-4">
+            <p className="text-xs font-bold text-emerald-50/45">推荐单笔止损</p>
+            <p className="mt-2 text-2xl font-black text-white">{money(risk?.recommended?.stop_loss_usd)}</p>
+            <p className="mt-1 text-xs text-emerald-50/50">约 {pct(risk?.recommended?.stop_loss_pct)} / 单次金额</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/25 p-4">
+            <p className="text-xs font-bold text-emerald-50/45">推荐单笔止盈</p>
+            <p className="mt-2 text-2xl font-black text-white">{money(risk?.recommended?.take_profit_usd)}</p>
+            <p className="mt-1 text-xs text-emerald-50/50">约 {pct(risk?.recommended?.take_profit_pct)} / 单次金额</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/25 p-4">
+            <p className="text-xs font-bold text-emerald-50/45">扫描后模拟净收益</p>
+            <p className={`mt-2 text-2xl font-black ${(risk?.recommended?.simulated_net_pnl_usd || 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>
+              {money(risk?.recommended?.simulated_net_pnl_usd)}
+            </p>
+            <p className="mt-1 text-xs text-emerald-50/50">Profit factor {num(risk?.recommended?.profit_factor, 2)}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/25 p-4">
+            <p className="text-xs font-bold text-emerald-50/45">当前真实胜率 / 盈亏比</p>
+            <p className="mt-2 text-2xl font-black text-white">{pct(diag?.win_rate)} / {num(diag?.payoff_ratio, 2)}</p>
+            <p className="mt-1 text-xs text-emerald-50/50">胜 {diag?.wins || 0} · 负 {diag?.losses || 0}</p>
+          </div>
+        </div>
+        {risk?.message ? <p className="mt-3 text-sm text-amber-200/80">{risk.message}</p> : null}
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/20 p-4">
+            <h3 className="text-sm font-black text-white">低胜率可能原因</h3>
+            <div className="mt-3 space-y-2 text-sm text-emerald-50/68">
+              {(diag?.causes || ['暂无足够样本。']).map((item, index) => <p key={`${item}-${index}`}>· {item}</p>)}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/20 p-4">
+            <h3 className="text-sm font-black text-white">自动优化动作</h3>
+            <div className="mt-3 space-y-2 text-sm text-emerald-50/68">
+              {(diag?.recommendations || ['继续记录真实模拟交易路径。']).map((item, index) => <p key={`${item}-${index}`}>· {item}</p>)}
+              <p>· 若某个信号周期+方向的历史期望转负，后端会自动拦截该类新开仓。</p>
+            </div>
+          </div>
+        </div>
+        {(risk?.top_candidates || []).length ? (
+          <div className="mt-4 overflow-auto rounded-2xl border border-emerald-200/10 bg-black/20">
+            <table className="min-w-[760px] w-full text-left text-xs">
+              <thead className="text-emerald-50/45">
+                <tr>
+                  {['止损', '止盈', '模拟净收益', '模拟胜率', 'Profit factor', '最大回撤'].map((head) => (
+                    <th key={head} className="border-b border-emerald-200/10 px-3 py-2 font-black">{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(risk?.top_candidates || []).slice(0, 5).map((row, index) => (
+                  <tr key={`${row.stop_loss_usd}-${row.take_profit_usd}-${index}`} className="border-b border-emerald-200/8">
+                    <td className="px-3 py-2">{money(row.stop_loss_usd)} ({pct(row.stop_loss_pct)})</td>
+                    <td className="px-3 py-2">{money(row.take_profit_usd)} ({pct(row.take_profit_pct)})</td>
+                    <td className="px-3 py-2">{money(row.simulated_net_pnl_usd)}</td>
+                    <td className="px-3 py-2">{pct(row.simulated_win_rate)}</td>
+                    <td className="px-3 py-2">{num(row.profit_factor, 2)}</td>
+                    <td className="px-3 py-2">{money(row.max_drawdown_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
       <section className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.6fr]">
         <div className="rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
           <h2 className="text-xl font-black text-white">{copy.latestSignals}</h2>
@@ -463,7 +601,7 @@ export default function EnergyTradingPage({ locale }: Props) {
             <table className="min-w-[1280px] w-full text-left text-sm">
               <thead className="text-xs text-emerald-50/45">
                 <tr>
-                  {[copy.time, copy.event, copy.horizon, copy.source, copy.node, copy.action, copy.loop, copy.spread, copy.mwh, copy.entryAmount, copy.exitAmount, copy.netPnl, copy.reason].map((head) => (
+                  {[copy.time, copy.event, copy.horizon, copy.source, copy.node, copy.action, copy.loop, copy.spread, copy.mwh, copy.entryAmount, copy.exitAmount, copy.netPnl, '盈亏%', '风险参数', copy.reason].map((head) => (
                     <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>
                   ))}
                 </tr>
@@ -483,6 +621,8 @@ export default function EnergyTradingPage({ locale }: Props) {
                     <td className="px-3 py-3">{money(row.entry_trade_value_usd)}</td>
                     <td className="px-3 py-3">{money(row.exit_trade_value_usd)}</td>
                     <td className={`px-3 py-3 font-black ${(row.net_pnl_usd || 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.net_pnl_usd)}</td>
+                    <td className="px-3 py-3">{pct(row.pnl_pct_of_trade)}</td>
+                    <td className="px-3 py-3">止损 {money(row.stop_loss_usd)} / 止盈 {money(row.take_profit_usd)}{row.risk_source ? ` · ${row.risk_source}` : ''}</td>
                     <td className="px-3 py-3">{text(row.reason)}</td>
                   </tr>
                 ))}
