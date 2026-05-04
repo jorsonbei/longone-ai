@@ -19,6 +19,7 @@ interface SidebarProps {
   onOpenHFCD: () => void;
   onOpenFootball: () => void;
   onOpenEnergyTrading: () => void;
+  onOpenMarketTrading: () => void;
   onOpenAdmin: () => void;
   canAccessAdmin: boolean;
   onDeleteChat: (id: string) => void;
@@ -30,7 +31,7 @@ interface SidebarProps {
   onChangeLocale: (locale: Locale) => void;
 }
 
-function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenEnergyTrading, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
+function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOfficialSite, onOpenHFCD, onOpenFootball, onOpenEnergyTrading, onOpenMarketTrading, onOpenAdmin, canAccessAdmin, onDeleteChat, onRenameChat, onOpenSettings, onLogOut, ui, locale, onChangeLocale }: SidebarProps) {
   const { user } = useAuth();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState('');
@@ -71,6 +72,15 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
     vi: { title: 'Giao dịch AI năng lượng', subtitle: 'Mô phỏng paper trading' },
     de: { title: 'KI-Energiehandel', subtitle: 'Paper-Trading-Sandbox' },
     ja: { title: 'AIエネルギー取引', subtitle: 'ペーパートレード検証' },
+  };
+  const marketTradingLabelByLocale: Record<Locale, { title: string; subtitle: string }> = {
+    en: { title: 'Multi-Market AI', subtitle: 'Crypto, ETF, gold paper trading' },
+    zh: { title: '多市场 AI 交易', subtitle: '加密、股票、黄金模拟交易' },
+    fr: { title: 'IA multi-marchés', subtitle: 'Crypto, ETF, or en simulation' },
+    es: { title: 'IA multimercado', subtitle: 'Cripto, ETF y oro simulado' },
+    vi: { title: 'AI da thi truong', subtitle: 'Crypto, ETF, vang mo phong' },
+    de: { title: 'Multi-Markt-KI', subtitle: 'Crypto, ETF, Gold Paper Trading' },
+    ja: { title: 'マルチ市場AI', subtitle: '暗号資産・ETF・金の模擬取引' },
   };
 
   const handleEdit = (chat: ChatSession, e: React.MouseEvent) => {
@@ -142,6 +152,17 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <div className="flex flex-col">
               <span className="text-sm font-semibold text-slate-100">{energyTradingLabelByLocale[locale].title}</span>
               <span className="text-[11px] text-slate-500">{energyTradingLabelByLocale[locale].subtitle}</span>
+            </div>
+          </button>
+        ) : null}
+        {canAccessAdmin ? (
+          <button onClick={onOpenMarketTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(34,211,238,0.14),rgba(34,211,238,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(34,211,238,0.20),rgba(34,211,238,0.08))]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-100 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              <Activity className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-100">{marketTradingLabelByLocale[locale].title}</span>
+              <span className="text-[11px] text-slate-500">{marketTradingLabelByLocale[locale].subtitle}</span>
             </div>
           </button>
         ) : null}

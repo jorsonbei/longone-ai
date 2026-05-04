@@ -23,6 +23,7 @@ import { HFCDWorkbench } from './components/HFCDWorkbench';
 import { FootballPredictor } from './components/FootballPredictor';
 import EnergyRuntimePage from './components/EnergyRuntimePage';
 import EnergyTradingPage from './components/EnergyTradingPage';
+import MultiMarketTradingPage from './components/MultiMarketTradingPage';
 import { analyzeWuxingInput } from './lib/wuxingKernel';
 import { useWuxingRecords } from './hooks/useWuxingRecords';
 import { useLocale } from './hooks/useLocale';
@@ -30,7 +31,7 @@ import { getUiText } from './content/uiText';
 import { getOfficialSiteContent } from './content/officialSiteContent';
 import { LOCALE_OPTIONS, type Locale } from './lib/locale';
 
-type ActiveView = 'chat' | 'official-site' | 'admin' | 'hfcd' | 'football' | 'energy' | 'energy-trading';
+type ActiveView = 'chat' | 'official-site' | 'admin' | 'hfcd' | 'football' | 'energy' | 'energy-trading' | 'market-trading';
 
 function normalizeActiveView(value: string | null): ActiveView | null {
   if (
@@ -39,7 +40,8 @@ function normalizeActiveView(value: string | null): ActiveView | null {
     value === 'hfcd' ||
     value === 'football' ||
     value === 'energy' ||
-    value === 'energy-trading'
+    value === 'energy-trading' ||
+    value === 'market-trading'
   ) {
     return value;
   }
@@ -69,6 +71,7 @@ function getHashActiveView(hash: string): ActiveView | null {
   if (value === 'football' || value === 'football-predictor') return 'football';
   if (value === 'energy' || value === 'energy-runtime' || value === 'new-energy') return 'energy';
   if (value === 'energy-trading' || value === 'ai-energy-trading' || value === 'energy-paper-trading') return 'energy-trading';
+  if (value === 'market-trading' || value === 'multi-market-trading' || value === 'ai-market-trading') return 'market-trading';
   if (value === 'hfcd' || value === 'risk-diagnosis') return 'hfcd';
   if (value === 'admin') return 'admin';
 
@@ -255,7 +258,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeView === 'energy-trading' && !isAdmin) {
+    if ((activeView === 'energy-trading' || activeView === 'market-trading') && !isAdmin) {
       setActiveView('chat');
     }
   }, [activeView, isAdmin]);
@@ -328,6 +331,22 @@ export default function App() {
       setMeta('og:description', energyTradingDescription, 'property');
       setMeta('twitter:title', energyTradingTitle);
       setMeta('twitter:description', energyTradingDescription);
+      return;
+    }
+
+    if (activeView === 'market-trading') {
+      const marketTradingTitle = locale === 'zh'
+        ? `多市场 AI 交易 | ${ui.brand.appTitle}`
+        : `HFCD Multi-Market AI Trading | ${ui.brand.appTitle}`;
+      const marketTradingDescription = locale === 'zh'
+        ? 'BTC、ETH、SPY、QQQ、GLD 多市场 AI 模拟交易、paper-trading 账户和信号审计。'
+        : 'HFCD multi-market AI paper trading for BTC, ETH, SPY, QQQ, and GLD.';
+      document.title = marketTradingTitle;
+      setMeta('description', marketTradingDescription);
+      setMeta('og:title', marketTradingTitle, 'property');
+      setMeta('og:description', marketTradingDescription, 'property');
+      setMeta('twitter:title', marketTradingTitle);
+      setMeta('twitter:description', marketTradingDescription);
       return;
     }
 
@@ -655,6 +674,7 @@ export default function App() {
           onOpenHFCD={() => setActiveView('hfcd')}
           onOpenFootball={() => setActiveView('football')}
           onOpenEnergyTrading={() => setActiveView('energy-trading')}
+          onOpenMarketTrading={() => setActiveView('market-trading')}
           onOpenAdmin={() => setActiveView('admin')}
           canAccessAdmin={isAdmin}
           onDeleteChat={deleteChat}
@@ -667,7 +687,7 @@ export default function App() {
         />
 
         {/* Main Content */}
-        <main className={`flex-1 flex flex-col h-full min-h-0 relative bg-[#13151A] ${activeView === 'energy-trading' ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
+        <main className={`flex-1 flex flex-col h-full min-h-0 relative bg-[#13151A] ${activeView === 'energy-trading' || activeView === 'market-trading' ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
           
           {/* Header */}
           <header className="h-16 flex items-center justify-between px-6 border-none bg-transparent sticky top-0 z-10">
@@ -930,6 +950,8 @@ export default function App() {
             <EnergyRuntimePage />
           ) : activeView === 'energy-trading' && isAdmin ? (
             <EnergyTradingPage locale={locale} />
+          ) : activeView === 'market-trading' && isAdmin ? (
+            <MultiMarketTradingPage locale={locale} />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard
               userEmail={user?.email}

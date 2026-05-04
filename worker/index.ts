@@ -965,6 +965,471 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
   return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
+const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
+const MARKET_SYMBOLS = [
+  { symbol: 'BTC-USD', name: 'Bitcoin', asset_class: 'crypto', session: '24h' },
+  { symbol: 'ETH-USD', name: 'Ethereum', asset_class: 'crypto', session: '24h' },
+  { symbol: 'SPY', name: 'S&P 500 ETF', asset_class: 'equity_etf', session: 'us_regular' },
+  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', asset_class: 'equity_etf', session: 'us_regular' },
+  { symbol: 'GLD', name: 'Gold ETF', asset_class: 'gold_proxy', session: 'us_regular' },
+];
+const MARKET_FEE_RATE = 0.0006;
+
+function marketUserId(request: Request, url: URL, body?: any) {
+  return energyUserId(request, url, body).replace(/^energy_/, 'market_') || 'wuxing_market_user';
+}
+
+function defaultMarketAccount(userId: string, body: any = {}) {
+  const capital = Number(body.capital_usd || body.capital || 100_000);
+  return {
+    version: MARKET_TRADING_VERSION,
+    user_id: userId,
+    mode: 'stopped',
+    started_at: '',
+    stopped_at: '',
+    initial_cash_usd: capital,
+    realized_pnl_usd: 0,
+    equity_usd: capital,
+    peak_equity_usd: capital,
+    max_drawdown_usd: 0,
+    open_positions: [] as any[],
+    closed_trades: [] as any[],
+    seen_signal_ids: [] as string[],
+    config: {
+      fixed_trade_usd: Number(body.fixed_trade_usd || 1_000),
+      max_open_positions: Number(body.max_open_positions || 8),
+      max_symbol_positions: Number(body.max_symbol_positions || 2),
+      stop_loss_pct: Number(body.stop_loss_pct || 0.018),
+      take_profit_pct: Number(body.take_profit_pct || 0.036),
+      min_signal_score: Number(body.min_signal_score || 0.72),
+      max_holding_minutes: Number(body.max_holding_minutes || 360),
+      strategy: String(body.strategy || 'hfcd_stability_momentum'),
+    },
+  };
+}
+
+async function ensureMarketTradingDb(env: Env) {
+  const db = env.ENERGY_TRADING_DB;
+  if (!db) return null;
+  await db.prepare(
+    'CREATE TABLE IF NOT EXISTS market_accounts (user_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, updated_at TEXT NOT NULL)',
+  ).run();
+  await db.prepare(
+    'CREATE TABLE IF NOT EXISTS market_trades (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, ts TEXT NOT NULL, event TEXT NOT NULL, raw_json TEXT NOT NULL)',
+  ).run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_market_trades_user_ts ON market_trades(user_id, ts DESC)').run();
+  return db;
+}
+
+async function loadMarketAccount(env: Env, userId: string) {
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return defaultMarketAccount(userId);
+  const row = await db.prepare('SELECT state_json FROM market_accounts WHERE user_id = ?').bind(userId).first();
+  if (!row?.state_json) return defaultMarketAccount(userId);
+  try {
+    return JSON.parse(String(row.state_json));
+  } catch {
+    return defaultMarketAccount(userId);
+  }
+}
+
+async function saveMarketAccount(env: Env, state: any) {
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return;
+  await db
+    .prepare('INSERT OR REPLACE INTO market_accounts (user_id, state_json, updated_at) VALUES (?, ?, ?)')
+    .bind(state.user_id, JSON.stringify(state), energyIso())
+    .run();
+}
+
+async function insertMarketTrade(env: Env, userId: string, row: any) {
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return;
+  const id = row.id || `${userId}-${row.ts}-${row.event}-${row.position_id || row.signal_id || Math.random()}`;
+  await db
+    .prepare('INSERT OR REPLACE INTO market_trades (id, user_id, ts, event, raw_json) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, userId, row.ts, row.event, JSON.stringify({ ...row, id }))
+    .run();
+}
+
+async function recentMarketTrades(env: Env, userId: string, limit = 100) {
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return [];
+  const rows = await db
+    .prepare('SELECT raw_json FROM market_trades WHERE user_id = ? ORDER BY ts DESC LIMIT ?')
+    .bind(userId, limit)
+    .all();
+  return (rows.results || []).map((row: any) => {
+    try {
+      return JSON.parse(String(row.raw_json));
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+}
+
+function marketStd(values: number[]) {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(Math.max(variance, 0));
+}
+
+function fallbackMarketSeries(symbol: string) {
+  const meta = MARKET_SYMBOLS.find((row) => row.symbol === symbol) || MARKET_SYMBOLS[0];
+  const base = symbol === 'BTC-USD' ? 64000 : symbol === 'ETH-USD' ? 3200 : symbol === 'SPY' ? 520 : symbol === 'QQQ' ? 440 : 210;
+  const now = Date.now();
+  const rows = Array.from({ length: 96 }, (_, index) => {
+    const t = now - (95 - index) * 5 * 60000;
+    const wave = Math.sin(t / 3600000 + symbol.length) * 0.012 + Math.sin(t / 86400000 + symbol.charCodeAt(0)) * 0.018;
+    return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(4)) };
+  });
+  return { ...meta, source: 'fallback_simulated', rows };
+}
+
+async function fetchYahooMarketSeries(symbol: string) {
+  const meta = MARKET_SYMBOLS.find((row) => row.symbol === symbol) || MARKET_SYMBOLS[0];
+  try {
+    const response = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=2d&interval=5m`,
+      {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'HFCD-ThingNature-OS/1.0',
+        },
+      },
+    );
+    if (!response.ok) throw new Error(`Yahoo ${symbol} ${response.status}`);
+    const payload: any = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp || [];
+    const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close || [];
+    const rows = timestamps.map((ts, index) => ({
+      ts: new Date(ts * 1000).toISOString(),
+      close: closes[index] === null ? NaN : Number(closes[index]),
+    })).filter((row) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length < 20) throw new Error(`Yahoo ${symbol} insufficient rows`);
+    return { ...meta, source: 'yahoo_chart', rows };
+  } catch {
+    return fallbackMarketSeries(symbol);
+  }
+}
+
+function buildMarketSignal(series: any) {
+  const rows = series.rows || [];
+  const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
+  const last = closes[closes.length - 1] || 0;
+  const prev = closes[closes.length - 2] || last;
+  const shortBase = closes[Math.max(0, closes.length - 7)] || prev;
+  const longBase = closes[Math.max(0, closes.length - 25)] || shortBase;
+  const returns = closes.slice(-36).map((value: number, index: number, arr: number[]) => index === 0 ? 0 : value / arr[index - 1] - 1).slice(1);
+  const vol = Math.max(marketStd(returns), 0.0008);
+  const r1 = last / prev - 1;
+  const r6 = last / shortBase - 1;
+  const r24 = last / longBase - 1;
+  const trendScore = Math.max(-1.4, Math.min(1.4, (0.45 * r1 + 0.35 * r6 + 0.2 * r24) / vol));
+  const action = trendScore >= 0.72 ? 'BUY_LONG' : trendScore <= -0.72 ? 'SELL_SHORT' : 'NO_TRADE';
+  const absScore = Math.abs(trendScore);
+  const confidence = Math.max(0, Math.min(0.99, 0.45 + absScore * 0.25));
+  const latestTs = rows[rows.length - 1]?.ts || energyIso();
+  return {
+    signal_id: `${series.symbol}-${Math.floor(new Date(latestTs).getTime() / 300000)}-${action}`,
+    captured_at: latestTs,
+    symbol: series.symbol,
+    name: series.name,
+    asset_class: series.asset_class,
+    session: series.session,
+    price: Number(last.toFixed(series.symbol.includes('-USD') ? 2 : 4)),
+    action,
+    score: Number(absScore.toFixed(4)),
+    signed_score: Number(trendScore.toFixed(4)),
+    confidence: Number(confidence.toFixed(4)),
+    realized_vol_5m: Number(vol.toFixed(6)),
+    r1: Number(r1.toFixed(6)),
+    r6: Number(r6.toFixed(6)),
+    r24: Number(r24.toFixed(6)),
+    source: series.source,
+    status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
+    reject_reason: action === 'NO_TRADE' ? 'signal_underthreshold' : '',
+  };
+}
+
+async function buildMarketSignals() {
+  const seriesList = await Promise.all(MARKET_SYMBOLS.map((row) => fetchYahooMarketSeries(row.symbol)));
+  const signals = seriesList.map(buildMarketSignal);
+  return {
+    generated_at: energyIso(),
+    source_status: signals.every((signal) => signal.source === 'yahoo_chart') ? 'live_public_market_data' : 'mixed_or_fallback',
+    signals,
+  };
+}
+
+function marketPositionPnl(pos: any, currentPrice: number) {
+  const qty = Math.abs(Number(pos.quantity || 0));
+  if (pos.side === 'long') return (currentPrice - Number(pos.entry_price || 0)) * qty;
+  if (pos.side === 'short') return (Number(pos.entry_price || 0) - currentPrice) * qty;
+  return 0;
+}
+
+function markMarketEquity(state: any, signals: any[] = []) {
+  let unrealized = 0;
+  for (const pos of state.open_positions || []) {
+    const signal = signals.find((row) => row.symbol === pos.symbol);
+    const price = Number(signal?.price || pos.last_price || pos.entry_price || 0);
+    const pnl = marketPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    pos.last_price = price;
+    pos.unrealized_pnl_usd = Number(pnl.toFixed(2));
+    unrealized += pnl;
+  }
+  state.unrealized_pnl_usd = Number(unrealized.toFixed(2));
+  state.equity_usd = Number((Number(state.initial_cash_usd || 0) + Number(state.realized_pnl_usd || 0) + unrealized).toFixed(2));
+  state.peak_equity_usd = Math.max(Number(state.peak_equity_usd || state.equity_usd), state.equity_usd);
+  state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), state.equity_usd - Number(state.peak_equity_usd || state.equity_usd));
+}
+
+async function openMarketPosition(env: Env, state: any, signal: any) {
+  const notional = Math.min(Number(state.config?.fixed_trade_usd || 1000), Number(state.equity_usd || state.initial_cash_usd || 0) * 0.2);
+  const quantity = notional / Math.max(Number(signal.price || 0), 0.0001);
+  const side = signal.action === 'SELL_SHORT' ? 'short' : 'long';
+  const fee = notional * MARKET_FEE_RATE;
+  const pos = {
+    position_id: `MT-${Date.now()}-${signal.symbol}`,
+    signal_id: signal.signal_id,
+    opened_at: energyIso(),
+    target_exit_at: energyIso(new Date(Date.now() + Number(state.config?.max_holding_minutes || 360) * 60000)),
+    symbol: signal.symbol,
+    name: signal.name,
+    asset_class: signal.asset_class,
+    side,
+    action: signal.action,
+    entry_price: signal.price,
+    last_price: signal.price,
+    quantity,
+    notional_usd: notional,
+    estimated_fee_usd: fee,
+    stop_loss_usd: notional * Number(state.config?.stop_loss_pct || 0.018),
+    take_profit_usd: notional * Number(state.config?.take_profit_pct || 0.036),
+    score: signal.score,
+    confidence: signal.confidence,
+    source: signal.source,
+    status: 'open',
+  };
+  state.open_positions.push(pos);
+  state.seen_signal_ids.push(String(signal.signal_id));
+  const trade = {
+    ts: energyIso(),
+    event: 'OPEN',
+    position_id: pos.position_id,
+    signal_id: signal.signal_id,
+    symbol: signal.symbol,
+    asset_class: signal.asset_class,
+    side,
+    action: signal.action,
+    price: signal.price,
+    quantity,
+    trade_value_usd: notional,
+    net_pnl_usd: 0,
+    score: signal.score,
+    confidence: signal.confidence,
+    source: signal.source,
+    reason: 'AI按达标信号开仓',
+  };
+  await insertMarketTrade(env, state.user_id, trade);
+  return trade;
+}
+
+async function closeMarketPosition(env: Env, state: any, pos: any, exitPrice: number, reason: string) {
+  const gross = marketPositionPnl(pos, exitPrice);
+  const fee = Number(pos.notional_usd || 0) * MARKET_FEE_RATE;
+  const net = gross - Number(pos.estimated_fee_usd || 0) - fee;
+  state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
+  const trade = {
+    ts: energyIso(),
+    event: 'CLOSE',
+    position_id: pos.position_id,
+    signal_id: pos.signal_id,
+    symbol: pos.symbol,
+    asset_class: pos.asset_class,
+    side: pos.side,
+    action: pos.side === 'long' ? 'SELL_TO_CLOSE' : 'BUY_TO_COVER',
+    entry_price: pos.entry_price,
+    exit_price: exitPrice,
+    quantity: pos.quantity,
+    trade_value_usd: Math.abs(exitPrice * Number(pos.quantity || 0)),
+    gross_pnl_usd: Number(gross.toFixed(2)),
+    cost_usd: Number((Number(pos.estimated_fee_usd || 0) + fee).toFixed(2)),
+    net_pnl_usd: Number(net.toFixed(2)),
+    score: pos.score,
+    confidence: pos.confidence,
+    source: pos.source,
+    reason,
+  };
+  state.closed_trades.push({ ...pos, ...trade, status: 'closed' });
+  await insertMarketTrade(env, state.user_id, trade);
+  return trade;
+}
+
+function canOpenMarketPosition(signal: any, state: any) {
+  if (state.mode !== 'running') return 'AI未运行';
+  if (signal.action === 'NO_TRADE') return '信号未达交易标准';
+  if (Number(signal.score || 0) < Number(state.config?.min_signal_score || 0.72)) return '稳定分数不足';
+  if ((state.open_positions || []).length >= Number(state.config?.max_open_positions || 8)) return '达到最大持仓数';
+  const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
+  if (sameSymbol >= Number(state.config?.max_symbol_positions || 2)) return '单标的持仓数已满';
+  if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) return '本轮信号已处理';
+  if (signal.source !== 'yahoo_chart') return '行情源为回退模拟，暂不交易';
+  return '';
+}
+
+async function marketTradingTickInternal(env: Env, state: any, forceClose = false) {
+  const snapshot = await buildMarketSignals();
+  const signals = snapshot.signals || [];
+  const remaining: any[] = [];
+  let opened = 0;
+  let closed = 0;
+  for (const pos of state.open_positions || []) {
+    const signal = signals.find((row: any) => row.symbol === pos.symbol);
+    const price = Number(signal?.price || pos.last_price || pos.entry_price);
+    const pnl = marketPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
+    if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
+      const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
+      await closeMarketPosition(env, state, pos, price, reason);
+      closed += 1;
+    } else {
+      remaining.push({ ...pos, last_price: price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
+    }
+  }
+  state.open_positions = remaining;
+  markMarketEquity(state, signals);
+  if (!forceClose && state.mode === 'running') {
+    const candidates = [...signals].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    for (const signal of candidates) {
+      const reason = canOpenMarketPosition(signal, state);
+      if (!reason) {
+        await openMarketPosition(env, state, signal);
+        opened += 1;
+      } else {
+        await insertMarketTrade(env, state.user_id, {
+          ts: energyIso(),
+          event: 'SKIP',
+          signal_id: signal.signal_id,
+          symbol: signal.symbol,
+          asset_class: signal.asset_class,
+          action: signal.action,
+          price: signal.price,
+          trade_value_usd: 0,
+          net_pnl_usd: 0,
+          score: signal.score,
+          confidence: signal.confidence,
+          source: signal.source,
+          reason,
+        });
+        state.seen_signal_ids.push(String(signal.signal_id));
+      }
+    }
+  }
+  markMarketEquity(state, signals);
+  return { snapshot, opened, closed };
+}
+
+function marketWinRate(state: any) {
+  const trades = (state.closed_trades || []).filter((row: any) => Number.isFinite(Number(row.net_pnl_usd)));
+  if (!trades.length) return 0;
+  return trades.filter((row: any) => Number(row.net_pnl_usd || 0) > 0).length / trades.length;
+}
+
+async function marketTradingDashboard(request: Request, env: Env, url: URL) {
+  const userId = marketUserId(request, url);
+  const state = await loadMarketAccount(env, userId);
+  const snapshot = await buildMarketSignals();
+  markMarketEquity(state, snapshot.signals);
+  const trades = await recentMarketTrades(env, userId, 120);
+  return json({
+    ok: true,
+    online_backend: Boolean(env.ENERGY_TRADING_DB),
+    db_status: env.ENERGY_TRADING_DB ? 'd1_bound' : 'not_configured',
+    version: MARKET_TRADING_VERSION,
+    updated_at: energyIso(),
+    market_health: {
+      ok: snapshot.source_status === 'live_public_market_data',
+      status: snapshot.source_status,
+      latest_captured_at: snapshot.generated_at,
+      symbols: MARKET_SYMBOLS.map((row) => row.symbol),
+      note: 'BTC/ETH/SPY/QQQ/GLD 使用 Yahoo Finance 公共行情快照；失败时会标记 fallback，不执行交易。',
+    },
+    signals: snapshot.signals,
+    summary: {
+      mode: state.mode,
+      initial_cash_usd: state.initial_cash_usd,
+      equity_usd: state.equity_usd,
+      realized_pnl_usd: state.realized_pnl_usd,
+      unrealized_pnl_usd: state.unrealized_pnl_usd || 0,
+      open_positions: (state.open_positions || []).length,
+      max_open_positions: state.config?.max_open_positions || 8,
+      closed_trades: (state.closed_trades || []).length,
+      win_rate: marketWinRate(state),
+      max_drawdown_usd: state.max_drawdown_usd || 0,
+      config: state.config,
+    },
+    positions: state.open_positions || [],
+    recent_trades: trades,
+  }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function marketTradingStart(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = marketUserId(request, url, body);
+  const existing = await loadMarketAccount(env, userId);
+  const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
+  const state = body?.reset_account || isFresh ? defaultMarketAccount(userId, body) : existing;
+  state.config = {
+    ...(state.config || {}),
+    fixed_trade_usd: Number(body.fixed_trade_usd || state.config?.fixed_trade_usd || 1_000),
+    max_open_positions: Number(body.max_open_positions || state.config?.max_open_positions || 8),
+    stop_loss_pct: Number(body.stop_loss_pct || state.config?.stop_loss_pct || 0.018),
+    take_profit_pct: Number(body.take_profit_pct || state.config?.take_profit_pct || 0.036),
+    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || 0.72),
+    max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 360),
+    strategy: String(body.strategy || state.config?.strategy || 'hfcd_stability_momentum'),
+  };
+  if (body.capital_usd && isFresh) {
+    state.initial_cash_usd = Number(body.capital_usd);
+    state.realized_pnl_usd = 0;
+    state.equity_usd = Number(body.capital_usd);
+    state.peak_equity_usd = Number(body.capital_usd);
+  }
+  state.mode = 'running';
+  state.started_at = state.started_at || energyIso();
+  state.stopped_at = '';
+  const result = await marketTradingTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveMarketAccount(env, state);
+  return json({ ok: true, action: 'started', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function marketTradingTick(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = marketUserId(request, url, body);
+  const state = await loadMarketAccount(env, userId);
+  const result = await marketTradingTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveMarketAccount(env, state);
+  return json({ ok: true, user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function marketTradingStop(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = marketUserId(request, url, body);
+  const state = await loadMarketAccount(env, userId);
+  const result = await marketTradingTickInternal(env, state, Boolean(body?.liquidate !== false));
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = energyIso();
+  await saveMarketAccount(env, state);
+  return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
 
 function workerFootballKickoffTime(match: any) {
@@ -1337,6 +1802,17 @@ async function handleApi(request: Request, env: Env) {
     }
   }
 
+  if (url.pathname === '/api/market-trading/dashboard' && request.method === 'GET') {
+    try {
+      return await marketTradingDashboard(request, env, url);
+    } catch (error) {
+      return json(
+        { ok: false, error: error instanceof Error ? error.message : 'Market trading dashboard failed.' },
+        { status: 500, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
   if (url.pathname.startsWith('/api/football/predict/') && request.method === 'GET') {
     const feed = getWorkerFootballFeed();
     const matchId = decodeURIComponent(url.pathname.replace('/api/football/predict/', ''));
@@ -1433,6 +1909,18 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/energy-trading/stop') {
       return energyTradingStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/market-trading/start') {
+      return marketTradingStart(request, env, url);
+    }
+
+    if (url.pathname === '/api/market-trading/tick') {
+      return marketTradingTick(request, env, url);
+    }
+
+    if (url.pathname === '/api/market-trading/stop') {
+      return marketTradingStop(request, env, url);
     }
 
     if (url.pathname === '/api/energy/adapt-csv') {
