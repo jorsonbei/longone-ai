@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hfcd.gold.v139.forward-shadow</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/beijisheng/.hfcd_launchers/run_hfcd_v1_39_forward_shadow.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/beijisheng/.hfcd_launchers</string>
+
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/beijisheng/.hfcd_launchers/logs/hfcd_v1_39_forward_shadow.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/beijisheng/.hfcd_launchers/logs/hfcd_v1_39_forward_shadow.err.log</string>
+</dict>
+</plist>

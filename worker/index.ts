@@ -30,6 +30,7 @@ import {
 } from '../src/lib/hfcdResearchJobs';
 import { FOOTBALL_ACCURACY_FEED } from '../src/lib/generated/footballAccuracyFeed';
 import { ENERGY_RUNTIME_FEED } from '../src/lib/generated/energyRuntimeFeed';
+import { MULTI_MARKET_TRADING_CONFIG } from '../src/lib/generated/multiMarketTradingConfig';
 
 type Env = {
   ASSETS: {
@@ -47,6 +48,7 @@ type Env = {
   HFCD_CLOUD_RUN_JOB?: string;
   HFCD_GCS_BUCKET?: string;
   HFCD_SOURCE_GCS_PREFIX?: string;
+  DATABENTO_API_KEY?: string;
   NODE_ENV?: string;
 };
 const instructionCache = new Map<string, string>();
@@ -966,14 +968,34 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 }
 
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
-const MARKET_SYMBOLS = [
-  { symbol: 'BTC-USD', name: 'Bitcoin', asset_class: 'crypto', session: '24h' },
-  { symbol: 'ETH-USD', name: 'Ethereum', asset_class: 'crypto', session: '24h' },
-  { symbol: 'SPY', name: 'S&P 500 ETF', asset_class: 'equity_etf', session: 'us_regular' },
-  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', asset_class: 'equity_etf', session: 'us_regular' },
-  { symbol: 'GLD', name: 'Gold ETF', asset_class: 'gold_proxy', session: 'us_regular' },
-];
+const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
+const GOLD_TRADING_VERSION = 'HFCD_Trading_V1_GoldRealTimePaperEngine';
+const GOLD_SYMBOL = 'GC=F';
+const GOLD_FALLBACK_SYMBOL = 'GLD';
+const GOLD_FEE_RATE = 0.00045;
+const GOLD_SPREAD_BPS = 4;
+const GOLD_BASELINE = {
+  lineage: 'V1.38 roll-aware clean BBO/MBP paper baseline',
+  net_pnl_usd: 1594.137,
+  profit_factor: 1.804,
+  max_drawdown_usd: -608.99,
+  trades: 58,
+  note: '离线基线只用于策略说明和阈值参考；线上 paper tick 必须使用实时/准实时行情。',
+};
+const GOLD_OPPORTUNITY_ROADMAP = [
+  { market: '黄金', cadence: '低中频/盘中巡检', status: 'active_online_paper', next: '继续积累 real-time paper ledger' },
+  { market: '加密货币', cadence: '中高频，可做更多笔', status: 'planned', next: '接稳定币、清算、盘口深度后独立验证' },
+  { market: '股指/ETF', cadence: '中频', status: 'planned', next: '按 SPY/QQQ/行业 ETF 子类拆权重' },
+  { market: '电力/价差', cadence: '高频或小时级', status: 'existing_energy_line', next: '沿用能源 paper engine，接真实快照继续跑' },
+  { market: '期货子类', cadence: '按品种拆分后扩大机会池', status: 'planned', next: '贵金属/能源/股指/农产品分别建物性门' },
+];
+
+function marketHeadFor(symbol: string, assetClass?: string) {
+  const symbolHeads = MULTI_MARKET_TRADING_CONFIG.symbol_heads as Record<string, any>;
+  const marketHeads = MULTI_MARKET_TRADING_CONFIG.market_heads as Record<string, any>;
+  return symbolHeads[symbol] || marketHeads[String(assetClass || '')] || marketHeads.crypto || {};
+}
 
 function marketUserId(request: Request, url: URL, body?: any) {
   return energyUserId(request, url, body).replace(/^energy_/, 'market_') || 'wuxing_market_user';
@@ -1001,7 +1023,7 @@ function defaultMarketAccount(userId: string, body: any = {}) {
       max_symbol_positions: Number(body.max_symbol_positions || 2),
       stop_loss_pct: Number(body.stop_loss_pct || 0.018),
       take_profit_pct: Number(body.take_profit_pct || 0.036),
-      min_signal_score: Number(body.min_signal_score || 0.72),
+      min_signal_score: Number(body.min_signal_score || MULTI_MARKET_TRADING_CONFIG.global_min_signal_score || 0.72),
       max_holding_minutes: Number(body.max_holding_minutes || 360),
       strategy: String(body.strategy || 'hfcd_stability_momentum'),
     },
@@ -1091,7 +1113,7 @@ async function fetchYahooMarketSeries(symbol: string) {
   const meta = MARKET_SYMBOLS.find((row) => row.symbol === symbol) || MARKET_SYMBOLS[0];
   try {
     const response = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=2d&interval=5m`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=60d&interval=1h`,
       {
         headers: {
           accept: 'application/json',
@@ -1116,19 +1138,26 @@ async function fetchYahooMarketSeries(symbol: string) {
 }
 
 function buildMarketSignal(series: any) {
+  const head = marketHeadFor(series.symbol, series.asset_class);
+  const fastBars = Number(head.fast_bars || 3);
+  const midBars = Number(head.mid_bars || 12);
+  const longBars = Number(head.long_bars || 48);
+  const headThreshold = Number(head.min_signal_score || MULTI_MARKET_TRADING_CONFIG.global_min_signal_score || 0.72);
   const rows = series.rows || [];
   const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
   const last = closes[closes.length - 1] || 0;
   const prev = closes[closes.length - 2] || last;
-  const shortBase = closes[Math.max(0, closes.length - 7)] || prev;
-  const longBase = closes[Math.max(0, closes.length - 25)] || shortBase;
-  const returns = closes.slice(-36).map((value: number, index: number, arr: number[]) => index === 0 ? 0 : value / arr[index - 1] - 1).slice(1);
+  const fastBase = closes[Math.max(0, closes.length - 1 - fastBars)] || prev;
+  const midBase = closes[Math.max(0, closes.length - 1 - midBars)] || fastBase;
+  const longBase = closes[Math.max(0, closes.length - 1 - longBars)] || midBase;
+  const returns = closes.slice(-Math.max(longBars, 36)).map((value: number, index: number, arr: number[]) => index === 0 ? 0 : value / arr[index - 1] - 1).slice(1);
   const vol = Math.max(marketStd(returns), 0.0008);
   const r1 = last / prev - 1;
-  const r6 = last / shortBase - 1;
-  const r24 = last / longBase - 1;
-  const trendScore = Math.max(-1.4, Math.min(1.4, (0.45 * r1 + 0.35 * r6 + 0.2 * r24) / vol));
-  const action = trendScore >= 0.72 ? 'BUY_LONG' : trendScore <= -0.72 ? 'SELL_SHORT' : 'NO_TRADE';
+  const rFast = last / fastBase - 1;
+  const rMid = last / midBase - 1;
+  const rLong = last / longBase - 1;
+  const trendScore = Math.max(-1.4, Math.min(1.4, (0.42 * rFast + 0.36 * rMid + 0.22 * rLong) / vol));
+  const action = trendScore >= headThreshold ? 'BUY_LONG' : trendScore <= -headThreshold ? 'SELL_SHORT' : 'NO_TRADE';
   const absScore = Math.abs(trendScore);
   const confidence = Math.max(0, Math.min(0.99, 0.45 + absScore * 0.25));
   const latestTs = rows[rows.length - 1]?.ts || energyIso();
@@ -1146,8 +1175,15 @@ function buildMarketSignal(series: any) {
     confidence: Number(confidence.toFixed(4)),
     realized_vol_5m: Number(vol.toFixed(6)),
     r1: Number(r1.toFixed(6)),
-    r6: Number(r6.toFixed(6)),
-    r24: Number(r24.toFixed(6)),
+    r6: Number(rFast.toFixed(6)),
+    r24: Number(rMid.toFixed(6)),
+    r_long: Number(rLong.toFixed(6)),
+    head_version: MULTI_MARKET_TRADING_CONFIG.version,
+    head_status: head.symbol_status || head.status || 'unverified',
+    head_threshold: Number(headThreshold.toFixed(4)),
+    holding_bars: Number(head.holding_bars || 6),
+    stop_loss_pct: Number(head.stop_loss_pct || 0.018),
+    take_profit_pct: Number(head.take_profit_pct || 0.036),
     source: series.source,
     status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
     reject_reason: action === 'NO_TRADE' ? 'signal_underthreshold' : '',
@@ -1162,6 +1198,482 @@ async function buildMarketSignals() {
     source_status: signals.every((signal) => signal.source === 'yahoo_chart') ? 'live_public_market_data' : 'mixed_or_fallback',
     signals,
   };
+}
+
+function goldUserId(request: Request, url: URL, body?: any) {
+  return energyUserId(request, url, body).replace(/^energy_/, 'gold_') || 'wuxing_gold_user';
+}
+
+function goldStorageUserId(userId: string) {
+  return `gold_${String(userId).replace(/[^\w.-]/g, '_').slice(0, 64)}`;
+}
+
+function defaultGoldAccount(userId: string, body: any = {}) {
+  const capital = Number(body.capital_usd || body.capital || 100_000);
+  return {
+    version: GOLD_TRADING_VERSION,
+    user_id: goldStorageUserId(userId),
+    display_user_id: userId,
+    mode: 'stopped',
+    started_at: '',
+    stopped_at: '',
+    initial_cash_usd: capital,
+    realized_pnl_usd: 0,
+    equity_usd: capital,
+    peak_equity_usd: capital,
+    max_drawdown_usd: 0,
+    open_positions: [] as any[],
+    closed_trades: [] as any[],
+    seen_signal_ids: [] as string[],
+    config: {
+      fixed_trade_usd: Number(body.fixed_trade_usd || 5_000),
+      max_open_positions: Number(body.max_open_positions || 4),
+      max_symbol_positions: Number(body.max_symbol_positions || 1),
+      stop_loss_pct: Number(body.stop_loss_pct || 0.012),
+      take_profit_pct: Number(body.take_profit_pct || 0.024),
+      min_signal_score: Number(body.min_signal_score || 1.1),
+      max_holding_minutes: Number(body.max_holding_minutes || 24 * 60),
+      strategy: String(body.strategy || 'v1_38_real_time_gold_anchor'),
+      allow_short: Boolean(body.allow_short || false),
+    },
+  };
+}
+
+async function loadGoldAccount(env: Env, userId: string, body: any = {}) {
+  const storageId = goldStorageUserId(userId);
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return defaultGoldAccount(userId, body);
+  const row = await db.prepare('SELECT state_json FROM market_accounts WHERE user_id = ?').bind(storageId).first();
+  if (!row?.state_json) return defaultGoldAccount(userId, body);
+  try {
+    return JSON.parse(String(row.state_json));
+  } catch {
+    return defaultGoldAccount(userId, body);
+  }
+}
+
+async function saveGoldAccount(env: Env, state: any) {
+  state.version = GOLD_TRADING_VERSION;
+  state.user_id = goldStorageUserId(state.display_user_id || state.user_id || 'wuxing_gold_user');
+  await saveMarketAccount(env, state);
+}
+
+async function recentGoldTrades(env: Env, userId: string, limit = 120) {
+  return recentMarketTrades(env, goldStorageUserId(userId), limit);
+}
+
+async function insertGoldTrade(env: Env, userId: string, row: any) {
+  return insertMarketTrade(env, goldStorageUserId(userId), row);
+}
+
+function clampGold(value: number, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function fetchGoldRealtimeSeries() {
+  const fetchSymbol = async (symbol: string, label: string) => {
+    const response = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=5m`,
+      {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'HFCD-ThingNature-OS/1.0',
+        },
+      },
+    );
+    if (!response.ok) throw new Error(`Yahoo ${symbol} ${response.status}`);
+    const payload: any = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp || [];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const rows = timestamps.map((ts, index) => ({
+      ts: new Date(ts * 1000).toISOString(),
+      close: quote.close?.[index] === null ? NaN : Number(quote.close?.[index]),
+      volume: quote.volume?.[index] === null ? 0 : Number(quote.volume?.[index] || 0),
+    })).filter((row) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length < 40) throw new Error(`Yahoo ${symbol} insufficient rows`);
+    return {
+      symbol,
+      name: label,
+      asset_class: 'gold_futures',
+      source: `yahoo_chart:${symbol}:5m`,
+      source_quality: 'public_real_time_or_delayed',
+      is_real_market_data: true,
+      rows,
+    };
+  };
+
+  try {
+    return await fetchSymbol(GOLD_SYMBOL, 'COMEX Gold Futures');
+  } catch {
+    try {
+      return await fetchSymbol(GOLD_FALLBACK_SYMBOL, 'SPDR Gold ETF');
+    } catch {
+      const now = Date.now();
+      const base = 2350;
+      const rows = Array.from({ length: 96 }, (_, index) => {
+        const t = now - (95 - index) * 5 * 60000;
+        const wave = Math.sin(t / 5400000) * 0.004 + Math.sin(t / 86400000) * 0.006;
+        return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(2)), volume: 0 };
+      });
+      return {
+        symbol: GOLD_SYMBOL,
+        name: 'COMEX Gold Futures',
+        asset_class: 'gold_futures',
+        source: 'fallback_simulated_gold',
+        source_quality: 'fallback_not_tradeable',
+        is_real_market_data: false,
+        rows,
+      };
+    }
+  }
+}
+
+function buildGoldSignal(series: any, minSignalScore = 1.1) {
+  const rows = series.rows || [];
+  const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
+  const last = closes[closes.length - 1] || 0;
+  const prev = closes[closes.length - 2] || last;
+  const oneHourBase = closes[Math.max(0, closes.length - 1 - 12)] || prev;
+  const sixHourBase = closes[Math.max(0, closes.length - 1 - 72)] || oneHourBase;
+  const dayBase = closes[Math.max(0, closes.length - 1 - 288)] || sixHourBase;
+  const returns = closes.slice(-288).map((value: number, index: number, arr: number[]) => index === 0 ? 0 : value / arr[index - 1] - 1).slice(1);
+  const realizedVol = Math.max(marketStd(returns), 0.0005);
+  const r1 = last / prev - 1;
+  const r12 = last / oneHourBase - 1;
+  const r72 = last / sixHourBase - 1;
+  const r288 = last / dayBase - 1;
+  const trendZ = (0.46 * r12 + 0.34 * r72 + 0.2 * r288) / realizedVol;
+  const maxClose = Math.max(...closes.slice(-288), last);
+  const drawdown = maxClose > 0 ? (last / maxClose - 1) : 0;
+  const qCore = clampGold(0.72 + Math.max(-0.22, Math.min(0.16, trendZ * 0.04)) + drawdown * 2.5);
+  const noisePenalty = clampGold((realizedVol - 0.0012) * 120, 0, 0.35);
+  const fusionScore = Math.max(0, trendZ) * (0.72 + 0.28 * qCore) - noisePenalty;
+  const action = fusionScore >= minSignalScore ? 'BUY_LONG' : 'NO_TRADE';
+  const latestTs = rows[rows.length - 1]?.ts || energyIso();
+  const spreadBps = series.symbol === GOLD_SYMBOL ? GOLD_SPREAD_BPS : 6;
+  const price = Number(last.toFixed(series.symbol === GOLD_SYMBOL ? 1 : 3));
+  return {
+    signal_id: `GOLD-${series.symbol}-${Math.floor(new Date(latestTs).getTime() / 300000)}-${action}`,
+    captured_at: latestTs,
+    symbol: series.symbol,
+    name: series.name,
+    asset_class: series.asset_class,
+    price,
+    bid_price: Number((price * (1 - spreadBps / 20000)).toFixed(4)),
+    ask_price: Number((price * (1 + spreadBps / 20000)).toFixed(4)),
+    spread_bps: spreadBps,
+    action,
+    score: Number(fusionScore.toFixed(4)),
+    signed_score: Number(trendZ.toFixed(4)),
+    q_core: Number(qCore.toFixed(4)),
+    realized_vol_5m: Number(realizedVol.toFixed(6)),
+    r1: Number(r1.toFixed(6)),
+    r12: Number(r12.toFixed(6)),
+    r72: Number(r72.toFixed(6)),
+    r288: Number(r288.toFixed(6)),
+    head_version: GOLD_TRADING_VERSION,
+    head_status: 'online_paper_candidate',
+    head_threshold: Number(minSignalScore.toFixed(4)),
+    holding_minutes: 24 * 60,
+    stop_loss_pct: 0.012,
+    take_profit_pct: 0.024,
+    source: series.source,
+    source_quality: series.source_quality,
+    is_real_market_data: Boolean(series.is_real_market_data),
+    status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
+    reject_reason: action === 'NO_TRADE' ? '黄金实时信号未达 V1.38 门槛' : '',
+  };
+}
+
+async function buildGoldSnapshot(minSignalScore = 1.1) {
+  const series = await fetchGoldRealtimeSeries();
+  const signal = buildGoldSignal(series, minSignalScore);
+  return {
+    generated_at: energyIso(),
+    source_status: signal.is_real_market_data ? 'real_public_market_data' : 'fallback_no_trade',
+    primary_source: signal.source,
+    signal,
+    signals: [signal],
+    quote: {
+      symbol: signal.symbol,
+      price: signal.price,
+      bid_price: signal.bid_price,
+      ask_price: signal.ask_price,
+      spread_bps: signal.spread_bps,
+      captured_at: signal.captured_at,
+      source: signal.source,
+      is_real_market_data: signal.is_real_market_data,
+    },
+  };
+}
+
+function goldPositionPnl(pos: any, currentPrice: number) {
+  const qty = Math.abs(Number(pos.quantity || 0));
+  if (pos.side === 'long') return (currentPrice - Number(pos.entry_price || 0)) * qty;
+  return 0;
+}
+
+function markGoldEquity(state: any, signal?: any) {
+  let unrealized = 0;
+  for (const pos of state.open_positions || []) {
+    const price = Number(signal?.price || pos.last_price || pos.entry_price || 0);
+    const pnl = goldPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    pos.last_price = price;
+    pos.unrealized_pnl_usd = Number(pnl.toFixed(2));
+    unrealized += pnl;
+  }
+  state.unrealized_pnl_usd = Number(unrealized.toFixed(2));
+  state.equity_usd = Number((Number(state.initial_cash_usd || 0) + Number(state.realized_pnl_usd || 0) + unrealized).toFixed(2));
+  state.peak_equity_usd = Math.max(Number(state.peak_equity_usd || state.equity_usd), state.equity_usd);
+  state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), state.equity_usd - Number(state.peak_equity_usd || state.equity_usd));
+}
+
+function canOpenGoldPosition(signal: any, state: any) {
+  const cfg = state.config || {};
+  if (state.mode !== 'running') return 'AI未运行';
+  if (!signal.is_real_market_data) return '没有真实实时行情，禁止开仓';
+  if (signal.action !== 'BUY_LONG') return '信号未达黄金交易标准';
+  if (Number(signal.score || 0) < Number(cfg.min_signal_score || 1.1)) return '黄金融合分数不足';
+  if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
+  const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
+  if (sameSymbol >= Number(cfg.max_symbol_positions || 1)) return '黄金单标的持仓已满';
+  if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) return '本轮黄金信号已处理';
+  return '';
+}
+
+async function openGoldPosition(env: Env, state: any, signal: any) {
+  const cfg = state.config || {};
+  const notional = Math.min(Number(cfg.fixed_trade_usd || 5_000), Number(state.equity_usd || state.initial_cash_usd || 0) * 0.25);
+  const fillPrice = Number(signal.ask_price || signal.price);
+  const quantity = notional / Math.max(fillPrice, 0.0001);
+  const fee = notional * GOLD_FEE_RATE;
+  const pos = {
+    position_id: `GOLD-${Date.now()}-${signal.symbol}`,
+    signal_id: signal.signal_id,
+    opened_at: energyIso(),
+    target_exit_at: energyIso(new Date(Date.now() + Number(cfg.max_holding_minutes || 24 * 60) * 60000)),
+    symbol: signal.symbol,
+    name: signal.name,
+    asset_class: signal.asset_class,
+    side: 'long',
+    action: signal.action,
+    entry_price: fillPrice,
+    last_price: signal.price,
+    quantity,
+    notional_usd: notional,
+    estimated_fee_usd: fee,
+    stop_loss_usd: notional * Number(cfg.stop_loss_pct || 0.012),
+    take_profit_usd: notional * Number(cfg.take_profit_pct || 0.024),
+    score: signal.score,
+    q_core: signal.q_core,
+    source: signal.source,
+    source_quality: signal.source_quality,
+    status: 'open',
+  };
+  state.open_positions.push(pos);
+  state.seen_signal_ids.push(String(signal.signal_id));
+  const trade = {
+    ts: energyIso(),
+    event: 'OPEN',
+    position_id: pos.position_id,
+    signal_id: signal.signal_id,
+    symbol: signal.symbol,
+    asset_class: signal.asset_class,
+    side: 'long',
+    action: 'BUY_LONG',
+    price: fillPrice,
+    quantity,
+    trade_value_usd: notional,
+    net_pnl_usd: 0,
+    score: signal.score,
+    q_core: signal.q_core,
+    source: signal.source,
+    reason: '黄金 AI 按真实实时行情达标信号开仓',
+  };
+  await insertGoldTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function closeGoldPosition(env: Env, state: any, pos: any, signal: any, reason: string) {
+  const exitPrice = Number(signal?.bid_price || signal?.price || pos.last_price || pos.entry_price);
+  const gross = goldPositionPnl(pos, exitPrice);
+  const fee = Number(pos.notional_usd || 0) * GOLD_FEE_RATE;
+  const net = gross - Number(pos.estimated_fee_usd || 0) - fee;
+  state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
+  const trade = {
+    ts: energyIso(),
+    event: 'CLOSE',
+    position_id: pos.position_id,
+    signal_id: pos.signal_id,
+    symbol: pos.symbol,
+    asset_class: pos.asset_class,
+    side: pos.side,
+    action: 'SELL_TO_CLOSE',
+    entry_price: pos.entry_price,
+    exit_price: exitPrice,
+    quantity: pos.quantity,
+    trade_value_usd: Math.abs(exitPrice * Number(pos.quantity || 0)),
+    gross_pnl_usd: Number(gross.toFixed(2)),
+    cost_usd: Number((Number(pos.estimated_fee_usd || 0) + fee).toFixed(2)),
+    net_pnl_usd: Number(net.toFixed(2)),
+    score: pos.score,
+    q_core: signal?.q_core ?? pos.q_core,
+    source: signal?.source || pos.source,
+    reason,
+  };
+  state.closed_trades.push({ ...pos, ...trade, status: 'closed' });
+  await insertGoldTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function goldTradingTickInternal(env: Env, state: any, forceClose = false) {
+  const snapshot = await buildGoldSnapshot(Number(state.config?.min_signal_score || 1.1));
+  const signal = snapshot.signal;
+  const remaining: any[] = [];
+  let opened = 0;
+  let closed = 0;
+  for (const pos of state.open_positions || []) {
+    const pnl = goldPositionPnl(pos, Number(signal.price || pos.last_price || pos.entry_price)) - Number(pos.estimated_fee_usd || 0);
+    const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
+    if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
+      const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
+      await closeGoldPosition(env, state, pos, signal, reason);
+      closed += 1;
+    } else {
+      remaining.push({ ...pos, last_price: signal.price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
+    }
+  }
+  state.open_positions = remaining;
+  markGoldEquity(state, signal);
+  if (!forceClose && state.mode === 'running') {
+    const reason = canOpenGoldPosition(signal, state);
+    if (!reason) {
+      await openGoldPosition(env, state, signal);
+      opened += 1;
+    } else {
+      await insertGoldTrade(env, state.display_user_id || state.user_id, {
+        ts: energyIso(),
+        event: 'SKIP',
+        signal_id: signal.signal_id,
+        symbol: signal.symbol,
+        asset_class: signal.asset_class,
+        action: signal.action,
+        price: signal.price,
+        trade_value_usd: 0,
+        net_pnl_usd: 0,
+        score: signal.score,
+        q_core: signal.q_core,
+        source: signal.source,
+        reason,
+      });
+      state.seen_signal_ids.push(String(signal.signal_id));
+    }
+  }
+  markGoldEquity(state, signal);
+  return { snapshot, opened, closed };
+}
+
+function goldWinRate(state: any) {
+  const trades = (state.closed_trades || []).filter((row: any) => Number.isFinite(Number(row.net_pnl_usd)));
+  if (!trades.length) return 0;
+  return trades.filter((row: any) => Number(row.net_pnl_usd || 0) > 0).length / trades.length;
+}
+
+async function goldTradingDashboard(request: Request, env: Env, url: URL) {
+  const userId = goldUserId(request, url);
+  const state = await loadGoldAccount(env, userId);
+  const snapshot = await buildGoldSnapshot(Number(state.config?.min_signal_score || 1.1));
+  markGoldEquity(state, snapshot.signal);
+  const trades = await recentGoldTrades(env, userId, 160);
+  return json({
+    ok: true,
+    online_backend: Boolean(env.ENERGY_TRADING_DB),
+    db_status: env.ENERGY_TRADING_DB ? 'd1_bound' : 'not_configured',
+    version: GOLD_TRADING_VERSION,
+    updated_at: energyIso(),
+    data_policy: {
+      live_required_for_trade: true,
+      realtime_source: snapshot.primary_source,
+      realtime_status: snapshot.source_status,
+      note: '交易 tick 使用线上实时/准实时黄金行情；fallback 模拟行情只展示，不允许开仓。',
+      databento_ready: Boolean(env.DATABENTO_API_KEY),
+    },
+    baseline: GOLD_BASELINE,
+    opportunity_roadmap: GOLD_OPPORTUNITY_ROADMAP,
+    quote: snapshot.quote,
+    signals: snapshot.signals,
+    summary: {
+      mode: state.mode,
+      initial_cash_usd: state.initial_cash_usd,
+      equity_usd: state.equity_usd,
+      realized_pnl_usd: state.realized_pnl_usd,
+      unrealized_pnl_usd: state.unrealized_pnl_usd || 0,
+      open_positions: (state.open_positions || []).length,
+      max_open_positions: state.config?.max_open_positions || 4,
+      closed_trades: (state.closed_trades || []).length,
+      win_rate: goldWinRate(state),
+      max_drawdown_usd: state.max_drawdown_usd || 0,
+      config: state.config,
+    },
+    positions: state.open_positions || [],
+    recent_trades: trades,
+  }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function goldTradingStart(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = goldUserId(request, url, body);
+  const existing = await loadGoldAccount(env, userId, body);
+  const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
+  const state = body?.reset_account || isFresh ? defaultGoldAccount(userId, body) : existing;
+  state.display_user_id = userId;
+  state.config = {
+    ...(state.config || {}),
+    fixed_trade_usd: Number(body.fixed_trade_usd || state.config?.fixed_trade_usd || 5_000),
+    max_open_positions: Number(body.max_open_positions || state.config?.max_open_positions || 4),
+    max_symbol_positions: Number(body.max_symbol_positions || state.config?.max_symbol_positions || 1),
+    stop_loss_pct: Number(body.stop_loss_pct || state.config?.stop_loss_pct || 0.012),
+    take_profit_pct: Number(body.take_profit_pct || state.config?.take_profit_pct || 0.024),
+    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || 1.1),
+    max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 24 * 60),
+    strategy: String(body.strategy || state.config?.strategy || 'v1_38_real_time_gold_anchor'),
+  };
+  if (body.capital_usd && isFresh) {
+    state.initial_cash_usd = Number(body.capital_usd);
+    state.realized_pnl_usd = 0;
+    state.equity_usd = Number(body.capital_usd);
+    state.peak_equity_usd = Number(body.capital_usd);
+  }
+  state.mode = 'running';
+  state.started_at = state.started_at || energyIso();
+  state.stopped_at = '';
+  const result = await goldTradingTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveGoldAccount(env, state);
+  return json({ ok: true, action: 'started', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function goldTradingTick(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = goldUserId(request, url, body);
+  const state = await loadGoldAccount(env, userId, body);
+  const result = await goldTradingTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveGoldAccount(env, state);
+  return json({ ok: true, user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function goldTradingStop(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = goldUserId(request, url, body);
+  const state = await loadGoldAccount(env, userId, body);
+  const result = await goldTradingTickInternal(env, state, Boolean(body?.liquidate !== false));
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = energyIso();
+  await saveGoldAccount(env, state);
+  return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 function marketPositionPnl(pos: any, currentPrice: number) {
@@ -1196,7 +1708,7 @@ async function openMarketPosition(env: Env, state: any, signal: any) {
     position_id: `MT-${Date.now()}-${signal.symbol}`,
     signal_id: signal.signal_id,
     opened_at: energyIso(),
-    target_exit_at: energyIso(new Date(Date.now() + Number(state.config?.max_holding_minutes || 360) * 60000)),
+    target_exit_at: energyIso(new Date(Date.now() + Number(signal.holding_bars || 6) * 60 * 60000)),
     symbol: signal.symbol,
     name: signal.name,
     asset_class: signal.asset_class,
@@ -1207,10 +1719,13 @@ async function openMarketPosition(env: Env, state: any, signal: any) {
     quantity,
     notional_usd: notional,
     estimated_fee_usd: fee,
-    stop_loss_usd: notional * Number(state.config?.stop_loss_pct || 0.018),
-    take_profit_usd: notional * Number(state.config?.take_profit_pct || 0.036),
+    stop_loss_usd: notional * Number(signal.stop_loss_pct || state.config?.stop_loss_pct || 0.018),
+    take_profit_usd: notional * Number(signal.take_profit_pct || state.config?.take_profit_pct || 0.036),
     score: signal.score,
     confidence: signal.confidence,
+    head_version: signal.head_version,
+    head_status: signal.head_status,
+    holding_bars: signal.holding_bars,
     source: signal.source,
     status: 'open',
   };
@@ -1231,6 +1746,9 @@ async function openMarketPosition(env: Env, state: any, signal: any) {
     net_pnl_usd: 0,
     score: signal.score,
     confidence: signal.confidence,
+    head_version: signal.head_version,
+    head_status: signal.head_status,
+    holding_bars: signal.holding_bars,
     source: signal.source,
     reason: 'AI按达标信号开仓',
   };
@@ -1261,6 +1779,9 @@ async function closeMarketPosition(env: Env, state: any, pos: any, exitPrice: nu
     net_pnl_usd: Number(net.toFixed(2)),
     score: pos.score,
     confidence: pos.confidence,
+    head_version: pos.head_version,
+    head_status: pos.head_status,
+    holding_bars: pos.holding_bars,
     source: pos.source,
     reason,
   };
@@ -1272,7 +1793,9 @@ async function closeMarketPosition(env: Env, state: any, pos: any, exitPrice: nu
 function canOpenMarketPosition(signal: any, state: any) {
   if (state.mode !== 'running') return 'AI未运行';
   if (signal.action === 'NO_TRADE') return '信号未达交易标准';
-  if (Number(signal.score || 0) < Number(state.config?.min_signal_score || 0.72)) return '稳定分数不足';
+  if (signal.head_status === 'blocked') return '该市场历史验证未通过';
+  const requiredScore = Math.max(Number(state.config?.min_signal_score || 0.72), Number(signal.head_threshold || 0.72));
+  if (Number(signal.score || 0) < requiredScore) return '稳定分数不足';
   if ((state.open_positions || []).length >= Number(state.config?.max_open_positions || 8)) return '达到最大持仓数';
   const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
   if (sameSymbol >= Number(state.config?.max_symbol_positions || 2)) return '单标的持仓数已满';
@@ -1322,6 +1845,9 @@ async function marketTradingTickInternal(env: Env, state: any, forceClose = fals
           net_pnl_usd: 0,
           score: signal.score,
           confidence: signal.confidence,
+          head_version: signal.head_version,
+          head_status: signal.head_status,
+          holding_bars: signal.holding_bars,
           source: signal.source,
           reason,
         });
@@ -1358,6 +1884,12 @@ async function marketTradingDashboard(request: Request, env: Env, url: URL) {
       symbols: MARKET_SYMBOLS.map((row) => row.symbol),
       note: 'BTC/ETH/SPY/QQQ/GLD 使用 Yahoo Finance 公共行情快照；失败时会标记 fallback，不执行交易。',
     },
+    backtest_config: {
+      version: MULTI_MARKET_TRADING_CONFIG.version,
+      generated_at: MULTI_MARKET_TRADING_CONFIG.generated_at,
+      bar_interval: MULTI_MARKET_TRADING_CONFIG.bar_interval,
+      validation_summary: MULTI_MARKET_TRADING_CONFIG.validation_summary,
+    },
     signals: snapshot.signals,
     summary: {
       mode: state.mode,
@@ -1389,7 +1921,7 @@ async function marketTradingStart(request: Request, env: Env, url: URL) {
     max_open_positions: Number(body.max_open_positions || state.config?.max_open_positions || 8),
     stop_loss_pct: Number(body.stop_loss_pct || state.config?.stop_loss_pct || 0.018),
     take_profit_pct: Number(body.take_profit_pct || state.config?.take_profit_pct || 0.036),
-    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || 0.72),
+	    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || MULTI_MARKET_TRADING_CONFIG.global_min_signal_score || 0.72),
     max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 360),
     strategy: String(body.strategy || state.config?.strategy || 'hfcd_stability_momentum'),
   };
@@ -1813,6 +2345,17 @@ async function handleApi(request: Request, env: Env) {
     }
   }
 
+  if (url.pathname === '/api/gold-trading/dashboard' && request.method === 'GET') {
+    try {
+      return await goldTradingDashboard(request, env, url);
+    } catch (error) {
+      return json(
+        { ok: false, error: error instanceof Error ? error.message : 'Gold trading dashboard failed.' },
+        { status: 500, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
   if (url.pathname.startsWith('/api/football/predict/') && request.method === 'GET') {
     const feed = getWorkerFootballFeed();
     const matchId = decodeURIComponent(url.pathname.replace('/api/football/predict/', ''));
@@ -1921,6 +2464,18 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/market-trading/stop') {
       return marketTradingStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/gold-trading/start') {
+      return goldTradingStart(request, env, url);
+    }
+
+    if (url.pathname === '/api/gold-trading/tick') {
+      return goldTradingTick(request, env, url);
+    }
+
+    if (url.pathname === '/api/gold-trading/stop') {
+      return goldTradingStop(request, env, url);
     }
 
     if (url.pathname === '/api/energy/adapt-csv') {
