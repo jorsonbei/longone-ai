@@ -77,9 +77,11 @@ const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
     title: '股票 / 加密货币 / 黄金 AI 模拟交易',
-    subtitle: 'V1 先接 BTC、ETH、SPY、QQQ、GLD 的公开真实行情快照，做 paper trading；系统只记录模拟开仓、平仓、盈亏和信号来源，不会真实下单。',
+    subtitle: '这是多市场总入口：BTC、ETH、SPY、QQQ、GLD 使用公开真实行情快照做 paper trading；GLD 是黄金 ETF 代理。若要测试黄金期货/现货代理的专属策略，请进入下方“黄金专属交易”。',
     model: '模型说明',
-    modelText: '该模块复用 HFCD 的稳定门思想：只在趋势强度、波动归一化分数和信号置信度达标时开仓；BTC/ETH 适合 24 小时验证，SPY/QQQ/GLD 是股票和黄金代理。期货和真实下单需要后续接券商/交易所 API。',
+    modelText: '该模块复用 HFCD 的稳定门思想：只在趋势强度、波动归一化分数和信号置信度达标时开仓；BTC/ETH 适合 24 小时验证，SPY/QQQ 是股票代理，GLD 是黄金 ETF 代理。黄金专属策略使用 GC=F/GLD 实时行情优先级，并单独记录黄金交易账本。',
+    goldEntry: '进入黄金专属交易',
+    goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
     capital: '起始资金',
     fixedTrade: '单次金额',
     maxPositions: '最大持仓',
@@ -114,9 +116,11 @@ const COPY: Record<string, Record<string, string>> = {
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
     title: 'AI Paper Trading for Crypto, Stocks, and Gold',
-    subtitle: 'V1 uses public snapshots for BTC, ETH, SPY, QQQ, and GLD. It is paper trading only and never sends real orders.',
+    subtitle: 'This is the multi-market entry. BTC, ETH, SPY, QQQ, and GLD use public live snapshots for paper trading; GLD is the gold ETF proxy. Use the dedicated gold entry for GC=F-first gold testing.',
     model: 'Model',
-    modelText: 'The engine applies HFCD-style stability gates: it opens only when normalized trend strength and confidence pass the threshold. BTC/ETH provide 24h validation; SPY/QQQ/GLD are equity and gold proxies.',
+    modelText: 'The engine applies HFCD-style stability gates. BTC/ETH provide 24h validation; SPY/QQQ are equity proxies; GLD is the gold ETF proxy. The dedicated gold strategy uses GC=F first and GLD as fallback with a separate gold ledger.',
+    goldEntry: 'Open dedicated gold trading',
+    goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
     capital: 'Capital',
     fixedTrade: 'Trade amount',
     maxPositions: 'Max positions',
@@ -281,6 +285,24 @@ export default function MultiMarketTradingPage({ locale }: Props) {
         <h2 className="text-xl font-black text-white">{copy.model}</h2>
         <p className="mt-2 text-sm leading-6 text-cyan-50/62">{copy.modelText}</p>
         <p className="mt-2 text-xs text-amber-200/80">说明：这是研究用模拟账户，不构成投资建议。真实自动交易还需要券商/交易所授权、账户风控、合规审批和人工监控。</p>
+        <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/10 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-black text-amber-100">{copy.goldEntry}</p>
+              <p className="mt-1 text-xs leading-5 text-amber-50/65">{copy.goldEntryHint}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.history.pushState({}, '', '?view=gold-trading');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+              className="rounded-2xl bg-amber-300 px-5 py-3 text-sm font-black text-amber-950 transition hover:bg-amber-200"
+            >
+              {copy.goldEntry}
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="mt-5 rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
