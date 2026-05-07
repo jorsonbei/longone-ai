@@ -2751,6 +2751,43 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
   };
 }
 
+function cryptoTestnetRouteCards() {
+  return CRYPTO_TESTNET_SYMBOLS.map((row) => ({
+    symbol: row.symbol,
+    route: row.route,
+    cadence: row.cadence,
+    side_policy: row.side_policy,
+    validated_side_policy: row.validated_side_policy || row.side_policy,
+    short_policy_status: row.short_policy_status || '',
+    asset_class: row.asset_class,
+    execution_venue: row.exchange_tradeable ? 'binance_testnet_or_paper' : 'paper_only',
+    blind_test: row.blind_test || null,
+    short_blind_test: row.short_blind_test || null,
+  }));
+}
+
+function cryptoTestnetDashboardSnapshot(state: any) {
+  const cached = state?.last_market_snapshot;
+  if (cached && Array.isArray(cached.selected_routes) && Array.isArray(cached.signals) && Array.isArray(cached.sensors)) {
+    return {
+      ...cached,
+      source_status: cached.source_status || 'cached_last_tick_snapshot',
+      dashboard_cache: true,
+    };
+  }
+  return {
+    generated_at: state?.last_tick_at || energyIso(),
+    source_status: 'dashboard_static_routes_no_live_fetch',
+    order_mode: 'shortvol_forward_ledger_configurable_testnet_mirror',
+    main_side_policy: 'route_bidirectional_with_long_blind_validation_and_iwm_short_v3_5',
+    route_set: 'v3_1_long_routes_plus_v3_5_iwm_short',
+    selected_routes: cryptoTestnetRouteCards(),
+    signals: [],
+    sensors: [],
+    dashboard_cache: false,
+  };
+}
+
 function cryptoTestnetPositionPnl(pos: any, currentPrice: number) {
   const qty = Math.abs(Number(pos.quantity || 0));
   if (pos.side === 'long') return (currentPrice - Number(pos.entry_price || 0)) * qty;
@@ -3025,6 +3062,16 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
 
 async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false, credentials?: BinanceTestnetCredentials | null) {
   const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
+  state.last_market_snapshot = {
+    generated_at: snapshot.generated_at,
+    source_status: snapshot.source_status,
+    order_mode: snapshot.order_mode,
+    main_side_policy: snapshot.main_side_policy,
+    route_set: snapshot.route_set,
+    selected_routes: snapshot.selected_routes,
+    signals: snapshot.signals,
+    sensors: snapshot.sensors,
+  };
   const signals = snapshot.signals || [];
   const remaining: any[] = [];
   let opened = 0;
@@ -3114,7 +3161,7 @@ function cryptoTestnetWinRate(state: any) {
 async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
   const userId = cryptoTestnetUserId(request, url);
   const state = await loadCryptoTestnetAccount(env, userId);
-  const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
+  const snapshot = cryptoTestnetDashboardSnapshot(state);
   markCryptoTestnetEquity(state, snapshot.signals);
   const trades = await recentCryptoTestnetTrades(env, userId, 180);
   const privateControl = hasPrivateTradingControl(request, env);
