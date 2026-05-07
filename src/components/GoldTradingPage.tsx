@@ -93,9 +93,9 @@ const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 黄金交易',
     title: '黄金 AI 模拟交易沙盒',
-    subtitle: '线上 Worker 直接拉取黄金实时/准实时行情生成 paper-trading 信号。只做模拟开仓和平仓，不会向真实交易所下单。',
+    subtitle: '线上 Worker 直接拉取黄金实时/准实时行情生成 paper-trading 信号，默认支持买入做多和卖出做空。只做模拟开仓和平仓，不会向真实交易所下单。',
     model: '模型说明',
-    modelText: '当前黄金主线继承 V1.38 的 roll-aware 执行锚和 1.10 显化门。V1.40 前向账本继续自动积累；Q-Drift 和追踪止盈仍处于旁路审计，不作为主交易规则。',
+    modelText: '当前黄金主线继承 V1.38 的 roll-aware 执行锚和 1.10 显化门，并已改为双向信号：趋势共振向上时买入做多，趋势共振向下时卖出做空。V1.40 前向账本继续自动积累；Q-Drift 和追踪止盈仍处于旁路审计，不作为主交易规则。',
     realData: '真实行情状态',
     baseline: '离线验证基线',
     capital: '起始资金',
@@ -132,9 +132,9 @@ const COPY: Record<string, Record<string, string>> = {
   en: {
     eyebrow: 'HFCD Gold Trading',
     title: 'AI Gold Paper-Trading Sandbox',
-    subtitle: 'The online Worker pulls real-time or delayed gold market data for paper trading. It never sends real exchange orders.',
+    subtitle: 'The online Worker pulls real-time or delayed gold market data for paper trading, with long and short signals enabled by default. It never sends real exchange orders.',
     model: 'Model',
-    modelText: 'The gold line inherits the V1.38 roll-aware execution anchor and 1.10 manifestation gate. V1.40 forward ledger keeps running; Q-Drift and trailing remain shadow-only.',
+    modelText: 'The gold line inherits the V1.38 roll-aware execution anchor and 1.10 manifestation gate. It now supports bidirectional signals: buy long on upward resonance and sell short on downward resonance. V1.40 forward ledger keeps running; Q-Drift and trailing remain shadow-only.',
     realData: 'Live Data Status',
     baseline: 'Offline Baseline',
     capital: 'Capital',
@@ -178,7 +178,9 @@ COPY.de = COPY.en;
 
 const actionText: Record<string, string> = {
   BUY_LONG: '买入做多',
+  SELL_SHORT: '卖出做空',
   SELL_TO_CLOSE: '卖出平多',
+  BUY_TO_COVER: '买回平空',
   NO_TRADE: '不交易',
 };
 
