@@ -9,14 +9,14 @@ type Props = {
 const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
-    title: '加密货币 / 黄金 AI 交易控制台',
-    subtitle: '这是多市场交易入口：BTC/ETH 走 Binance Testnet 或本地模拟账本；黄金策略走独立黄金专属交易。旧的 Yahoo 多市场通用 paper 模块已移除。',
+    title: '加密货币 / 股指 ETF AI 前向账本',
+    subtitle: '接入 V3.0 盲测通过路线：BTCUSDT 1h、SOLUSDT 1h、SPY 1h、QQQ 15m、IWM 1h。BTC/SOL 可走 Binance Demo Testnet；ETF 只写本地 paper 账本。',
     model: '模型说明',
-    modelText: '加密模块复用 HFCD 的频率路由和黑暗森林传感器：只在 BTC/ETH 的趋势、深度、资金费率和置信度达标时执行；黄金专属策略使用 GC=F/GLD 实时行情优先级，并单独记录黄金交易账本。',
+    modelText: '该模块复用 HFCD 的频率路由、黑暗森林传感器和 V3.0 盲测通过路线；所有主路线冻结为 long_only，只在趋势、成交/深度、资金费率或 ETF 动量共振达标时写入前向账本。',
     goldEntry: '进入黄金专属交易',
     goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
-    cryptoPanel: '加密 Testnet 镜像',
-    cryptoHint: 'BTC/ETH 使用 Binance U本位合约公开实时数据，支持做多/做空、单笔最高金额、最大持仓和单币持仓限制；执行模式可选本地模拟账本或 Binance Futures Testnet 测试网下单。',
+    cryptoPanel: 'V3.1 短波动前向账本',
+    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。用户可设置单笔最高金额、最大持仓和单标的持仓；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
     maxSymbolPositions: '单币最大持仓',
     sidePolicy: '多空策略',
     orderExecution: '执行模式',
@@ -35,8 +35,8 @@ const COPY: Record<string, Record<string, string>> = {
     both: '做多 + 做空',
     longOnly: '只做多',
     shortOnly: '只做空',
-    cryptoStart: '启动加密模拟',
-    cryptoTick: '加密运行一轮',
+    cryptoStart: '启动前向账本',
+    cryptoTick: '运行一轮',
     cryptoStop: '停止并清仓',
     reconcile: '仓位对账',
     closeAll: 'Testnet 全部平仓',
@@ -78,14 +78,14 @@ const COPY: Record<string, Record<string, string>> = {
   },
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
-    title: 'AI Trading Console for Crypto and Gold',
-    subtitle: 'BTC/ETH use Binance Testnet or local paper ledger. Gold uses the dedicated gold engine. The old Yahoo multi-market paper module has been removed.',
+    title: 'AI Forward Ledger for Crypto and Equity ETFs',
+    subtitle: 'Runs V3.0 blind-test passed routes: BTCUSDT 1h, SOLUSDT 1h, SPY 1h, QQQ 15m, IWM 1h. BTC/SOL can use Binance Demo Testnet; ETFs stay paper-only.',
     model: 'Model',
-    modelText: 'The crypto module applies HFCD frequency routing and DarkForest sensors. BTC/ETH execute only when trend, depth, funding, and confidence gates pass. Gold is handled by the dedicated GC=F/GLD engine.',
+    modelText: 'This module applies HFCD frequency routing, DarkForest sensors, and the V3.0 blind-test passed routes. Main routes are frozen as long-only and write to the forward ledger only when route gates pass.',
     goldEntry: 'Open dedicated gold trading',
     goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
-    cryptoPanel: 'Crypto Testnet Mirror',
-    cryptoHint: 'BTC/ETH use Binance USD-M futures public realtime data. Long/short, max order amount, max positions, and per-symbol caps are configurable. Execution can be local paper ledger or Binance Futures Testnet orders.',
+    cryptoPanel: 'V3.1 Short-Vol Forward Ledger',
+    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Binance Demo API affects BTC/SOL testnet orders only; ETF routes are paper-only.',
     maxSymbolPositions: 'Max per symbol',
     sidePolicy: 'Side policy',
     orderExecution: 'Execution mode',
@@ -338,6 +338,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const cryptoTrades = cryptoDashboard?.recent_trades || [];
   const cryptoPositions = cryptoDashboard?.positions || [];
   const cryptoSensors = cryptoDashboard?.sensors || [];
+  const selectedRoutes = cryptoDashboard?.market_health?.selected_routes || [];
   const testnet = cryptoDashboard?.testnet || {};
   const testnetPositions = Array.isArray(testnet.positions) ? testnet.positions : [];
   const testnetOrders = Array.isArray(testnet.open_orders) ? testnet.open_orders : [];
@@ -378,7 +379,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       <section className="mt-5 rounded-[28px] border border-emerald-200/15 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.16),transparent_30rem),rgba(255,255,255,0.03)] p-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200/70">HFCD V2.23 Binance</p>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200/70">HFCD V3.1 SHORTVOL FORWARD</p>
             <h2 className="mt-1 text-2xl font-black text-white">{copy.cryptoPanel}</h2>
             <p className="mt-2 max-w-5xl text-sm leading-6 text-emerald-50/65">{copy.cryptoHint}</p>
           </div>
@@ -408,6 +409,18 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 onChange={(event) => setCryptoConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }))}
               />
             </label>
+          ))}
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
+          {selectedRoutes.map((route: any) => (
+            <div key={`route-${route.symbol}`} className="rounded-2xl border border-emerald-200/10 bg-black/18 p-3">
+              <p className="text-sm font-black text-white">{route.symbol}</p>
+              <p className="mt-1 text-[11px] leading-4 text-emerald-50/55">
+                {route.cadence} · {route.side_policy === 'long_only' ? '只做多' : route.side_policy} · {route.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
+              </p>
+              <p className="mt-1 text-[11px] text-emerald-200/75">PF {numberText(route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
+            </div>
           ))}
         </div>
 
@@ -558,15 +571,17 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <div className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">
-            <h3 className="text-lg font-black text-white">BTC/ETH 信号</h3>
+            <h3 className="text-lg font-black text-white">V3.1 通过路线信号</h3>
             <div className="mt-3 space-y-3">
               {cryptoSignals.map((row: any) => (
                 <div key={`${row.symbol}-${row.captured_at}`} className="rounded-2xl border border-emerald-200/10 bg-white/[0.03] p-4">
-                  <p className="text-sm font-black text-white">{row.symbol} · {row.route}</p>
+                  <p className="text-sm font-black text-white">{row.symbol} · {row.route} · {row.cadence}</p>
                   <p className="mt-2 text-xs text-emerald-50/70">
-                    {translate(row.action)} · 价格 {numberText(row.price, row.symbol === 'BTCUSDT' ? 2 : 3)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 资金费率 {pct(row.funding_rate)}
+                    {translate(row.action)} · 价格 {numberText(row.price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 执行 {row.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
                   </p>
-                  <p className="mt-1 text-xs text-emerald-50/45">深度失衡 {numberText(row.depth_imbalance, 4)} · 点差 {numberText(row.spread_bps, 2)} bps · {row.reject_reason || '信号达标时按配置执行'}</p>
+                  <p className="mt-1 text-xs text-emerald-50/45">
+                    资金费率 {pct(row.funding_rate)} · 深度失衡 {numberText(row.depth_imbalance, 4)} · 点差 {numberText(row.spread_bps, 2)} bps · {row.reject_reason || '信号达标时按配置执行'}
+                  </p>
                 </div>
               ))}
             </div>
@@ -577,21 +592,22 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <div className="mt-3 overflow-auto">
               <table className="min-w-[720px] w-full text-left text-xs">
                 <thead className="text-emerald-50/45">
-                  <tr>{['标的', '资金费率', 'OI', '买盘深度', '卖盘深度', '失衡', '点差'].map((head) => <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
+                  <tr>{['标的', '路线', '执行', '资金费率', 'OI/成交量', '深度/成交额', '失衡', '点差'].map((head) => <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
                 </thead>
                 <tbody>
                   {cryptoSensors.map((row: any) => (
                     <tr key={`sensor-${row.symbol}`} className="border-b border-emerald-200/8 text-emerald-50/80">
                       <td className="px-3 py-3 font-black">{row.symbol}</td>
+                      <td className="px-3 py-3">{row.route}</td>
+                      <td className="px-3 py-3">{row.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}</td>
                       <td className="px-3 py-3">{pct(row.funding_rate)}</td>
-                      <td className="px-3 py-3">{numberText(row.open_interest, 0)}</td>
-                      <td className="px-3 py-3">{money(row.bid_depth_usd)}</td>
-                      <td className="px-3 py-3">{money(row.ask_depth_usd)}</td>
+                      <td className="px-3 py-3">{row.open_interest ? numberText(row.open_interest, 0) : numberText(row.volume_recent, 0)}</td>
+                      <td className="px-3 py-3">{row.bid_depth_usd ? `${money(row.bid_depth_usd)} / ${money(row.ask_depth_usd)}` : money(row.volume_notional_proxy)}</td>
                       <td className="px-3 py-3">{numberText(row.depth_imbalance, 4)}</td>
                       <td className="px-3 py-3">{numberText(row.spread_bps, 2)} bps</td>
                     </tr>
                   ))}
-                  {!cryptoSensors.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={7}>暂无传感器数据。</td></tr> : null}
+                  {!cryptoSensors.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={8}>暂无传感器数据。</td></tr> : null}
                 </tbody>
               </table>
             </div>
@@ -599,8 +615,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         </div>
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <MiniTradeTable title="加密当前持仓" rows={cryptoPositions} type="positions" />
-          <MiniTradeTable title="加密交易记录" rows={cryptoTrades} type="history" />
+          <MiniTradeTable title="当前前向持仓" rows={cryptoPositions} type="positions" />
+          <MiniTradeTable title="前向账本记录" rows={cryptoTrades} type="history" />
         </div>
       </section>
 
@@ -629,7 +645,7 @@ function MiniTradeTable({ title, rows, type }: { title: string; rows: any[]; typ
                 <td className="px-3 py-3"><span className="rounded-full bg-emerald-300/12 px-3 py-1 font-black text-emerald-200">{type === 'positions' ? '持仓' : translate(row.event)}</span></td>
                 <td className="px-3 py-3 font-black">{row.symbol || '-'}</td>
                 <td className="px-3 py-3">{row.side === 'short' ? '做空' : row.side === 'long' ? '做多' : '-'}</td>
-                <td className="px-3 py-3">{numberText(row.exit_price ?? row.entry_price ?? row.price ?? row.last_price, row.symbol === 'BTCUSDT' ? 2 : 3)}</td>
+                <td className="px-3 py-3">{numberText(row.exit_price ?? row.entry_price ?? row.price ?? row.last_price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)}</td>
                 <td className="px-3 py-3">{money(row.trade_value_usd ?? row.notional_usd)}</td>
                 <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
                 <td className={`px-3 py-3 font-black ${Number(row.net_pnl_usd ?? row.unrealized_pnl_usd ?? 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.net_pnl_usd ?? row.unrealized_pnl_usd)}</td>

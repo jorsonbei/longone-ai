@@ -1030,10 +1030,78 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
-const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V2_25_CryptoBinanceTestnetExecution';
-const CRYPTO_TESTNET_SYMBOLS = [
-  { symbol: 'BTCUSDT', name: 'Bitcoin USDT Perpetual', cadence: '1h', route: 'btc_main_1h_v2_11' },
-  { symbol: 'ETHUSDT', name: 'Ethereum USDT Perpetual', cadence: '2h', route: 'eth_main_2h_v2_11' },
+const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V3_1_ShortVolForwardLedger';
+const CRYPTO_TESTNET_SYMBOLS: any[] = [
+  {
+    symbol: 'BTCUSDT',
+    name: 'Bitcoin USDT Perpetual',
+    asset_class: 'crypto_perp',
+    cadence: '1h',
+    route: 'btc_shortvol_1h_v3_0',
+    route_status: 'main',
+    side_policy: 'long_only',
+    market_data_source: 'binance_futures_public',
+    exchange_tradeable: true,
+    quantity_precision: 3,
+    min_signal_score: 0.66,
+    blind_test: { test_net_pnl_usd: 14.25, profit_factor: 1.64, policy: '1h long_only' },
+  },
+  {
+    symbol: 'SOLUSDT',
+    name: 'Solana USDT Perpetual',
+    asset_class: 'crypto_perp',
+    cadence: '1h',
+    route: 'sol_shortvol_1h_v3_0',
+    route_status: 'main',
+    side_policy: 'long_only',
+    market_data_source: 'binance_futures_public',
+    exchange_tradeable: true,
+    quantity_precision: 1,
+    min_signal_score: 0.66,
+    blind_test: { test_net_pnl_usd: 14.68, profit_factor: 1.33, policy: '1h long_only' },
+  },
+  {
+    symbol: 'SPY',
+    name: 'SPDR S&P 500 ETF',
+    asset_class: 'equity_etf',
+    cadence: '1h',
+    route: 'spy_shortvol_1h_v3_0',
+    route_status: 'main',
+    side_policy: 'long_only',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.66,
+    estimated_spread_bps: 1.5,
+    blind_test: { test_net_pnl_usd: 30.89, profit_factor: 6.57, policy: '1h long_only' },
+  },
+  {
+    symbol: 'QQQ',
+    name: 'Invesco QQQ ETF',
+    asset_class: 'equity_etf',
+    cadence: '15m',
+    route: 'qqq_shortvol_15m_v3_0',
+    route_status: 'main',
+    side_policy: 'long_only',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.66,
+    estimated_spread_bps: 1.8,
+    blind_test: { test_net_pnl_usd: 59.66, profit_factor: 3.70, policy: '15m long_only' },
+  },
+  {
+    symbol: 'IWM',
+    name: 'iShares Russell 2000 ETF',
+    asset_class: 'equity_etf',
+    cadence: '1h',
+    route: 'iwm_shortvol_1h_v3_0',
+    route_status: 'main',
+    side_policy: 'long_only',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.66,
+    estimated_spread_bps: 2.5,
+    blind_test: { test_net_pnl_usd: 26.57, profit_factor: 4.51, policy: '1h long_only' },
+  },
 ];
 const CRYPTO_TESTNET_FEE_RATE = 0.0004;
 const BINANCE_TESTNET_BASE_URL = 'https://demo-fapi.binance.com';
@@ -2080,7 +2148,7 @@ function binanceTestnetAssertConfigured(env: Env, credentials?: BinanceTestnetCr
 }
 
 function cryptoTestnetQuantity(symbol: string, rawQuantity: number) {
-  const precision = symbol === 'BTCUSDT' ? 3 : 3;
+  const precision = Number(cryptoRouteMeta(symbol)?.quantity_precision ?? 3);
   const factor = 10 ** precision;
   return Number((Math.floor(Number(rawQuantity || 0) * factor) / factor).toFixed(precision));
 }
@@ -2175,7 +2243,7 @@ async function binanceTestnetAccountSnapshot(env: Env, credentials?: BinanceTest
       binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk', {}, credentials),
       binanceTestnetSignedRequest(env, 'GET', '/fapi/v1/openOrders', {}, credentials),
     ]);
-    const symbols = new Set(CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol));
+    const symbols = new Set(CRYPTO_TESTNET_SYMBOLS.filter((row) => row.exchange_tradeable).map((row) => row.symbol));
     const filteredPositions = (Array.isArray(positions) ? positions : [])
       .filter((row: any) => symbols.has(row.symbol))
       .map((row: any) => ({
@@ -2229,7 +2297,7 @@ async function binanceTestnetAccountSnapshot(env: Env, credentials?: BinanceTest
 async function binanceTestnetCloseAll(env: Env, credentials?: BinanceTestnetCredentials | null) {
   binanceTestnetAssertConfigured(env, credentials);
   const report: any = { cancelled: [], closed: [], errors: [] };
-  for (const symbol of CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol)) {
+  for (const symbol of CRYPTO_TESTNET_SYMBOLS.filter((row) => row.exchange_tradeable).map((row) => row.symbol)) {
     try {
       await binanceTestnetSignedRequest(env, 'DELETE', '/fapi/v1/allOpenOrders', { symbol }, credentials);
       report.cancelled.push(symbol);
@@ -2239,7 +2307,7 @@ async function binanceTestnetCloseAll(env: Env, credentials?: BinanceTestnetCred
   }
   const positions = await binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk', {}, credentials);
   for (const pos of Array.isArray(positions) ? positions : []) {
-    if (!CRYPTO_TESTNET_SYMBOLS.some((row) => row.symbol === pos.symbol)) continue;
+    if (!CRYPTO_TESTNET_SYMBOLS.some((row) => row.symbol === pos.symbol && row.exchange_tradeable)) continue;
     const amt = Number(pos.positionAmt || 0);
     if (Math.abs(amt) <= 0.0000001) continue;
     try {
@@ -2341,22 +2409,48 @@ async function insertCryptoTestnetTrade(env: Env, userId: string, row: any) {
   return insertMarketTrade(env, cryptoTestnetStorageUserId(userId), row);
 }
 
+function cryptoRouteMeta(symbol: string) {
+  return CRYPTO_TESTNET_SYMBOLS.find((row) => row.symbol === symbol) || CRYPTO_TESTNET_SYMBOLS[0];
+}
+
+function cryptoRouteIsExchangeTradeable(symbol: string) {
+  return Boolean(cryptoRouteMeta(symbol)?.exchange_tradeable);
+}
+
+function cryptoRouteCadenceMinutes(cadence?: string) {
+  if (cadence === '15m') return 15;
+  if (cadence === '30m') return 30;
+  if (cadence === '2h') return 120;
+  return 60;
+}
+
+function cryptoRoutePriceDigits(symbol: string) {
+  if (symbol === 'BTCUSDT') return 2;
+  if (symbol.endsWith('USDT')) return 3;
+  return 4;
+}
+
 function fallbackCryptoSeries(symbol: string) {
-  const meta = CRYPTO_TESTNET_SYMBOLS.find((row) => row.symbol === symbol) || CRYPTO_TESTNET_SYMBOLS[0];
-  const base = symbol === 'BTCUSDT' ? 82_000 : 2_400;
+  const meta = cryptoRouteMeta(symbol);
+  const base = symbol === 'BTCUSDT' ? 82_000 : symbol === 'SOLUSDT' ? 145 : symbol === 'SPY' ? 720 : symbol === 'QQQ' ? 680 : symbol === 'IWM' ? 245 : 2_400;
   const now = Date.now();
+  const cadenceMs = cryptoRouteCadenceMinutes(meta.cadence) * 60000;
   const rows = Array.from({ length: 160 }, (_, index) => {
-    const t = now - (159 - index) * 15 * 60000;
+    const t = now - (159 - index) * cadenceMs;
     const wave = Math.sin(t / 7200000 + symbol.length) * 0.012 + Math.sin(t / 86400000) * 0.025;
-    return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(2)), volume: 0 };
+    return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(cryptoRoutePriceDigits(symbol))), volume: 0 };
   });
   return {
     ...meta,
-    source: 'fallback_simulated_crypto',
+    source: `fallback_simulated:${symbol}`,
     source_quality: 'fallback_not_tradeable',
     is_real_market_data: false,
     rows,
-    sensors: {},
+    sensors: {
+      spread_bps: Number(meta.estimated_spread_bps || 0),
+      exchange_tradeable: Boolean(meta.exchange_tradeable),
+      execution_venue: meta.exchange_tradeable ? 'binance_futures_testnet_or_paper' : 'paper_only',
+    },
   };
 }
 
@@ -2371,10 +2465,67 @@ async function fetchBinanceJson(url: string) {
   return response.json();
 }
 
-async function fetchCryptoTestnetSeries(symbol: string) {
-  const meta = CRYPTO_TESTNET_SYMBOLS.find((row) => row.symbol === symbol) || CRYPTO_TESTNET_SYMBOLS[0];
+async function fetchShortvolYahooSeries(meta: any) {
+  const interval = meta.cadence === '15m' ? '15m' : '60m';
+  const range = meta.cadence === '15m' ? '60d' : '6mo';
   try {
-    const interval = symbol === 'ETHUSDT' ? '2h' : '1h';
+    const response = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.symbol)}?range=${range}&interval=${interval}&includePrePost=false`,
+      {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'HFCD-ThingNature-OS/1.0',
+        },
+      },
+    );
+    if (!response.ok) throw new Error(`Yahoo ${meta.symbol} ${response.status}`);
+    const payload: any = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp || [];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const closes: Array<number | null> = quote.close || [];
+    const volumes: Array<number | null> = quote.volume || [];
+    const rows = timestamps.map((ts, index) => ({
+      ts: new Date(ts * 1000).toISOString(),
+      close: closes[index] === null ? NaN : Number(closes[index]),
+      volume: volumes[index] === null ? 0 : Number(volumes[index] || 0),
+    })).filter((row) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length < 40) throw new Error(`Yahoo ${meta.symbol} insufficient rows`);
+    const price = rows[rows.length - 1].close;
+    const spreadBps = Number(meta.estimated_spread_bps || 2);
+    const volumeRecent = rows.slice(-6).reduce((sum, row) => sum + Number(row.volume || 0), 0);
+    return {
+      ...meta,
+      source: `yahoo_chart:${meta.symbol}:${interval}`,
+      source_quality: 'public_realtime_yahoo_chart',
+      is_real_market_data: true,
+      rows,
+      sensors: {
+        mark_price: price,
+        best_bid: Number((price * (1 - spreadBps / 20000)).toFixed(cryptoRoutePriceDigits(meta.symbol))),
+        best_ask: Number((price * (1 + spreadBps / 20000)).toFixed(cryptoRoutePriceDigits(meta.symbol))),
+        spread_bps: spreadBps,
+        funding_rate: 0,
+        open_interest: 0,
+        bid_depth_usd: 0,
+        ask_depth_usd: 0,
+        depth_imbalance: 0,
+        volume_recent: volumeRecent,
+        volume_notional_proxy: Number((volumeRecent * price).toFixed(2)),
+        exchange_tradeable: false,
+        execution_venue: 'paper_only',
+      },
+    };
+  } catch {
+    return fallbackCryptoSeries(meta.symbol);
+  }
+}
+
+async function fetchCryptoTestnetSeries(symbol: string) {
+  const meta = cryptoRouteMeta(symbol);
+  if (meta.market_data_source === 'yahoo_chart') return fetchShortvolYahooSeries(meta);
+  try {
+    const interval = meta.cadence || '1h';
     const [klines, premium, openInterest, depth] = await Promise.all([
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=160`),
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`),
@@ -2408,6 +2559,8 @@ async function fetchCryptoTestnetSeries(symbol: string) {
         best_bid: bestBid,
         best_ask: bestAsk,
         spread_bps: Number((((bestAsk - bestBid) / Math.max((bestAsk + bestBid) / 2, 1)) * 10000).toFixed(4)),
+        exchange_tradeable: true,
+        execution_venue: 'binance_futures_testnet_or_paper',
       },
     };
   } catch {
@@ -2416,6 +2569,8 @@ async function fetchCryptoTestnetSeries(symbol: string) {
 }
 
 function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
+  const meta = cryptoRouteMeta(series.symbol);
+  const effectiveThreshold = Math.max(Number(minSignalScore || 0.66), Number(meta.min_signal_score || 0.66));
   const rows = series.rows || [];
   const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
   const volumes = rows.map((row: any) => Number(row.volume || 0));
@@ -2440,20 +2595,31 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
   const volumePulse = volumeBase > 0 ? Math.min(0.18, Math.max(-0.08, (volumeRecent / volumeBase - 1) * 0.08)) : 0;
   const darkForestBoost = Math.max(-0.12, Math.min(0.12, depthImbalance * 0.18 - Math.sign(trendZ || 1) * funding * 80));
   const directionalScore = Math.max(0, Math.abs(trendZ) * 0.58 + Math.abs(depthImbalance) * 0.18 + volumePulse + darkForestBoost - spreadPenalty - fundingPenalty);
-  const action = directionalScore >= minSignalScore ? (trendZ >= 0 ? 'BUY_LONG' : 'SELL_SHORT') : 'NO_TRADE';
+  const rawAction = trendZ >= 0 ? 'BUY_LONG' : 'SELL_SHORT';
+  let action = directionalScore >= effectiveThreshold ? rawAction : 'NO_TRADE';
+  let routeRejectReason = '';
+  if (action === 'SELL_SHORT' && meta.side_policy === 'long_only') {
+    action = 'NO_TRADE';
+    routeRejectReason = 'V3.0 盲测通过路线冻结为只做多，当前为空头信号';
+  }
   const side = action === 'BUY_LONG' ? 'long' : action === 'SELL_SHORT' ? 'short' : '-';
   const latestTs = rows[rows.length - 1]?.ts || energyIso();
-  const price = Number((series.sensors?.mark_price || last).toFixed(series.symbol === 'BTCUSDT' ? 2 : 3));
+  const price = Number((series.sensors?.mark_price || last).toFixed(cryptoRoutePriceDigits(series.symbol)));
   const bestBid = Number(series.sensors?.best_bid || price);
   const bestAsk = Number(series.sensors?.best_ask || price);
   return {
-    signal_id: `CRYPTO-${series.symbol}-${Math.floor(new Date(latestTs).getTime() / 900000)}-${action}`,
+    signal_id: `SHORTVOL-${series.symbol}-${Math.floor(new Date(latestTs).getTime() / (cryptoRouteCadenceMinutes(meta.cadence) * 60000))}-${action}`,
     captured_at: latestTs,
     symbol: series.symbol,
     name: series.name,
-    asset_class: 'crypto_perp',
+    asset_class: meta.asset_class || 'crypto_perp',
     route: series.route,
     cadence: series.cadence,
+    route_status: meta.route_status || 'main',
+    route_side_policy: meta.side_policy || 'long_only',
+    execution_venue: series.sensors?.execution_venue || (meta.exchange_tradeable ? 'binance_futures_testnet_or_paper' : 'paper_only'),
+    exchange_tradeable: Boolean(meta.exchange_tradeable),
+    blind_test: meta.blind_test || null,
     price,
     bid_price: bestBid,
     ask_price: bestAsk,
@@ -2473,17 +2639,19 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
     bid_depth_usd: Number(series.sensors?.bid_depth_usd || 0),
     ask_depth_usd: Number(series.sensors?.ask_depth_usd || 0),
     depth_imbalance: depthImbalance,
+    volume_recent: Number(series.sensors?.volume_recent || volumeRecent || 0),
+    volume_notional_proxy: Number(series.sensors?.volume_notional_proxy || 0),
     head_version: CRYPTO_TESTNET_VERSION,
-    head_status: 'online_crypto_paper_testnet_candidate',
-    head_threshold: Number(minSignalScore.toFixed(4)),
-    holding_minutes: series.symbol === 'ETHUSDT' ? 2 * 60 : 60,
+    head_status: 'shortvol_forward_shadow_candidate',
+    head_threshold: Number(effectiveThreshold.toFixed(4)),
+    holding_minutes: Number(meta.default_holding_minutes || 8 * 60),
     stop_loss_pct: 0.018,
     take_profit_pct: 0.036,
     source: series.source,
     source_quality: series.source_quality,
     is_real_market_data: Boolean(series.is_real_market_data),
     status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
-    reject_reason: action === 'NO_TRADE' ? '加密实时多空信号未达 V2.23 门槛' : '',
+    reject_reason: action === 'NO_TRADE' ? (routeRejectReason || '短波动路线实时信号未达 V3.1 门槛') : '',
   };
 }
 
@@ -2492,19 +2660,34 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
   const signals = seriesList.map((series) => buildCryptoTestnetSignal(series, minSignalScore));
   return {
     generated_at: energyIso(),
-    source_status: signals.every((signal) => signal.is_real_market_data) ? 'binance_public_realtime' : 'mixed_or_fallback',
-    order_mode: 'paper_configurable_testnet_mirror',
-    main_side_policy: 'both',
+    source_status: signals.every((signal) => signal.is_real_market_data) ? 'public_realtime_mixed_binance_yahoo' : 'mixed_or_fallback',
+    order_mode: 'shortvol_forward_ledger_configurable_testnet_mirror',
+    main_side_policy: 'route_long_only',
+    route_set: 'v3_0_blind_test_passed_routes',
+    selected_routes: CRYPTO_TESTNET_SYMBOLS.map((row) => ({
+      symbol: row.symbol,
+      route: row.route,
+      cadence: row.cadence,
+      side_policy: row.side_policy,
+      asset_class: row.asset_class,
+      execution_venue: row.exchange_tradeable ? 'binance_testnet_or_paper' : 'paper_only',
+      blind_test: row.blind_test || null,
+    })),
     signals,
     sensors: signals.map((signal) => ({
       symbol: signal.symbol,
       route: signal.route,
+      cadence: signal.cadence,
+      asset_class: signal.asset_class,
+      execution_venue: signal.execution_venue,
       funding_rate: signal.funding_rate,
       open_interest: signal.open_interest,
       bid_depth_usd: signal.bid_depth_usd,
       ask_depth_usd: signal.ask_depth_usd,
       depth_imbalance: signal.depth_imbalance,
       spread_bps: signal.spread_bps,
+      volume_recent: signal.volume_recent,
+      volume_notional_proxy: signal.volume_notional_proxy,
       source: signal.source,
       is_real_market_data: signal.is_real_market_data,
     })),
@@ -2538,7 +2721,9 @@ function canOpenCryptoTestnetPosition(signal: any, state: any) {
   const cfg = state.config || {};
   if (state.mode !== 'running') return 'AI未运行';
   if (!signal.is_real_market_data) return '没有 Binance 真实公共行情，禁止开仓';
+  if (signal.route_status && signal.route_status !== 'main') return '该路线仅旁路观察，不接主前向账本';
   if (!['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) return '信号未达加密交易标准';
+  if (signal.action === 'SELL_SHORT' && signal.route_side_policy === 'long_only') return '该 V3.0 通过路线只允许做多';
   if (signal.action === 'SELL_SHORT' && (cfg.allow_short === false || cfg.side_policy === 'long_only')) return '加密做空未启用';
   if (signal.action === 'BUY_LONG' && cfg.side_policy === 'short_only') return '加密做多未启用';
   if (Number(signal.score || 0) < Number(cfg.min_signal_score || 0.66)) return '加密稳定分数不足';
@@ -2560,7 +2745,8 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
   const quantity = notional / Math.max(fillPrice, 0.0001);
   const fee = notional * CRYPTO_TESTNET_FEE_RATE;
   let exchangeOrder: any = null;
-  if (cfg.order_execution === 'binance_testnet') {
+  const canSendExchangeOrder = cfg.order_execution === 'binance_testnet' && cryptoRouteIsExchangeTradeable(signal.symbol);
+  if (canSendExchangeOrder) {
     exchangeOrder = await binanceTestnetMarketOrder(env, {
       symbol: signal.symbol,
       side: side === 'short' ? 'SELL' : 'BUY',
@@ -2572,7 +2758,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
   const pos = {
     position_id: `CT-${Date.now()}-${signal.symbol}`,
     signal_id: signal.signal_id,
-    execution_mode: cfg.order_execution === 'binance_testnet' ? 'binance_testnet' : 'paper',
+    execution_mode: canSendExchangeOrder ? 'binance_testnet' : 'paper',
     exchange_order_id: exchangeOrder?.orderId || null,
     opened_at: energyIso(),
     target_exit_at: energyIso(new Date(Date.now() + Number(cfg.max_holding_minutes || signal.holding_minutes || 480) * 60000)),
@@ -2580,6 +2766,8 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     name: signal.name,
     asset_class: signal.asset_class,
     route: signal.route,
+    route_status: signal.route_status,
+    execution_venue: signal.execution_venue,
     side,
     action: signal.action,
     entry_price: fillPrice,
@@ -2593,6 +2781,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     confidence: signal.confidence,
     funding_rate: signal.funding_rate,
     depth_imbalance: signal.depth_imbalance,
+    blind_test: signal.blind_test || null,
     source: signal.source,
     source_quality: signal.source_quality,
     status: 'open',
@@ -2618,7 +2807,9 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     source: signal.source,
     exchange_order_id: exchangeOrder?.orderId || null,
     execution_mode: pos.execution_mode,
-    reason: side === 'short' ? '加密 AI 按 Binance 实时行情达标做空信号开仓' : '加密 AI 按 Binance 实时行情达标做多信号开仓',
+    reason: signal.exchange_tradeable
+      ? (side === 'short' ? 'V3.1 短波动路线按实时行情达标做空开仓' : 'V3.1 短波动路线按实时行情达标做多开仓')
+      : 'V3.1 ETF 通过路线只写本地 paper 账本，不发送 Binance 订单',
   };
   await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
   return trade;
@@ -2632,7 +2823,7 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
   const fee = Number(pos.notional_usd || 0) * CRYPTO_TESTNET_FEE_RATE;
   const net = gross - Number(pos.estimated_fee_usd || 0) - fee;
   let exchangeOrder: any = null;
-  if ((state.config?.order_execution === 'binance_testnet' || pos.execution_mode === 'binance_testnet') && reason !== 'shadow_close_only') {
+  if (pos.execution_mode === 'binance_testnet' && reason !== 'shadow_close_only' && cryptoRouteIsExchangeTradeable(pos.symbol)) {
     exchangeOrder = await binanceTestnetMarketOrder(env, {
       symbol: pos.symbol,
       side: pos.side === 'short' ? 'BUY' : 'SELL',
@@ -2788,16 +2979,17 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       real_exchange_orders: state.config?.order_execution === 'binance_testnet' && privateControl,
       private_exchange_control: privateControl,
       production_mainnet_orders: false,
-      realtime_source: 'Binance USD-M Futures public endpoints',
+      realtime_source: 'Binance USD-M Futures public endpoints + Yahoo Finance public chart',
       note: state.config?.order_execution === 'binance_testnet'
-        ? '当前执行模式为 Binance Futures Demo/Testnet，只向 demo-fapi.binance.com 发测试网订单，不连接主网。'
+        ? '当前执行模式为 Binance Futures Demo/Testnet；仅 BTCUSDT/SOLUSDT 会向 demo-fapi.binance.com 发测试网订单，SPY/QQQ/IWM 只写 paper 账本。'
         : '当前执行模式为 D1 paper/testnet mirror，只写模拟账本，不向交易所发订单。',
     },
     market_health: {
-      ok: snapshot.source_status === 'binance_public_realtime',
+      ok: snapshot.source_status === 'public_realtime_mixed_binance_yahoo',
       status: snapshot.source_status,
       latest_captured_at: snapshot.generated_at,
       symbols: CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol),
+      selected_routes: snapshot.selected_routes,
     },
     sensors: snapshot.sensors,
     signals: snapshot.signals,

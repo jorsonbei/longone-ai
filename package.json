@@ -102,7 +102,8 @@
     "trading:v2.23:crypto-testnet-daemon": "python3 scripts/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror.py --cycles 0 --interval-minutes 15 --liquidation-seconds 8 --order-mode signal --main-side-policy both",
     "trading:v2.23:crypto-testnet-health": "python3 scripts/hfcd_trading_v2_23_crypto_health_check.py",
     "trading:v2.23:crypto-testnet-launchd-install": "zsh scripts/install_hfcd_crypto_testnet_launchagent.sh",
-    "trading:v2.23:crypto-testnet-launchd-uninstall": "zsh scripts/uninstall_hfcd_crypto_testnet_launchagent.sh"
+    "trading:v2.23:crypto-testnet-launchd-uninstall": "zsh scripts/uninstall_hfcd_crypto_testnet_launchagent.sh",
+    "trading:v3.0:shortvol": "python3 scripts/hfcd_trading_v3_0_shortvol_opportunity_engine.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
