@@ -23,7 +23,15 @@ const COPY: Record<string, Record<string, string>> = {
     paperMode: '本地模拟账本',
     binanceTestnetMode: 'Binance Testnet 下单',
     privateLocked: '管理员私有控制',
-    testnetLockedHint: '普通用户只开放本地模拟账本；Binance Testnet 下单、账户对账和全部平仓需要管理员私有 API key。',
+    testnetLockedHint: '未填写 Binance Demo API 时只能使用本地模拟账本；填写后可向 demo.binance.com 的 U本位合约测试网下单。',
+    testnetApiSetup: 'Binance Demo API',
+    testnetApiKey: 'API Key',
+    testnetApiSecret: 'Secret Key',
+    testnetSaveKeys: '保存到本机浏览器',
+    testnetClearKeys: '清除本机密钥',
+    testnetKeyHint: '密钥只保存在当前浏览器 localStorage，用于 demo-fapi.binance.com 签名；不会保存到 longone 后端或 D1。',
+    testnetReady: '已填写 Demo API，可启用 Binance Testnet 下单。订单会出现在 demo.binance.com 的 Futures Order，不是 Spot Order。',
+    testnetMissing: '未填写 Demo API，当前只能 paper 模拟。',
     both: '做多 + 做空',
     longOnly: '只做多',
     shortOnly: '只做空',
@@ -84,7 +92,15 @@ const COPY: Record<string, Record<string, string>> = {
     paperMode: 'Local paper ledger',
     binanceTestnetMode: 'Binance Testnet orders',
     privateLocked: 'Admin private control',
-    testnetLockedHint: 'Public users can use local paper mode only. Binance Testnet orders, account reconciliation, and close-all require a private admin API key.',
+    testnetLockedHint: 'Without Binance Demo API keys, only local paper ledger is available. With keys, orders are sent to the USD-M futures demo testnet.',
+    testnetApiSetup: 'Binance Demo API',
+    testnetApiKey: 'API Key',
+    testnetApiSecret: 'Secret Key',
+    testnetSaveKeys: 'Save in this browser',
+    testnetClearKeys: 'Clear local keys',
+    testnetKeyHint: 'Keys stay in this browser localStorage and are used only to sign demo-fapi.binance.com requests. They are not stored on the longone backend or D1.',
+    testnetReady: 'Demo API keys are present. Binance Testnet orders can be enabled. Orders appear under demo.binance.com Futures Order, not Spot Order.',
+    testnetMissing: 'No Demo API keys. Paper ledger only.',
     both: 'Long + Short',
     longOnly: 'Long only',
     shortOnly: 'Short only',
@@ -200,6 +216,9 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     order_execution: 'paper',
     testnet_close_all_on_stop: true,
   });
+  const [binanceKeys, setBinanceKeys] = useState({ apiKey: '', apiSecret: '' });
+  const hasUserTestnetKeys = Boolean(binanceKeys.apiKey.trim() && binanceKeys.apiSecret.trim());
+  const canRequestExchangeExecution = canUseExchangeExecution || hasUserTestnetKeys;
 
   const cryptoUserId = useMemo(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('hfcd_crypto_testnet_user_id') : '';
@@ -209,43 +228,87 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     return id;
   }, []);
 
-  const privateApiHeaders = useMemo(() => {
-    if (!canUseExchangeExecution || typeof window === 'undefined') return {};
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setBinanceKeys({
+      apiKey: window.localStorage.getItem('hfcd_binance_demo_api_key') || '',
+      apiSecret: window.localStorage.getItem('hfcd_binance_demo_api_secret') || '',
+    });
+  }, []);
+
+  const saveBinanceKeys = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('hfcd_binance_demo_api_key', binanceKeys.apiKey.trim());
+    window.localStorage.setItem('hfcd_binance_demo_api_secret', binanceKeys.apiSecret.trim());
+    setMessage('Binance Demo API 已保存到本机浏览器。');
+  }, [binanceKeys.apiKey, binanceKeys.apiSecret]);
+
+  const clearBinanceKeys = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem('hfcd_binance_demo_api_key');
+    window.localStorage.removeItem('hfcd_binance_demo_api_secret');
+    setBinanceKeys({ apiKey: '', apiSecret: '' });
+    setCryptoConfig((prev) => ({ ...prev, order_execution: 'paper', testnet_close_all_on_stop: false }));
+    setMessage('已清除本机 Binance Demo API。');
+  }, []);
+
+  const exchangeHeaders = useMemo(() => {
+    const headers: Record<string, string> = {};
+    if (hasUserTestnetKeys) {
+      headers['x-binance-testnet-api-key'] = binanceKeys.apiKey.trim();
+      headers['x-binance-testnet-api-secret'] = binanceKeys.apiSecret.trim();
+    }
+    if (!canUseExchangeExecution || typeof window === 'undefined') return headers;
     try {
       const raw = window.localStorage.getItem('hfcdApiKeysV1');
       const keys = raw ? JSON.parse(raw) : [];
       const key = Array.isArray(keys) ? keys[0]?.key : '';
-      return key ? { 'x-api-key': String(key) } : {};
+      if (key) headers['x-api-key'] = String(key);
     } catch {
-      return {};
+      return headers;
     }
-  }, [canUseExchangeExecution]);
+    return headers;
+  }, [binanceKeys.apiKey, binanceKeys.apiSecret, canUseExchangeExecution, hasUserTestnetKeys]);
 
   const loadCryptoDashboard = useCallback(async () => {
     const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, {
       cache: 'no-store',
-      headers: privateApiHeaders,
+      headers: exchangeHeaders,
     });
     const data = await res.json();
     setCryptoDashboard(data);
-  }, [cryptoUserId, privateApiHeaders]);
+  }, [cryptoUserId, exchangeHeaders]);
+
+  const parseActionResponse = useCallback(async (res: Response) => {
+    const text = await res.text();
+    try {
+      const data = text ? JSON.parse(text) as { ok?: boolean; error?: string; message?: string } : {};
+      if (!data.ok) throw new Error(data.error || data.message || `request failed (${res.status})`);
+      return data;
+    } catch (error) {
+      if (error instanceof Error && !error.message.startsWith('Unexpected token')) throw error;
+      const preview = text.replace(/\s+/g, ' ').slice(0, 160);
+      throw new Error(preview || `request failed (${res.status})`);
+    }
+  }, []);
 
   const postCryptoAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
     setLoading(true);
     try {
+      if (body.order_execution === 'binance_testnet' && !canRequestExchangeExecution) {
+        throw new Error(copy.testnetLockedHint);
+      }
       const safeBody = {
         ...body,
-        order_execution: canUseExchangeExecution ? body.order_execution : 'paper',
-        testnet_close_all_on_stop: canUseExchangeExecution ? body.testnet_close_all_on_stop : false,
+        order_execution: canRequestExchangeExecution ? body.order_execution : 'paper',
+        testnet_close_all_on_stop: canRequestExchangeExecution ? body.testnet_close_all_on_stop : false,
       };
       const res = await fetch(path, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...privateApiHeaders },
+        headers: { 'content-type': 'application/json', ...exchangeHeaders },
         body: JSON.stringify({ user_id: cryptoUserId, ...safeBody }),
       });
-      const text = await res.text();
-      const data = text ? JSON.parse(text) as { ok?: boolean; error?: string } : {};
-      if (!data.ok) throw new Error(data.error || 'request failed');
+      await parseActionResponse(res);
       setMessage('加密交易操作已完成。');
       await loadCryptoDashboard();
     } catch (error) {
@@ -253,7 +316,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     } finally {
       setLoading(false);
     }
-  }, [canUseExchangeExecution, cryptoUserId, loadCryptoDashboard, privateApiHeaders]);
+  }, [canRequestExchangeExecution, copy.testnetLockedHint, cryptoUserId, exchangeHeaders, loadCryptoDashboard, parseActionResponse]);
 
   useEffect(() => {
     loadCryptoDashboard().catch(() => setMessage('读取加密 Testnet 镜像失败。'));
@@ -369,11 +432,11 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               onChange={(event) => setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }))}
             >
               <option value="paper">{copy.paperMode}</option>
-              {canUseExchangeExecution ? <option value="binance_testnet">{copy.binanceTestnetMode}</option> : null}
+              <option value="binance_testnet">{copy.binanceTestnetMode}</option>
             </select>
-            {!canUseExchangeExecution ? <p className="mt-2 text-[11px] leading-4 text-amber-100/70">{copy.privateLocked}：{copy.testnetLockedHint}</p> : null}
+            {!canRequestExchangeExecution ? <p className="mt-2 text-[11px] leading-4 text-amber-100/70">{copy.testnetLockedHint}</p> : null}
           </label>
-          {canUseExchangeExecution ? (
+          {canRequestExchangeExecution ? (
             <label className="flex w-full items-center gap-3 rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3 text-xs font-bold text-emerald-50/65 md:w-auto">
               <input
                 type="checkbox"
@@ -382,13 +445,13 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 className="h-4 w-4 accent-emerald-300"
               />
               停止时同步 Testnet 平仓
-            </label>
+          </label>
           ) : null}
           <div className="flex flex-wrap gap-3">
             <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', cryptoConfig)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick')} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
-            {canUseExchangeExecution ? (
+            {canRequestExchangeExecution ? (
               <>
                 <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile')} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100">{copy.reconcile}</button>
                 <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all')} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100">{copy.closeAll}</button>
@@ -412,12 +475,62 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           ))}
         </div>
 
-        {canUseExchangeExecution ? <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
+        <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
+          <div className="mb-4 rounded-[20px] border border-cyan-200/10 bg-black/20 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-white">{copy.testnetApiSetup}</h3>
+                <p className="mt-1 text-xs leading-5 text-cyan-50/60">{copy.testnetKeyHint}</p>
+                <p className={`mt-2 text-xs font-bold ${hasUserTestnetKeys ? 'text-emerald-200' : 'text-amber-200'}`}>
+                  {hasUserTestnetKeys ? copy.testnetReady : copy.testnetMissing}
+                </p>
+              </div>
+              <label className="text-xs font-bold text-cyan-50/55 lg:w-80">
+                {copy.testnetApiKey}
+                <input
+                  className="mt-2 w-full rounded-2xl border border-cyan-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
+                  value={binanceKeys.apiKey}
+                  onChange={(event) => setBinanceKeys((prev) => ({ ...prev, apiKey: event.target.value }))}
+                  placeholder="Binance Demo API key"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="text-xs font-bold text-cyan-50/55 lg:w-80">
+                {copy.testnetApiSecret}
+                <input
+                  className="mt-2 w-full rounded-2xl border border-cyan-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
+                  type="password"
+                  value={binanceKeys.apiSecret}
+                  onChange={(event) => setBinanceKeys((prev) => ({ ...prev, apiSecret: event.target.value }))}
+                  placeholder="Binance Demo secret"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={saveBinanceKeys}
+                  className="rounded-2xl border border-cyan-200/20 bg-cyan-300/12 px-4 py-3 text-xs font-black text-cyan-100"
+                >
+                  {copy.testnetSaveKeys}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearBinanceKeys}
+                  className="rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-xs font-black text-amber-100"
+                >
+                  {copy.testnetClearKeys}
+                </button>
+              </div>
+            </div>
+          </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h3 className="text-lg font-black text-white">{copy.testnetAccount}</h3>
               <p className="mt-1 text-xs leading-5 text-cyan-50/60">
-                状态：{testnet.status || 'loading'} · 执行：{cryptoDashboard?.data_policy?.order_mode || '-'} · 主网下单：禁止
+                状态：{testnet.status || 'loading'} · 执行：{cryptoDashboard?.data_policy?.order_mode || '-'} · 主网下单：禁止 · Demo 订单页：Futures Order
               </p>
               {testnet.error ? <p className="mt-2 text-xs font-bold text-amber-200">Testnet 提示：{testnet.error}</p> : null}
             </div>
@@ -441,11 +554,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <TestnetTable title={copy.testnetPositions} rows={testnetPositions} type="positions" />
             <TestnetTable title={copy.testnetOrders} rows={testnetOrders} type="orders" />
           </div>
-        </div> : (
-          <div className="mt-5 rounded-[24px] border border-amber-200/15 bg-amber-300/[0.06] p-4 text-sm leading-6 text-amber-50/75">
-            {copy.testnetLockedHint}
-          </div>
-        )}
+        </div>
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <div className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">

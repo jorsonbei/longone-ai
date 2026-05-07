@@ -110,12 +110,27 @@ function configuredHfcdApiKeys(env: Env) {
     .filter(Boolean);
 }
 
-function hasPrivateTradingControl(request: Request, env: Env) {
+type BinanceTestnetCredentials = {
+  apiKey: string;
+  apiSecret: string;
+};
+
+function requestBinanceTestnetCredentials(request: Request): BinanceTestnetCredentials | null {
+  const apiKey = String(request.headers.get('x-binance-testnet-api-key') || '').trim();
+  const apiSecret = String(request.headers.get('x-binance-testnet-api-secret') || '').trim();
+  return apiKey && apiSecret ? { apiKey, apiSecret } : null;
+}
+
+function hasAdminPrivateTradingControl(request: Request, env: Env) {
   const configuredKeys = configuredHfcdApiKeys(env);
   if (configuredKeys.length === 0) return false;
   const authorization = request.headers.get('authorization') || '';
   const key = request.headers.get('x-api-key') || authorization.replace(/^Bearer\s+/i, '');
   return configuredKeys.includes(key);
+}
+
+function hasPrivateTradingControl(request: Request, env: Env) {
+  return Boolean(requestBinanceTestnetCredentials(request) || hasAdminPrivateTradingControl(request, env));
 }
 
 function assertPrivateTradingControl(request: Request, env: Env) {
@@ -127,11 +142,23 @@ function assertPrivateTradingControl(request: Request, env: Env) {
 function privateTradingControlLockedJson() {
   return json({
     ok: false,
-    error: 'Private exchange control is locked. Public users can use paper mode only.',
+    error: '请先填写 Binance Demo/Testnet API key 和 secret；没有密钥时只能使用本地 paper 模拟账本。',
   }, {
     status: 403,
     headers: { 'Cache-Control': 'no-store' },
   });
+}
+
+function binanceTestnetCredentialsForRequest(request: Request, env: Env): BinanceTestnetCredentials | null {
+  const requestCredentials = requestBinanceTestnetCredentials(request);
+  if (requestCredentials) return requestCredentials;
+  if (hasAdminPrivateTradingControl(request, env) && env.BINANCE_TESTNET_API_KEY && env.BINANCE_TESTNET_API_SECRET) {
+    return {
+      apiKey: String(env.BINANCE_TESTNET_API_KEY),
+      apiSecret: String(env.BINANCE_TESTNET_API_SECRET),
+    };
+  }
+  return null;
 }
 
 async function callGoogleApi(env: Env, url: string, init: RequestInit = {}) {
@@ -1009,7 +1036,7 @@ const CRYPTO_TESTNET_SYMBOLS = [
   { symbol: 'ETHUSDT', name: 'Ethereum USDT Perpetual', cadence: '2h', route: 'eth_main_2h_v2_11' },
 ];
 const CRYPTO_TESTNET_FEE_RATE = 0.0004;
-const BINANCE_TESTNET_BASE_URL = 'https://testnet.binancefuture.com';
+const BINANCE_TESTNET_BASE_URL = 'https://demo-fapi.binance.com';
 const GOLD_TRADING_VERSION = 'HFCD_Trading_V1_1_GoldBidirectionalPaperEngine';
 const GOLD_SYMBOL = 'GC=F';
 const GOLD_FALLBACK_SYMBOL = 'GLD';
@@ -2042,13 +2069,13 @@ function cryptoTestnetStorageUserId(userId: string) {
   return `crypto_testnet_${String(userId).replace(/[^\w.-]/g, '_').slice(0, 64)}`;
 }
 
-function binanceTestnetConfigured(env: Env) {
-  return Boolean(env.BINANCE_TESTNET_API_KEY && env.BINANCE_TESTNET_API_SECRET);
+function binanceTestnetConfigured(env: Env, credentials?: BinanceTestnetCredentials | null) {
+  return Boolean((credentials?.apiKey && credentials?.apiSecret) || (env.BINANCE_TESTNET_API_KEY && env.BINANCE_TESTNET_API_SECRET));
 }
 
-function binanceTestnetAssertConfigured(env: Env) {
-  if (!binanceTestnetConfigured(env)) {
-    throw new Error('Binance Testnet API key/secret not configured in Worker secrets.');
+function binanceTestnetAssertConfigured(env: Env, credentials?: BinanceTestnetCredentials | null) {
+  if (!binanceTestnetConfigured(env, credentials)) {
+    throw new Error('Binance Demo/Testnet API key/secret not configured.');
   }
 }
 
@@ -2071,8 +2098,12 @@ async function hmacSha256Hex(secret: string, message: string) {
   return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function binanceTestnetSignedRequest(env: Env, method: string, path: string, params: Record<string, string | number | boolean> = {}) {
-  binanceTestnetAssertConfigured(env);
+async function binanceTestnetSignedRequest(env: Env, method: string, path: string, params: Record<string, string | number | boolean> = {}, credentials?: BinanceTestnetCredentials | null) {
+  binanceTestnetAssertConfigured(env, credentials);
+  const resolvedCredentials = credentials || {
+    apiKey: String(env.BINANCE_TESTNET_API_KEY),
+    apiSecret: String(env.BINANCE_TESTNET_API_SECRET),
+  };
   const payload: Record<string, string | number | boolean> = {
     recvWindow: 5000,
     ...params,
@@ -2084,12 +2115,12 @@ async function binanceTestnetSignedRequest(env: Env, method: string, path: strin
     if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
   }
   const query = search.toString();
-  const signature = await hmacSha256Hex(String(env.BINANCE_TESTNET_API_SECRET), query);
+  const signature = await hmacSha256Hex(resolvedCredentials.apiSecret, query);
   const url = `${BINANCE_TESTNET_BASE_URL}${path}?${query}&signature=${signature}`;
   const response = await fetch(url, {
     method,
     headers: {
-      'X-MBX-APIKEY': String(env.BINANCE_TESTNET_API_KEY),
+      'X-MBX-APIKEY': resolvedCredentials.apiKey,
       accept: 'application/json',
       'user-agent': 'HFCD-ThingNature-OS/1.0',
     },
@@ -2113,7 +2144,7 @@ async function binanceTestnetMarketOrder(env: Env, params: {
   quantity: number;
   reduceOnly?: boolean;
   clientOrderId?: string;
-}) {
+}, credentials?: BinanceTestnetCredentials | null) {
   const quantity = cryptoTestnetQuantity(params.symbol, params.quantity);
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid Binance Testnet quantity for ${params.symbol}.`);
   const orderParams: Record<string, string | number | boolean> = {
@@ -2124,11 +2155,11 @@ async function binanceTestnetMarketOrder(env: Env, params: {
     newClientOrderId: params.clientOrderId || `hfcd_${Date.now()}_${params.symbol}`,
   };
   if (params.reduceOnly) orderParams.reduceOnly = 'true';
-  return binanceTestnetSignedRequest(env, 'POST', '/fapi/v1/order', orderParams);
+  return binanceTestnetSignedRequest(env, 'POST', '/fapi/v1/order', orderParams, credentials);
 }
 
-async function binanceTestnetAccountSnapshot(env: Env) {
-  if (!binanceTestnetConfigured(env)) {
+async function binanceTestnetAccountSnapshot(env: Env, credentials?: BinanceTestnetCredentials | null) {
+  if (!binanceTestnetConfigured(env, credentials)) {
     return {
       configured: false,
       mode: 'not_configured',
@@ -2140,9 +2171,9 @@ async function binanceTestnetAccountSnapshot(env: Env) {
   }
   try {
     const [account, positions, openOrders] = await Promise.all([
-      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/account'),
-      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk'),
-      binanceTestnetSignedRequest(env, 'GET', '/fapi/v1/openOrders'),
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/account', {}, credentials),
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk', {}, credentials),
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v1/openOrders', {}, credentials),
     ]);
     const symbols = new Set(CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol));
     const filteredPositions = (Array.isArray(positions) ? positions : [])
@@ -2195,18 +2226,18 @@ async function binanceTestnetAccountSnapshot(env: Env) {
   }
 }
 
-async function binanceTestnetCloseAll(env: Env) {
-  binanceTestnetAssertConfigured(env);
+async function binanceTestnetCloseAll(env: Env, credentials?: BinanceTestnetCredentials | null) {
+  binanceTestnetAssertConfigured(env, credentials);
   const report: any = { cancelled: [], closed: [], errors: [] };
   for (const symbol of CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol)) {
     try {
-      await binanceTestnetSignedRequest(env, 'DELETE', '/fapi/v1/allOpenOrders', { symbol });
+      await binanceTestnetSignedRequest(env, 'DELETE', '/fapi/v1/allOpenOrders', { symbol }, credentials);
       report.cancelled.push(symbol);
     } catch (error) {
       report.errors.push({ symbol, action: 'cancel_open_orders', error: error instanceof Error ? error.message : String(error) });
     }
   }
-  const positions = await binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk');
+  const positions = await binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk', {}, credentials);
   for (const pos of Array.isArray(positions) ? positions : []) {
     if (!CRYPTO_TESTNET_SYMBOLS.some((row) => row.symbol === pos.symbol)) continue;
     const amt = Number(pos.positionAmt || 0);
@@ -2219,7 +2250,7 @@ async function binanceTestnetCloseAll(env: Env) {
         quantity: Math.abs(amt),
         reduceOnly: true,
         clientOrderId: `hfcd_close_${Date.now()}_${pos.symbol}`,
-      });
+      }, credentials);
       report.closed.push({ symbol: pos.symbol, side, quantity: Math.abs(amt), order_id: order.orderId });
     } catch (error) {
       report.errors.push({ symbol: pos.symbol, action: 'close_position', error: error instanceof Error ? error.message : String(error) });
@@ -2518,7 +2549,7 @@ function canOpenCryptoTestnetPosition(signal: any, state: any) {
   return '';
 }
 
-async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
+async function openCryptoTestnetPosition(env: Env, state: any, signal: any, credentials?: BinanceTestnetCredentials | null) {
   const cfg = state.config || {};
   const maxByEquity = Number(state.equity_usd || state.initial_cash_usd || 0) * 0.25;
   const notional = Math.min(Number(cfg.fixed_trade_usd || 1_000), maxByEquity);
@@ -2536,7 +2567,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
       quantity,
       reduceOnly: false,
       clientOrderId: `hfcd_open_${Date.now()}_${signal.symbol}`,
-    });
+    }, credentials);
   }
   const pos = {
     position_id: `CT-${Date.now()}-${signal.symbol}`,
@@ -2593,7 +2624,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
   return trade;
 }
 
-async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal: any, reason: string) {
+async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal: any, reason: string, credentials?: BinanceTestnetCredentials | null) {
   const exitPrice = pos.side === 'short'
     ? Number(signal?.ask_price || signal?.price || pos.last_price || pos.entry_price)
     : Number(signal?.bid_price || signal?.price || pos.last_price || pos.entry_price);
@@ -2608,7 +2639,7 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
       quantity: Number(pos.quantity || 0),
       reduceOnly: true,
       clientOrderId: `hfcd_close_${Date.now()}_${pos.symbol}`,
-    });
+    }, credentials);
   }
   state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
   const trade = {
@@ -2640,7 +2671,7 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
   return trade;
 }
 
-async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false) {
+async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false, credentials?: BinanceTestnetCredentials | null) {
   const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
   const signals = snapshot.signals || [];
   const remaining: any[] = [];
@@ -2654,7 +2685,7 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
       const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
       try {
-        await closeCryptoTestnetPosition(env, state, pos, signal, reason);
+        await closeCryptoTestnetPosition(env, state, pos, signal, reason, credentials);
         closed += 1;
       } catch (error) {
         remaining.push({
@@ -2676,7 +2707,7 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
       const reason = canOpenCryptoTestnetPosition(signal, state);
       if (!reason) {
         try {
-          await openCryptoTestnetPosition(env, state, signal);
+          await openCryptoTestnetPosition(env, state, signal, credentials);
           opened += 1;
         } catch (error) {
           await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
@@ -2735,8 +2766,9 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
   markCryptoTestnetEquity(state, snapshot.signals);
   const trades = await recentCryptoTestnetTrades(env, userId, 180);
   const privateControl = hasPrivateTradingControl(request, env);
+  const testnetCredentials = binanceTestnetCredentialsForRequest(request, env);
   const testnet = privateControl
-    ? await binanceTestnetAccountSnapshot(env)
+    ? await binanceTestnetAccountSnapshot(env, testnetCredentials)
     : {
         configured: binanceTestnetConfigured(env),
         mode: 'binance_futures_testnet',
@@ -2758,7 +2790,7 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       production_mainnet_orders: false,
       realtime_source: 'Binance USD-M Futures public endpoints',
       note: state.config?.order_execution === 'binance_testnet'
-        ? '当前执行模式为 Binance Futures Testnet，只向 testnet.binancefuture.com 发测试网订单，不连接主网。'
+        ? '当前执行模式为 Binance Futures Demo/Testnet，只向 demo-fapi.binance.com 发测试网订单，不连接主网。'
         : '当前执行模式为 D1 paper/testnet mirror，只写模拟账本，不向交易所发订单。',
     },
     market_health: {
@@ -2812,7 +2844,7 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
   };
   if (state.config.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
-    binanceTestnetAssertConfigured(env);
+    binanceTestnetAssertConfigured(env, binanceTestnetCredentialsForRequest(request, env));
   }
   if (body.capital_usd && isFresh) {
     state.initial_cash_usd = Number(body.capital_usd);
@@ -2823,7 +2855,7 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
   state.mode = 'running';
   state.started_at = state.started_at || energyIso();
   state.stopped_at = '';
-  const result = await cryptoTestnetTickInternal(env, state, false);
+  const result = await cryptoTestnetTickInternal(env, state, false, binanceTestnetCredentialsForRequest(request, env));
   state.last_tick_at = energyIso();
   await saveCryptoTestnetAccount(env, state);
   return json({ ok: true, action: 'started', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
@@ -2836,7 +2868,7 @@ async function cryptoTestnetTick(request: Request, env: Env, url: URL) {
   if (state.config?.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
   }
-  const result = await cryptoTestnetTickInternal(env, state, false);
+  const result = await cryptoTestnetTickInternal(env, state, false, binanceTestnetCredentialsForRequest(request, env));
   state.last_tick_at = energyIso();
   await saveCryptoTestnetAccount(env, state);
   return json({ ok: true, user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
@@ -2850,11 +2882,12 @@ async function cryptoTestnetStop(request: Request, env: Env, url: URL) {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
   }
   const shouldLiquidate = Boolean(body?.liquidate !== false);
-  const result = await cryptoTestnetTickInternal(env, state, shouldLiquidate);
+  const testnetCredentials = binanceTestnetCredentialsForRequest(request, env);
+  const result = await cryptoTestnetTickInternal(env, state, shouldLiquidate, testnetCredentials);
   let testnetCloseAll: any = null;
   if (shouldLiquidate && (state.config?.order_execution === 'binance_testnet' || body?.testnet_close_all === true) && state.config?.testnet_close_all_on_stop !== false) {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
-    testnetCloseAll = await binanceTestnetCloseAll(env);
+    testnetCloseAll = await binanceTestnetCloseAll(env, testnetCredentials);
   }
   state.mode = 'stopped';
   state.stopped_at = energyIso();
@@ -2868,7 +2901,7 @@ async function cryptoTestnetReconcile(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
-  const testnet = await binanceTestnetAccountSnapshot(env);
+  const testnet = await binanceTestnetAccountSnapshot(env, binanceTestnetCredentialsForRequest(request, env));
   state.last_reconcile_at = energyIso();
   state.last_testnet_status = testnet.status;
   await saveCryptoTestnetAccount(env, state);
@@ -2880,8 +2913,9 @@ async function cryptoTestnetCloseAll(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
-  const result = await binanceTestnetCloseAll(env);
-  const tick = await cryptoTestnetTickInternal(env, state, true);
+  const testnetCredentials = binanceTestnetCredentialsForRequest(request, env);
+  const result = await binanceTestnetCloseAll(env, testnetCredentials);
+  const tick = await cryptoTestnetTickInternal(env, state, true, testnetCredentials);
   state.mode = 'stopped';
   state.stopped_at = energyIso();
   state.last_tick_at = energyIso();
