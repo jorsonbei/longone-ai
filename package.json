@@ -106,7 +106,8 @@
     "trading:v3.0:shortvol": "python3 scripts/hfcd_trading_v3_0_shortvol_opportunity_engine.py",
     "trading:v3.2:short-side-blind": "python3 scripts/hfcd_trading_v3_2_short_side_blind_repair.py",
     "trading:v3.3:short-side-extended": "python3 scripts/hfcd_trading_v3_3_short_side_extended_blind.py",
-    "trading:v3.4:crypto-short-deep-history": "python3 scripts/hfcd_trading_v3_4_crypto_short_deep_history_blind.py"
+    "trading:v3.4:crypto-short-deep-history": "python3 scripts/hfcd_trading_v3_4_crypto_short_deep_history_blind.py",
+    "trading:v3.5:short-sensor-upgrade": "python3 scripts/hfcd_trading_v3_5_short_sensor_upgrade.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

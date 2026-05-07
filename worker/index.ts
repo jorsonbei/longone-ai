@@ -1030,7 +1030,7 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
-const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V3_1_ShortVolForwardLedger';
+const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V3_5_ShortSensorUpgrade';
 const CRYPTO_TESTNET_SYMBOLS: any[] = [
   {
     symbol: 'BTCUSDT',
@@ -1046,6 +1046,7 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     exchange_tradeable: true,
     quantity_precision: 3,
     min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
     blind_test: { test_net_pnl_usd: 14.25, profit_factor: 1.64, policy: '1h long_only' },
   },
   {
@@ -1062,6 +1063,7 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     exchange_tradeable: true,
     quantity_precision: 1,
     min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
     blind_test: { test_net_pnl_usd: 14.68, profit_factor: 1.33, policy: '1h long_only' },
   },
   {
@@ -1077,6 +1079,7 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
     estimated_spread_bps: 1.5,
     blind_test: { test_net_pnl_usd: 30.89, profit_factor: 6.57, policy: '1h long_only' },
   },
@@ -1093,6 +1096,7 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
     estimated_spread_bps: 1.8,
     blind_test: { test_net_pnl_usd: 59.66, profit_factor: 3.70, policy: '15m long_only' },
   },
@@ -1104,13 +1108,25 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     route: 'iwm_shortvol_1h_v3_0',
     route_status: 'main',
     side_policy: 'both',
-    validated_side_policy: 'long_only',
-    short_policy_status: 'forward_shadow_enabled',
+    validated_side_policy: 'both',
+    short_policy_status: 'v3_5_short_sensor_blind_promoted',
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
+    short_min_signal_score: 0.60,
     estimated_spread_bps: 2.5,
     blind_test: { test_net_pnl_usd: 26.57, profit_factor: 4.51, policy: '1h long_only' },
+    short_blind_test: {
+      version: 'HFCD_Trading_V3_5_ShortSensorUpgrade',
+      policy: '1h short_only threshold=0.60 hold=3',
+      validation_trades: 60,
+      validation_net_pnl_usd: 79.0486,
+      validation_profit_factor: 1.435415,
+      test_trades: 86,
+      test_net_pnl_usd: 95.4233,
+      test_profit_factor: 1.341328,
+    },
   },
 ];
 const CRYPTO_TESTNET_FEE_RATE = 0.0004;
@@ -2600,7 +2616,6 @@ async function fetchCryptoTestnetSeries(symbol: string) {
 
 function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
   const meta = cryptoRouteMeta(series.symbol);
-  const effectiveThreshold = Math.max(Number(minSignalScore || 0.66), Number(meta.min_signal_score || 0.66));
   const rows = series.rows || [];
   const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
   const volumes = rows.map((row: any) => Number(row.volume || 0));
@@ -2626,6 +2641,9 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
   const darkForestBoost = Math.max(-0.12, Math.min(0.12, depthImbalance * 0.18 - Math.sign(trendZ || 1) * funding * 80));
   const directionalScore = Math.max(0, Math.abs(trendZ) * 0.58 + Math.abs(depthImbalance) * 0.18 + volumePulse + darkForestBoost - spreadPenalty - fundingPenalty);
   const rawAction = trendZ >= 0 ? 'BUY_LONG' : 'SELL_SHORT';
+  const longThreshold = Math.max(Number(minSignalScore || 0.66), Number(meta.long_min_signal_score || meta.min_signal_score || 0.66));
+  const shortThreshold = Math.max(Number(meta.short_min_signal_score || meta.min_signal_score || minSignalScore || 0.66), 0.0);
+  const effectiveThreshold = rawAction === 'SELL_SHORT' ? shortThreshold : longThreshold;
   let action = directionalScore >= effectiveThreshold ? rawAction : 'NO_TRADE';
   let routeRejectReason = '';
   const shortForwardOnly = action === 'SELL_SHORT' && meta.validated_side_policy === 'long_only';
@@ -2692,8 +2710,8 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
     generated_at: energyIso(),
     source_status: signals.every((signal) => signal.is_real_market_data) ? 'public_realtime_mixed_binance_yahoo' : 'mixed_or_fallback',
     order_mode: 'shortvol_forward_ledger_configurable_testnet_mirror',
-    main_side_policy: 'route_bidirectional_with_long_blind_validation',
-    route_set: 'v3_0_blind_test_passed_routes',
+    main_side_policy: 'route_bidirectional_with_long_blind_validation_and_iwm_short_v3_5',
+    route_set: 'v3_1_long_routes_plus_v3_5_iwm_short',
     selected_routes: CRYPTO_TESTNET_SYMBOLS.map((row) => ({
       symbol: row.symbol,
       route: row.route,
@@ -2704,6 +2722,7 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
       asset_class: row.asset_class,
       execution_venue: row.exchange_tradeable ? 'binance_testnet_or_paper' : 'paper_only',
       blind_test: row.blind_test || null,
+      short_blind_test: row.short_blind_test || null,
     })),
     signals,
     sensors: signals.map((signal) => ({

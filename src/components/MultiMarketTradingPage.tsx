@@ -444,7 +444,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               {route.validated_side_policy === 'long_only' && route.side_policy === 'both' ? (
                 <p className="mt-1 text-[11px] leading-4 text-amber-100/70">多头盲测通过；空头仅前向验证</p>
               ) : null}
-              <p className="mt-1 text-[11px] text-emerald-200/75">PF {numberText(route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
+              {route.validated_side_policy === 'both' ? (
+                <p className="mt-1 text-[11px] leading-4 text-emerald-200/75">多空盲测通过{route.short_blind_test ? `；空头 PF ${numberText(route.short_blind_test?.test_profit_factor, 2)} / ${money(route.short_blind_test?.test_net_pnl_usd)}` : ''}</p>
+              ) : null}
+              <p className="mt-1 text-[11px] text-emerald-200/75">多头 PF {numberText(route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
             </div>
           ))}
         </div>
