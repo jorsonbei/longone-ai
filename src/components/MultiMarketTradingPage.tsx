@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Locale } from '../lib/locale';
 
 type Props = {
@@ -12,7 +12,7 @@ const COPY: Record<string, Record<string, string>> = {
     title: '加密货币 / 股指 ETF AI 前向账本',
     subtitle: '接入 V3.0 盲测通过路线：BTCUSDT 1h、SOLUSDT 1h、SPY 1h、QQQ 15m、IWM 1h。BTC/SOL 可走 Binance Demo Testnet；ETF 只写本地 paper 账本。',
     model: '模型说明',
-    modelText: '该模块复用 HFCD 的频率路由、黑暗森林传感器和 V3.0 盲测通过路线；所有主路线冻结为 long_only，只在趋势、成交/深度、资金费率或 ETF 动量共振达标时写入前向账本。',
+    modelText: '该模块复用 HFCD 的频率路由、黑暗森林传感器和 V3.0 盲测通过路线；多头为盲测通过主线，做空已开放为前向验证路线，只在趋势、成交/深度、资金费率或 ETF 动量共振达标时写入账本。',
     goldEntry: '进入黄金专属交易',
     goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
     cryptoPanel: 'V3.1 短波动前向账本',
@@ -81,7 +81,7 @@ const COPY: Record<string, Record<string, string>> = {
     title: 'AI Forward Ledger for Crypto and Equity ETFs',
     subtitle: 'Runs V3.0 blind-test passed routes: BTCUSDT 1h, SOLUSDT 1h, SPY 1h, QQQ 15m, IWM 1h. BTC/SOL can use Binance Demo Testnet; ETFs stay paper-only.',
     model: 'Model',
-    modelText: 'This module applies HFCD frequency routing, DarkForest sensors, and the V3.0 blind-test passed routes. Main routes are frozen as long-only and write to the forward ledger only when route gates pass.',
+    modelText: 'This module applies HFCD frequency routing, DarkForest sensors, and the V3.0 blind-test passed routes. Long entries are the blind-test-promoted baseline; shorts are enabled as forward-validation routes and write only when route gates pass.',
     goldEntry: 'Open dedicated gold trading',
     goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
     cryptoPanel: 'V3.1 Short-Vol Forward Ledger',
@@ -203,6 +203,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const [cryptoDashboard, setCryptoDashboard] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const userEditedCryptoConfig = useRef(false);
   const [cryptoConfig, setCryptoConfig] = useState({
     capital_usd: 100_000,
     fixed_trade_usd: 1_000,
@@ -277,6 +278,23 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     });
     const data = await res.json();
     setCryptoDashboard(data);
+    const remoteConfig = data?.summary?.config;
+    if (remoteConfig && typeof remoteConfig === 'object' && !userEditedCryptoConfig.current) {
+      setCryptoConfig((prev) => ({
+        ...prev,
+        capital_usd: Number(remoteConfig.capital_usd || data?.summary?.initial_cash_usd || prev.capital_usd),
+        fixed_trade_usd: Number(remoteConfig.fixed_trade_usd || prev.fixed_trade_usd),
+        max_open_positions: Number(remoteConfig.max_open_positions || prev.max_open_positions),
+        max_symbol_positions: Number(remoteConfig.max_symbol_positions || prev.max_symbol_positions),
+        stop_loss_pct: Number(remoteConfig.stop_loss_pct || prev.stop_loss_pct),
+        take_profit_pct: Number(remoteConfig.take_profit_pct || prev.take_profit_pct),
+        min_signal_score: Number(remoteConfig.min_signal_score || prev.min_signal_score),
+        max_holding_minutes: Number(remoteConfig.max_holding_minutes || prev.max_holding_minutes),
+        side_policy: String(remoteConfig.side_policy || prev.side_policy),
+        order_execution: String(remoteConfig.order_execution || prev.order_execution),
+        testnet_close_all_on_stop: remoteConfig.testnet_close_all_on_stop !== false,
+      }));
+    }
   }, [cryptoUserId, exchangeHeaders]);
 
   const parseActionResponse = useCallback(async (res: Response) => {
@@ -310,6 +328,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       });
       await parseActionResponse(res);
       setMessage('加密交易操作已完成。');
+      userEditedCryptoConfig.current = false;
       await loadCryptoDashboard();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '加密交易操作失败。');
@@ -325,13 +344,13 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   useEffect(() => {
     const timer = window.setInterval(async () => {
       if (cryptoDashboard?.summary?.mode === 'running') {
-        await postCryptoAction('/api/crypto-testnet/tick');
+        await postCryptoAction('/api/crypto-testnet/tick', cryptoConfig);
       } else {
         await loadCryptoDashboard().catch(() => undefined);
       }
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
+  }, [cryptoConfig, cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
 
   const cryptoSummary = cryptoDashboard?.summary;
   const cryptoSignals = cryptoDashboard?.signals || [];
@@ -406,7 +425,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 type="number"
                 step={key.includes('pct') || key.includes('score') ? '0.001' : '1'}
                 value={(cryptoConfig as any)[key]}
-                onChange={(event) => setCryptoConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }))}
+                onChange={(event) => {
+                  userEditedCryptoConfig.current = true;
+                  setCryptoConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }));
+                }}
               />
             </label>
           ))}
@@ -417,8 +439,11 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <div key={`route-${route.symbol}`} className="rounded-2xl border border-emerald-200/10 bg-black/18 p-3">
               <p className="text-sm font-black text-white">{route.symbol}</p>
               <p className="mt-1 text-[11px] leading-4 text-emerald-50/55">
-                {route.cadence} · {route.side_policy === 'long_only' ? '只做多' : route.side_policy} · {route.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
+                {route.cadence} · {route.side_policy === 'both' ? '多空' : route.side_policy === 'long_only' ? '只做多' : route.side_policy} · {route.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
               </p>
+              {route.validated_side_policy === 'long_only' && route.side_policy === 'both' ? (
+                <p className="mt-1 text-[11px] leading-4 text-amber-100/70">多头盲测通过；空头仅前向验证</p>
+              ) : null}
               <p className="mt-1 text-[11px] text-emerald-200/75">PF {numberText(route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
             </div>
           ))}
@@ -430,7 +455,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <select
               className="mt-2 w-full rounded-2xl border border-emerald-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
               value={cryptoConfig.side_policy}
-              onChange={(event) => setCryptoConfig((prev) => ({ ...prev, side_policy: event.target.value }))}
+              onChange={(event) => {
+                userEditedCryptoConfig.current = true;
+                setCryptoConfig((prev) => ({ ...prev, side_policy: event.target.value }));
+              }}
             >
               <option value="both">{copy.both}</option>
               <option value="long_only">{copy.longOnly}</option>
@@ -442,7 +470,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <select
               className="mt-2 w-full rounded-2xl border border-emerald-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
               value={cryptoConfig.order_execution}
-              onChange={(event) => setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }))}
+              onChange={(event) => {
+                userEditedCryptoConfig.current = true;
+                setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }));
+              }}
             >
               <option value="paper">{copy.paperMode}</option>
               <option value="binance_testnet">{copy.binanceTestnetMode}</option>
@@ -454,7 +485,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               <input
                 type="checkbox"
                 checked={cryptoConfig.testnet_close_all_on_stop}
-                onChange={(event) => setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }))}
+                onChange={(event) => {
+                  userEditedCryptoConfig.current = true;
+                  setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }));
+                }}
                 className="h-4 w-4 accent-emerald-300"
               />
               停止时同步 Testnet 平仓
@@ -462,7 +496,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           ) : null}
           <div className="flex flex-wrap gap-3">
             <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', cryptoConfig)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick')} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick', cryptoConfig)} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
             {canRequestExchangeExecution ? (
               <>

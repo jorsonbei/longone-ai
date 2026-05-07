@@ -1039,7 +1039,9 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     cadence: '1h',
     route: 'btc_shortvol_1h_v3_0',
     route_status: 'main',
-    side_policy: 'long_only',
+    side_policy: 'both',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'forward_shadow_enabled',
     market_data_source: 'binance_futures_public',
     exchange_tradeable: true,
     quantity_precision: 3,
@@ -1053,7 +1055,9 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     cadence: '1h',
     route: 'sol_shortvol_1h_v3_0',
     route_status: 'main',
-    side_policy: 'long_only',
+    side_policy: 'both',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'forward_shadow_enabled',
     market_data_source: 'binance_futures_public',
     exchange_tradeable: true,
     quantity_precision: 1,
@@ -1067,7 +1071,9 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     cadence: '1h',
     route: 'spy_shortvol_1h_v3_0',
     route_status: 'main',
-    side_policy: 'long_only',
+    side_policy: 'both',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'forward_shadow_enabled',
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
@@ -1081,7 +1087,9 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     cadence: '15m',
     route: 'qqq_shortvol_15m_v3_0',
     route_status: 'main',
-    side_policy: 'long_only',
+    side_policy: 'both',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'forward_shadow_enabled',
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
@@ -1095,7 +1103,9 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     cadence: '1h',
     route: 'iwm_shortvol_1h_v3_0',
     route_status: 'main',
-    side_policy: 'long_only',
+    side_policy: 'both',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'forward_shadow_enabled',
     market_data_source: 'yahoo_chart',
     exchange_tradeable: false,
     min_signal_score: 0.66,
@@ -2382,6 +2392,26 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   return normalized;
 }
 
+function mergeCryptoTestnetConfig(state: any, body: any = {}) {
+  const current = state.config || {};
+  const has = (key: string) => body && body[key] !== undefined && body[key] !== null && body[key] !== '';
+  return {
+    ...current,
+    fixed_trade_usd: Number(has('fixed_trade_usd') ? body.fixed_trade_usd : has('max_order_usd') ? body.max_order_usd : current.fixed_trade_usd || 1_000),
+    max_open_positions: Number(has('max_open_positions') ? body.max_open_positions : current.max_open_positions || 4),
+    max_symbol_positions: Number(has('max_symbol_positions') ? body.max_symbol_positions : current.max_symbol_positions || 1),
+    stop_loss_pct: Number(has('stop_loss_pct') ? body.stop_loss_pct : current.stop_loss_pct || 0.018),
+    take_profit_pct: Number(has('take_profit_pct') ? body.take_profit_pct : current.take_profit_pct || 0.036),
+    min_signal_score: Number(has('min_signal_score') ? body.min_signal_score : current.min_signal_score || 0.66),
+    max_holding_minutes: Number(has('max_holding_minutes') ? body.max_holding_minutes : current.max_holding_minutes || 8 * 60),
+    side_policy: String(has('side_policy') ? body.side_policy : current.side_policy || 'both'),
+    allow_short: body.allow_short !== false,
+    order_execution: String(has('order_execution') ? body.order_execution : current.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper',
+    testnet_close_all_on_stop: has('testnet_close_all_on_stop') ? body.testnet_close_all_on_stop !== false : current.testnet_close_all_on_stop !== false,
+    strategy: String(has('strategy') ? body.strategy : current.strategy || 'v3_1_shortvol_bidirectional_forward_ledger'),
+  };
+}
+
 async function loadCryptoTestnetAccount(env: Env, userId: string, body: any = {}) {
   const storageId = cryptoTestnetStorageUserId(userId);
   const db = await ensureMarketTradingDb(env);
@@ -2598,10 +2628,7 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
   const rawAction = trendZ >= 0 ? 'BUY_LONG' : 'SELL_SHORT';
   let action = directionalScore >= effectiveThreshold ? rawAction : 'NO_TRADE';
   let routeRejectReason = '';
-  if (action === 'SELL_SHORT' && meta.side_policy === 'long_only') {
-    action = 'NO_TRADE';
-    routeRejectReason = 'V3.0 盲测通过路线冻结为只做多，当前为空头信号';
-  }
+  const shortForwardOnly = action === 'SELL_SHORT' && meta.validated_side_policy === 'long_only';
   const side = action === 'BUY_LONG' ? 'long' : action === 'SELL_SHORT' ? 'short' : '-';
   const latestTs = rows[rows.length - 1]?.ts || energyIso();
   const price = Number((series.sensors?.mark_price || last).toFixed(cryptoRoutePriceDigits(series.symbol)));
@@ -2617,6 +2644,9 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
     cadence: series.cadence,
     route_status: meta.route_status || 'main',
     route_side_policy: meta.side_policy || 'long_only',
+    validated_side_policy: meta.validated_side_policy || meta.side_policy || 'long_only',
+    short_policy_status: meta.short_policy_status || '',
+    signal_validation_status: shortForwardOnly ? 'short_forward_shadow_not_blind_promoted' : 'blind_promoted',
     execution_venue: series.sensors?.execution_venue || (meta.exchange_tradeable ? 'binance_futures_testnet_or_paper' : 'paper_only'),
     exchange_tradeable: Boolean(meta.exchange_tradeable),
     blind_test: meta.blind_test || null,
@@ -2662,13 +2692,15 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
     generated_at: energyIso(),
     source_status: signals.every((signal) => signal.is_real_market_data) ? 'public_realtime_mixed_binance_yahoo' : 'mixed_or_fallback',
     order_mode: 'shortvol_forward_ledger_configurable_testnet_mirror',
-    main_side_policy: 'route_long_only',
+    main_side_policy: 'route_bidirectional_with_long_blind_validation',
     route_set: 'v3_0_blind_test_passed_routes',
     selected_routes: CRYPTO_TESTNET_SYMBOLS.map((row) => ({
       symbol: row.symbol,
       route: row.route,
       cadence: row.cadence,
       side_policy: row.side_policy,
+      validated_side_policy: row.validated_side_policy || row.side_policy,
+      short_policy_status: row.short_policy_status || '',
       asset_class: row.asset_class,
       execution_venue: row.exchange_tradeable ? 'binance_testnet_or_paper' : 'paper_only',
       blind_test: row.blind_test || null,
@@ -2723,7 +2755,6 @@ function canOpenCryptoTestnetPosition(signal: any, state: any) {
   if (!signal.is_real_market_data) return '没有 Binance 真实公共行情，禁止开仓';
   if (signal.route_status && signal.route_status !== 'main') return '该路线仅旁路观察，不接主前向账本';
   if (!['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) return '信号未达加密交易标准';
-  if (signal.action === 'SELL_SHORT' && signal.route_side_policy === 'long_only') return '该 V3.0 通过路线只允许做多';
   if (signal.action === 'SELL_SHORT' && (cfg.allow_short === false || cfg.side_policy === 'long_only')) return '加密做空未启用';
   if (signal.action === 'BUY_LONG' && cfg.side_policy === 'short_only') return '加密做多未启用';
   if (Number(signal.score || 0) < Number(cfg.min_signal_score || 0.66)) return '加密稳定分数不足';
@@ -2808,7 +2839,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     exchange_order_id: exchangeOrder?.orderId || null,
     execution_mode: pos.execution_mode,
     reason: signal.exchange_tradeable
-      ? (side === 'short' ? 'V3.1 短波动路线按实时行情达标做空开仓' : 'V3.1 短波动路线按实时行情达标做多开仓')
+      ? (side === 'short' ? 'V3.1 短波动路线做空前向验证开仓' : 'V3.1 短波动路线按实时行情达标做多开仓')
       : 'V3.1 ETF 通过路线只写本地 paper 账本，不发送 Binance 订单',
   };
   await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
@@ -3019,21 +3050,7 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
   const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
   const state = body?.reset_account || isFresh ? defaultCryptoTestnetAccount(userId, body) : existing;
   state.display_user_id = userId;
-  state.config = {
-    ...(state.config || {}),
-    fixed_trade_usd: Number(body.fixed_trade_usd || body.max_order_usd || state.config?.fixed_trade_usd || 1_000),
-    max_open_positions: Number(body.max_open_positions || state.config?.max_open_positions || 4),
-    max_symbol_positions: Number(body.max_symbol_positions || state.config?.max_symbol_positions || 1),
-    stop_loss_pct: Number(body.stop_loss_pct || state.config?.stop_loss_pct || 0.018),
-    take_profit_pct: Number(body.take_profit_pct || state.config?.take_profit_pct || 0.036),
-    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || 0.66),
-    max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 8 * 60),
-    side_policy: String(body.side_policy || state.config?.side_policy || 'both'),
-    allow_short: body.allow_short !== false,
-    order_execution: String(body.order_execution || state.config?.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper',
-    testnet_close_all_on_stop: body.testnet_close_all_on_stop !== false,
-    strategy: String(body.strategy || state.config?.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
-  };
+  state.config = mergeCryptoTestnetConfig(state, body);
   if (state.config.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
     binanceTestnetAssertConfigured(env, binanceTestnetCredentialsForRequest(request, env));
@@ -3057,6 +3074,7 @@ async function cryptoTestnetTick(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
+  state.config = mergeCryptoTestnetConfig(state, body);
   if (state.config?.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
   }
