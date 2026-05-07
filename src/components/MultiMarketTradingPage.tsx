@@ -3,6 +3,7 @@ import type { Locale } from '../lib/locale';
 
 type Props = {
   locale: Locale;
+  canUseExchangeExecution?: boolean;
 };
 
 const COPY: Record<string, Record<string, string>> = {
@@ -21,6 +22,8 @@ const COPY: Record<string, Record<string, string>> = {
     orderExecution: '执行模式',
     paperMode: '本地模拟账本',
     binanceTestnetMode: 'Binance Testnet 下单',
+    privateLocked: '管理员私有控制',
+    testnetLockedHint: '普通用户只开放本地模拟账本；Binance Testnet 下单、账户对账和全部平仓需要管理员私有 API key。',
     both: '做多 + 做空',
     longOnly: '只做多',
     shortOnly: '只做空',
@@ -80,6 +83,8 @@ const COPY: Record<string, Record<string, string>> = {
     orderExecution: 'Execution mode',
     paperMode: 'Local paper ledger',
     binanceTestnetMode: 'Binance Testnet orders',
+    privateLocked: 'Admin private control',
+    testnetLockedHint: 'Public users can use local paper mode only. Binance Testnet orders, account reconciliation, and close-all require a private admin API key.',
     both: 'Long + Short',
     longOnly: 'Long only',
     shortOnly: 'Short only',
@@ -177,7 +182,7 @@ function translate(value?: string) {
   return actionText[value] || eventText[value] || reasonText[value] || value;
 }
 
-export default function MultiMarketTradingPage({ locale }: Props) {
+export default function MultiMarketTradingPage({ locale, canUseExchangeExecution = false }: Props) {
   const copy = COPY[locale] || COPY.zh;
   const [cryptoDashboard, setCryptoDashboard] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -204,19 +209,39 @@ export default function MultiMarketTradingPage({ locale }: Props) {
     return id;
   }, []);
 
+  const privateApiHeaders = useMemo(() => {
+    if (!canUseExchangeExecution || typeof window === 'undefined') return {};
+    try {
+      const raw = window.localStorage.getItem('hfcdApiKeysV1');
+      const keys = raw ? JSON.parse(raw) : [];
+      const key = Array.isArray(keys) ? keys[0]?.key : '';
+      return key ? { 'x-api-key': String(key) } : {};
+    } catch {
+      return {};
+    }
+  }, [canUseExchangeExecution]);
+
   const loadCryptoDashboard = useCallback(async () => {
-    const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, { cache: 'no-store' });
+    const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, {
+      cache: 'no-store',
+      headers: privateApiHeaders,
+    });
     const data = await res.json();
     setCryptoDashboard(data);
-  }, [cryptoUserId]);
+  }, [cryptoUserId, privateApiHeaders]);
 
   const postCryptoAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
     setLoading(true);
     try {
+      const safeBody = {
+        ...body,
+        order_execution: canUseExchangeExecution ? body.order_execution : 'paper',
+        testnet_close_all_on_stop: canUseExchangeExecution ? body.testnet_close_all_on_stop : false,
+      };
       const res = await fetch(path, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ user_id: cryptoUserId, ...body }),
+        headers: { 'content-type': 'application/json', ...privateApiHeaders },
+        body: JSON.stringify({ user_id: cryptoUserId, ...safeBody }),
       });
       const text = await res.text();
       const data = text ? JSON.parse(text) as { ok?: boolean; error?: string } : {};
@@ -228,7 +253,7 @@ export default function MultiMarketTradingPage({ locale }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [cryptoUserId, loadCryptoDashboard]);
+  }, [canUseExchangeExecution, cryptoUserId, loadCryptoDashboard, privateApiHeaders]);
 
   useEffect(() => {
     loadCryptoDashboard().catch(() => setMessage('读取加密 Testnet 镜像失败。'));
@@ -344,24 +369,31 @@ export default function MultiMarketTradingPage({ locale }: Props) {
               onChange={(event) => setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }))}
             >
               <option value="paper">{copy.paperMode}</option>
-              <option value="binance_testnet">{copy.binanceTestnetMode}</option>
+              {canUseExchangeExecution ? <option value="binance_testnet">{copy.binanceTestnetMode}</option> : null}
             </select>
+            {!canUseExchangeExecution ? <p className="mt-2 text-[11px] leading-4 text-amber-100/70">{copy.privateLocked}：{copy.testnetLockedHint}</p> : null}
           </label>
-          <label className="flex w-full items-center gap-3 rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3 text-xs font-bold text-emerald-50/65 md:w-auto">
-            <input
-              type="checkbox"
-              checked={cryptoConfig.testnet_close_all_on_stop}
-              onChange={(event) => setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }))}
-              className="h-4 w-4 accent-emerald-300"
-            />
-            停止时同步 Testnet 平仓
-          </label>
+          {canUseExchangeExecution ? (
+            <label className="flex w-full items-center gap-3 rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3 text-xs font-bold text-emerald-50/65 md:w-auto">
+              <input
+                type="checkbox"
+                checked={cryptoConfig.testnet_close_all_on_stop}
+                onChange={(event) => setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }))}
+                className="h-4 w-4 accent-emerald-300"
+              />
+              停止时同步 Testnet 平仓
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-3">
             <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', cryptoConfig)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick')} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile')} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100">{copy.reconcile}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all')} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100">{copy.closeAll}</button>
+            {canUseExchangeExecution ? (
+              <>
+                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile')} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100">{copy.reconcile}</button>
+                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all')} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100">{copy.closeAll}</button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -380,7 +412,7 @@ export default function MultiMarketTradingPage({ locale }: Props) {
           ))}
         </div>
 
-        <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
+        {canUseExchangeExecution ? <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h3 className="text-lg font-black text-white">{copy.testnetAccount}</h3>
@@ -409,7 +441,11 @@ export default function MultiMarketTradingPage({ locale }: Props) {
             <TestnetTable title={copy.testnetPositions} rows={testnetPositions} type="positions" />
             <TestnetTable title={copy.testnetOrders} rows={testnetOrders} type="orders" />
           </div>
-        </div>
+        </div> : (
+          <div className="mt-5 rounded-[24px] border border-amber-200/15 bg-amber-300/[0.06] p-4 text-sm leading-6 text-amber-50/75">
+            {copy.testnetLockedHint}
+          </div>
+        )}
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <div className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">

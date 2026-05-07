@@ -103,6 +103,27 @@ function assertHfcdApiKey(request: Request, env: Env) {
   return configuredKeys.includes(key);
 }
 
+function configuredHfcdApiKeys(env: Env) {
+  return (env.HFCD_API_KEYS || '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+}
+
+function hasPrivateTradingControl(request: Request, env: Env) {
+  const configuredKeys = configuredHfcdApiKeys(env);
+  if (configuredKeys.length === 0) return false;
+  const authorization = request.headers.get('authorization') || '';
+  const key = request.headers.get('x-api-key') || authorization.replace(/^Bearer\s+/i, '');
+  return configuredKeys.includes(key);
+}
+
+function assertPrivateTradingControl(request: Request, env: Env) {
+  if (!hasPrivateTradingControl(request, env)) {
+    throw new Error('Private exchange control is locked. Public users can use paper mode only.');
+  }
+}
+
 async function callGoogleApi(env: Env, url: string, init: RequestInit = {}) {
   const token = await getGoogleCloudAccessToken({ env });
   const response = await fetch(url, {
@@ -2703,7 +2724,17 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
   const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
   markCryptoTestnetEquity(state, snapshot.signals);
   const trades = await recentCryptoTestnetTrades(env, userId, 180);
-  const testnet = await binanceTestnetAccountSnapshot(env);
+  const privateControl = hasPrivateTradingControl(request, env);
+  const testnet = privateControl
+    ? await binanceTestnetAccountSnapshot(env)
+    : {
+        configured: binanceTestnetConfigured(env),
+        mode: 'binance_futures_testnet',
+        status: binanceTestnetConfigured(env) ? 'private_control_locked' : 'secrets_missing',
+        positions: [],
+        open_orders: [],
+        account: null,
+      };
   return json({
     ok: true,
     online_backend: Boolean(env.ENERGY_TRADING_DB),
@@ -2712,7 +2743,8 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
     updated_at: energyIso(),
     data_policy: {
       order_mode: state.config?.order_execution === 'binance_testnet' ? 'binance_futures_testnet_signed_orders' : 'paper/testnet-mirror-configurable',
-      real_exchange_orders: state.config?.order_execution === 'binance_testnet',
+      real_exchange_orders: state.config?.order_execution === 'binance_testnet' && privateControl,
+      private_exchange_control: privateControl,
       production_mainnet_orders: false,
       realtime_source: 'Binance USD-M Futures public endpoints',
       note: state.config?.order_execution === 'binance_testnet'
@@ -2769,6 +2801,7 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
     strategy: String(body.strategy || state.config?.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
   };
   if (state.config.order_execution === 'binance_testnet') {
+    assertPrivateTradingControl(request, env);
     binanceTestnetAssertConfigured(env);
   }
   if (body.capital_usd && isFresh) {
@@ -2790,6 +2823,9 @@ async function cryptoTestnetTick(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
+  if (state.config?.order_execution === 'binance_testnet') {
+    assertPrivateTradingControl(request, env);
+  }
   const result = await cryptoTestnetTickInternal(env, state, false);
   state.last_tick_at = energyIso();
   await saveCryptoTestnetAccount(env, state);
@@ -2800,10 +2836,14 @@ async function cryptoTestnetStop(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
+  if (state.config?.order_execution === 'binance_testnet' || body?.testnet_close_all === true) {
+    assertPrivateTradingControl(request, env);
+  }
   const shouldLiquidate = Boolean(body?.liquidate !== false);
   const result = await cryptoTestnetTickInternal(env, state, shouldLiquidate);
   let testnetCloseAll: any = null;
   if (shouldLiquidate && (state.config?.order_execution === 'binance_testnet' || body?.testnet_close_all === true) && state.config?.testnet_close_all_on_stop !== false) {
+    assertPrivateTradingControl(request, env);
     testnetCloseAll = await binanceTestnetCloseAll(env);
   }
   state.mode = 'stopped';
@@ -2814,6 +2854,7 @@ async function cryptoTestnetStop(request: Request, env: Env, url: URL) {
 }
 
 async function cryptoTestnetReconcile(request: Request, env: Env, url: URL) {
+  assertPrivateTradingControl(request, env);
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
@@ -2825,6 +2866,7 @@ async function cryptoTestnetReconcile(request: Request, env: Env, url: URL) {
 }
 
 async function cryptoTestnetCloseAll(request: Request, env: Env, url: URL) {
+  assertPrivateTradingControl(request, env);
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);

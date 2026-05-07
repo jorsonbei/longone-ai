@@ -261,12 +261,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if ((activeView === 'energy-trading' || activeView === 'market-trading' || activeView === 'gold-trading') && !isAdmin) {
-      setActiveView('chat');
-    }
-  }, [activeView, isAdmin]);
-
-  useEffect(() => {
     const setMeta = (name: string, content: string, attr: 'name' | 'property' = 'name') => {
       let element = document.head.querySelector(`meta[${attr}="${name}"]`) as HTMLMetaElement | null;
       if (!element) {
@@ -952,11 +946,11 @@ export default function App() {
             <FootballPredictor locale={locale} />
           ) : activeView === 'energy' ? (
             <EnergyRuntimePage />
-          ) : activeView === 'energy-trading' && isAdmin ? (
+          ) : activeView === 'energy-trading' ? (
             <EnergyTradingPage locale={locale} />
-          ) : activeView === 'market-trading' && isAdmin ? (
-            <MultiMarketTradingPage locale={locale} />
-          ) : activeView === 'gold-trading' && isAdmin ? (
+          ) : activeView === 'market-trading' ? (
+            <MultiMarketTradingPage locale={locale} canUseExchangeExecution={isAdmin} />
+          ) : activeView === 'gold-trading' ? (
             <GoldTradingPage locale={locale} />
           ) : activeView === 'admin' && isAdmin ? (
             <AdminDashboard

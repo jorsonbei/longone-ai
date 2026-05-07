@@ -154,39 +154,33 @@ function SidebarContent({ chats, activeChatId, onSelectChat, onNewChat, onOpenOf
             <span className="text-[11px] text-slate-500">{footballLabelByLocale[locale].subtitle}</span>
           </div>
         </button>
-        {canAccessAdmin ? (
-          <button onClick={onOpenEnergyTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(45,212,191,0.16),rgba(45,212,191,0.05))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(45,212,191,0.22),rgba(45,212,191,0.09))]">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <Activity className="w-3.5 h-3.5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold text-slate-100">{energyTradingLabelByLocale[locale].title}</span>
-              <span className="text-[11px] text-slate-500">{energyTradingLabelByLocale[locale].subtitle}</span>
-            </div>
-          </button>
-        ) : null}
-        {canAccessAdmin ? (
-          <button onClick={onOpenGoldTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(245,158,11,0.16),rgba(245,158,11,0.05))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(245,158,11,0.22),rgba(245,158,11,0.09))]">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-300/15 text-amber-100 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <Activity className="w-3.5 h-3.5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold text-slate-100">{goldTradingLabelByLocale[locale].title}</span>
-              <span className="text-[11px] text-slate-500">{goldTradingLabelByLocale[locale].subtitle}</span>
-            </div>
-          </button>
-        ) : null}
-        {canAccessAdmin ? (
-          <button onClick={onOpenMarketTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(34,211,238,0.14),rgba(34,211,238,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(34,211,238,0.20),rgba(34,211,238,0.08))]">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-100 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <Activity className="w-3.5 h-3.5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold text-slate-100">{marketTradingLabelByLocale[locale].title}</span>
-              <span className="text-[11px] text-slate-500">{marketTradingLabelByLocale[locale].subtitle}</span>
-            </div>
-          </button>
-        ) : null}
+        <button onClick={onOpenEnergyTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(45,212,191,0.16),rgba(45,212,191,0.05))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(45,212,191,0.22),rgba(45,212,191,0.09))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-200 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Activity className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{energyTradingLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{energyTradingLabelByLocale[locale].subtitle}</span>
+          </div>
+        </button>
+        <button onClick={onOpenGoldTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(245,158,11,0.16),rgba(245,158,11,0.05))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(245,158,11,0.22),rgba(245,158,11,0.09))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-300/15 text-amber-100 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Activity className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{goldTradingLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{goldTradingLabelByLocale[locale].subtitle}</span>
+          </div>
+        </button>
+        <button onClick={onOpenMarketTrading} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(34,211,238,0.14),rgba(34,211,238,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(34,211,238,0.20),rgba(34,211,238,0.08))]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-300/15 text-cyan-100 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <Activity className="w-3.5 h-3.5" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-100">{marketTradingLabelByLocale[locale].title}</span>
+            <span className="text-[11px] text-slate-500">{marketTradingLabelByLocale[locale].subtitle}</span>
+          </div>
+        </button>
         {canAccessAdmin ? (
           <button onClick={onOpenAdmin} className="mb-3 w-full flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(99,125,255,0.12),rgba(99,125,255,0.04))] px-4 py-3 text-left transition-colors hover:bg-[linear-gradient(180deg,rgba(99,125,255,0.18),rgba(99,125,255,0.08))]">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#637dff]/15 text-[#a8b5ff] flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
