@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.longone.hfcd.crypto-testnet-v223</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/beijisheng/Desktop/420/物性论os</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd '/Users/beijisheng/Desktop/420/物性论os' &amp;&amp; /usr/bin/env npm run trading:v2.23:crypto-testnet-mirror</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/beijisheng/Desktop/420/物性论os/outputs/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror/launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/beijisheng/Desktop/420/物性论os/outputs/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror/launchd.err.log</string>
+</dict>
+</plist>
