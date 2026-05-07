@@ -970,6 +970,12 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
+const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V2_24_CryptoConfigurablePaperTestnet';
+const CRYPTO_TESTNET_SYMBOLS = [
+  { symbol: 'BTCUSDT', name: 'Bitcoin USDT Perpetual', cadence: '1h', route: 'btc_main_1h_v2_11' },
+  { symbol: 'ETHUSDT', name: 'Ethereum USDT Perpetual', cadence: '2h', route: 'eth_main_2h_v2_11' },
+];
+const CRYPTO_TESTNET_FEE_RATE = 0.0004;
 const GOLD_TRADING_VERSION = 'HFCD_Trading_V1_1_GoldBidirectionalPaperEngine';
 const GOLD_SYMBOL = 'GC=F';
 const GOLD_FALLBACK_SYMBOL = 'GLD';
@@ -1994,6 +2000,556 @@ async function marketTradingStop(request: Request, env: Env, url: URL) {
   return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
+function cryptoTestnetUserId(request: Request, url: URL, body?: any) {
+  return energyUserId(request, url, body).replace(/^energy_/, 'crypto_testnet_') || 'wuxing_crypto_testnet_user';
+}
+
+function cryptoTestnetStorageUserId(userId: string) {
+  return `crypto_testnet_${String(userId).replace(/[^\w.-]/g, '_').slice(0, 64)}`;
+}
+
+function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
+  const capital = Number(body.capital_usd || body.capital || 100_000);
+  return {
+    version: CRYPTO_TESTNET_VERSION,
+    user_id: cryptoTestnetStorageUserId(userId),
+    display_user_id: userId,
+    mode: 'stopped',
+    started_at: '',
+    stopped_at: '',
+    initial_cash_usd: capital,
+    realized_pnl_usd: 0,
+    equity_usd: capital,
+    peak_equity_usd: capital,
+    max_drawdown_usd: 0,
+    open_positions: [] as any[],
+    closed_trades: [] as any[],
+    seen_signal_ids: [] as string[],
+    config: {
+      fixed_trade_usd: Number(body.fixed_trade_usd || body.max_order_usd || 1_000),
+      max_open_positions: Number(body.max_open_positions || 4),
+      max_symbol_positions: Number(body.max_symbol_positions || 1),
+      stop_loss_pct: Number(body.stop_loss_pct || 0.018),
+      take_profit_pct: Number(body.take_profit_pct || 0.036),
+      min_signal_score: Number(body.min_signal_score || 0.66),
+      max_holding_minutes: Number(body.max_holding_minutes || 8 * 60),
+      side_policy: String(body.side_policy || 'both'),
+      allow_short: body.allow_short !== false,
+      strategy: String(body.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
+    },
+  };
+}
+
+function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {}) {
+  const defaults = defaultCryptoTestnetAccount(userId, body);
+  const normalized = {
+    ...defaults,
+    ...state,
+    config: {
+      ...defaults.config,
+      ...(state?.config || {}),
+    },
+  };
+  normalized.display_user_id = normalized.display_user_id || userId;
+  normalized.user_id = normalized.user_id || cryptoTestnetStorageUserId(userId);
+  if (!normalized.config.side_policy) normalized.config.side_policy = 'both';
+  if (normalized.config.allow_short === undefined || state?.version !== CRYPTO_TESTNET_VERSION) {
+    normalized.config.allow_short = true;
+  }
+  return normalized;
+}
+
+async function loadCryptoTestnetAccount(env: Env, userId: string, body: any = {}) {
+  const storageId = cryptoTestnetStorageUserId(userId);
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return defaultCryptoTestnetAccount(userId, body);
+  const row = await db.prepare('SELECT state_json FROM market_accounts WHERE user_id = ?').bind(storageId).first();
+  if (!row?.state_json) return defaultCryptoTestnetAccount(userId, body);
+  try {
+    return normalizeCryptoTestnetAccount(JSON.parse(String(row.state_json)), userId, body);
+  } catch {
+    return defaultCryptoTestnetAccount(userId, body);
+  }
+}
+
+async function saveCryptoTestnetAccount(env: Env, state: any) {
+  state.version = CRYPTO_TESTNET_VERSION;
+  state.user_id = cryptoTestnetStorageUserId(state.display_user_id || state.user_id || 'wuxing_crypto_testnet_user');
+  await saveMarketAccount(env, state);
+}
+
+async function recentCryptoTestnetTrades(env: Env, userId: string, limit = 160) {
+  return recentMarketTrades(env, cryptoTestnetStorageUserId(userId), limit);
+}
+
+async function insertCryptoTestnetTrade(env: Env, userId: string, row: any) {
+  return insertMarketTrade(env, cryptoTestnetStorageUserId(userId), row);
+}
+
+function fallbackCryptoSeries(symbol: string) {
+  const meta = CRYPTO_TESTNET_SYMBOLS.find((row) => row.symbol === symbol) || CRYPTO_TESTNET_SYMBOLS[0];
+  const base = symbol === 'BTCUSDT' ? 82_000 : 2_400;
+  const now = Date.now();
+  const rows = Array.from({ length: 160 }, (_, index) => {
+    const t = now - (159 - index) * 15 * 60000;
+    const wave = Math.sin(t / 7200000 + symbol.length) * 0.012 + Math.sin(t / 86400000) * 0.025;
+    return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(2)), volume: 0 };
+  });
+  return {
+    ...meta,
+    source: 'fallback_simulated_crypto',
+    source_quality: 'fallback_not_tradeable',
+    is_real_market_data: false,
+    rows,
+    sensors: {},
+  };
+}
+
+async function fetchBinanceJson(url: string) {
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      'user-agent': 'HFCD-ThingNature-OS/1.0',
+    },
+  });
+  if (!response.ok) throw new Error(`Binance ${response.status}`);
+  return response.json();
+}
+
+async function fetchCryptoTestnetSeries(symbol: string) {
+  const meta = CRYPTO_TESTNET_SYMBOLS.find((row) => row.symbol === symbol) || CRYPTO_TESTNET_SYMBOLS[0];
+  try {
+    const interval = symbol === 'ETHUSDT' ? '2h' : '1h';
+    const [klines, premium, openInterest, depth] = await Promise.all([
+      fetchBinanceJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=160`),
+      fetchBinanceJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`),
+      fetchBinanceJson(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`),
+      fetchBinanceJson(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=20`),
+    ]);
+    const rows = (Array.isArray(klines) ? klines : []).map((row: any[]) => ({
+      ts: new Date(Number(row[0])).toISOString(),
+      close: Number(row[4]),
+      volume: Number(row[5] || 0),
+    })).filter((row: any) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length < 40) throw new Error(`Binance ${symbol} insufficient rows`);
+    const bidDepth = (depth?.bids || []).reduce((sum: number, row: any[]) => sum + Number(row[0]) * Number(row[1]), 0);
+    const askDepth = (depth?.asks || []).reduce((sum: number, row: any[]) => sum + Number(row[0]) * Number(row[1]), 0);
+    const bestBid = Number(depth?.bids?.[0]?.[0] || rows[rows.length - 1].close);
+    const bestAsk = Number(depth?.asks?.[0]?.[0] || rows[rows.length - 1].close);
+    return {
+      ...meta,
+      source: `binance_futures_public:${symbol}:${interval}`,
+      source_quality: 'public_realtime_futures',
+      is_real_market_data: true,
+      rows,
+      sensors: {
+        funding_rate: Number(premium?.lastFundingRate || 0),
+        mark_price: Number(premium?.markPrice || rows[rows.length - 1].close),
+        index_price: Number(premium?.indexPrice || rows[rows.length - 1].close),
+        open_interest: Number(openInterest?.openInterest || 0),
+        bid_depth_usd: Number(bidDepth.toFixed(2)),
+        ask_depth_usd: Number(askDepth.toFixed(2)),
+        depth_imbalance: Number(((bidDepth - askDepth) / Math.max(bidDepth + askDepth, 1)).toFixed(6)),
+        best_bid: bestBid,
+        best_ask: bestAsk,
+        spread_bps: Number((((bestAsk - bestBid) / Math.max((bestAsk + bestBid) / 2, 1)) * 10000).toFixed(4)),
+      },
+    };
+  } catch {
+    return fallbackCryptoSeries(symbol);
+  }
+}
+
+function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66) {
+  const rows = series.rows || [];
+  const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
+  const volumes = rows.map((row: any) => Number(row.volume || 0));
+  const last = closes[closes.length - 1] || 0;
+  const prev = closes[closes.length - 2] || last;
+  const fastBase = closes[Math.max(0, closes.length - 1 - 3)] || prev;
+  const midBase = closes[Math.max(0, closes.length - 1 - 12)] || fastBase;
+  const longBase = closes[Math.max(0, closes.length - 1 - 48)] || midBase;
+  const returns = closes.slice(-96).map((value: number, index: number, arr: number[]) => index === 0 ? 0 : value / arr[index - 1] - 1).slice(1);
+  const realizedVol = Math.max(marketStd(returns), 0.0015);
+  const r1 = last / prev - 1;
+  const r3 = last / fastBase - 1;
+  const r12 = last / midBase - 1;
+  const r48 = last / longBase - 1;
+  const trendZ = (0.38 * r3 + 0.38 * r12 + 0.24 * r48) / realizedVol;
+  const funding = Number(series.sensors?.funding_rate || 0);
+  const depthImbalance = Number(series.sensors?.depth_imbalance || 0);
+  const spreadPenalty = Math.min(0.4, Math.max(0, Number(series.sensors?.spread_bps || 0) / 25));
+  const fundingPenalty = Math.min(0.35, Math.abs(funding) * 450);
+  const volumeRecent = volumes.slice(-6).reduce((sum: number, value: number) => sum + value, 0) / Math.max(volumes.slice(-6).length, 1);
+  const volumeBase = volumes.slice(-60).reduce((sum: number, value: number) => sum + value, 0) / Math.max(volumes.slice(-60).length, 1);
+  const volumePulse = volumeBase > 0 ? Math.min(0.18, Math.max(-0.08, (volumeRecent / volumeBase - 1) * 0.08)) : 0;
+  const darkForestBoost = Math.max(-0.12, Math.min(0.12, depthImbalance * 0.18 - Math.sign(trendZ || 1) * funding * 80));
+  const directionalScore = Math.max(0, Math.abs(trendZ) * 0.58 + Math.abs(depthImbalance) * 0.18 + volumePulse + darkForestBoost - spreadPenalty - fundingPenalty);
+  const action = directionalScore >= minSignalScore ? (trendZ >= 0 ? 'BUY_LONG' : 'SELL_SHORT') : 'NO_TRADE';
+  const side = action === 'BUY_LONG' ? 'long' : action === 'SELL_SHORT' ? 'short' : '-';
+  const latestTs = rows[rows.length - 1]?.ts || energyIso();
+  const price = Number((series.sensors?.mark_price || last).toFixed(series.symbol === 'BTCUSDT' ? 2 : 3));
+  const bestBid = Number(series.sensors?.best_bid || price);
+  const bestAsk = Number(series.sensors?.best_ask || price);
+  return {
+    signal_id: `CRYPTO-${series.symbol}-${Math.floor(new Date(latestTs).getTime() / 900000)}-${action}`,
+    captured_at: latestTs,
+    symbol: series.symbol,
+    name: series.name,
+    asset_class: 'crypto_perp',
+    route: series.route,
+    cadence: series.cadence,
+    price,
+    bid_price: bestBid,
+    ask_price: bestAsk,
+    spread_bps: Number(series.sensors?.spread_bps || 0),
+    action,
+    side,
+    score: Number(directionalScore.toFixed(4)),
+    signed_score: Number(trendZ.toFixed(4)),
+    confidence: Number(Math.max(0, Math.min(0.99, 0.5 + directionalScore * 0.22)).toFixed(4)),
+    realized_vol: Number(realizedVol.toFixed(6)),
+    r1: Number(r1.toFixed(6)),
+    r3: Number(r3.toFixed(6)),
+    r12: Number(r12.toFixed(6)),
+    r48: Number(r48.toFixed(6)),
+    funding_rate: funding,
+    open_interest: Number(series.sensors?.open_interest || 0),
+    bid_depth_usd: Number(series.sensors?.bid_depth_usd || 0),
+    ask_depth_usd: Number(series.sensors?.ask_depth_usd || 0),
+    depth_imbalance: depthImbalance,
+    head_version: CRYPTO_TESTNET_VERSION,
+    head_status: 'online_crypto_paper_testnet_candidate',
+    head_threshold: Number(minSignalScore.toFixed(4)),
+    holding_minutes: series.symbol === 'ETHUSDT' ? 2 * 60 : 60,
+    stop_loss_pct: 0.018,
+    take_profit_pct: 0.036,
+    source: series.source,
+    source_quality: series.source_quality,
+    is_real_market_data: Boolean(series.is_real_market_data),
+    status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
+    reject_reason: action === 'NO_TRADE' ? '加密实时多空信号未达 V2.23 门槛' : '',
+  };
+}
+
+async function buildCryptoTestnetSnapshot(minSignalScore = 0.66) {
+  const seriesList = await Promise.all(CRYPTO_TESTNET_SYMBOLS.map((row) => fetchCryptoTestnetSeries(row.symbol)));
+  const signals = seriesList.map((series) => buildCryptoTestnetSignal(series, minSignalScore));
+  return {
+    generated_at: energyIso(),
+    source_status: signals.every((signal) => signal.is_real_market_data) ? 'binance_public_realtime' : 'mixed_or_fallback',
+    order_mode: 'paper_configurable_testnet_mirror',
+    main_side_policy: 'both',
+    signals,
+    sensors: signals.map((signal) => ({
+      symbol: signal.symbol,
+      route: signal.route,
+      funding_rate: signal.funding_rate,
+      open_interest: signal.open_interest,
+      bid_depth_usd: signal.bid_depth_usd,
+      ask_depth_usd: signal.ask_depth_usd,
+      depth_imbalance: signal.depth_imbalance,
+      spread_bps: signal.spread_bps,
+      source: signal.source,
+      is_real_market_data: signal.is_real_market_data,
+    })),
+  };
+}
+
+function cryptoTestnetPositionPnl(pos: any, currentPrice: number) {
+  const qty = Math.abs(Number(pos.quantity || 0));
+  if (pos.side === 'long') return (currentPrice - Number(pos.entry_price || 0)) * qty;
+  if (pos.side === 'short') return (Number(pos.entry_price || 0) - currentPrice) * qty;
+  return 0;
+}
+
+function markCryptoTestnetEquity(state: any, signals: any[] = []) {
+  let unrealized = 0;
+  for (const pos of state.open_positions || []) {
+    const signal = signals.find((row) => row.symbol === pos.symbol);
+    const price = Number(signal?.price || pos.last_price || pos.entry_price || 0);
+    const pnl = cryptoTestnetPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    pos.last_price = price;
+    pos.unrealized_pnl_usd = Number(pnl.toFixed(2));
+    unrealized += pnl;
+  }
+  state.unrealized_pnl_usd = Number(unrealized.toFixed(2));
+  state.equity_usd = Number((Number(state.initial_cash_usd || 0) + Number(state.realized_pnl_usd || 0) + unrealized).toFixed(2));
+  state.peak_equity_usd = Math.max(Number(state.peak_equity_usd || state.equity_usd), state.equity_usd);
+  state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), state.equity_usd - Number(state.peak_equity_usd || state.equity_usd));
+}
+
+function canOpenCryptoTestnetPosition(signal: any, state: any) {
+  const cfg = state.config || {};
+  if (state.mode !== 'running') return 'AI未运行';
+  if (!signal.is_real_market_data) return '没有 Binance 真实公共行情，禁止开仓';
+  if (!['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) return '信号未达加密交易标准';
+  if (signal.action === 'SELL_SHORT' && (cfg.allow_short === false || cfg.side_policy === 'long_only')) return '加密做空未启用';
+  if (signal.action === 'BUY_LONG' && cfg.side_policy === 'short_only') return '加密做多未启用';
+  if (Number(signal.score || 0) < Number(cfg.min_signal_score || 0.66)) return '加密稳定分数不足';
+  if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
+  const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
+  if (sameSymbol >= Number(cfg.max_symbol_positions || 1)) return '单币种持仓数已满';
+  if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) return '本轮加密信号已处理';
+  return '';
+}
+
+async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
+  const cfg = state.config || {};
+  const maxByEquity = Number(state.equity_usd || state.initial_cash_usd || 0) * 0.25;
+  const notional = Math.min(Number(cfg.fixed_trade_usd || 1_000), maxByEquity);
+  const side = signal.action === 'SELL_SHORT' ? 'short' : 'long';
+  const fillPrice = side === 'short'
+    ? Number(signal.bid_price || signal.price)
+    : Number(signal.ask_price || signal.price);
+  const quantity = notional / Math.max(fillPrice, 0.0001);
+  const fee = notional * CRYPTO_TESTNET_FEE_RATE;
+  const pos = {
+    position_id: `CT-${Date.now()}-${signal.symbol}`,
+    signal_id: signal.signal_id,
+    opened_at: energyIso(),
+    target_exit_at: energyIso(new Date(Date.now() + Number(cfg.max_holding_minutes || signal.holding_minutes || 480) * 60000)),
+    symbol: signal.symbol,
+    name: signal.name,
+    asset_class: signal.asset_class,
+    route: signal.route,
+    side,
+    action: signal.action,
+    entry_price: fillPrice,
+    last_price: signal.price,
+    quantity,
+    notional_usd: notional,
+    estimated_fee_usd: fee,
+    stop_loss_usd: notional * Number(cfg.stop_loss_pct || 0.018),
+    take_profit_usd: notional * Number(cfg.take_profit_pct || 0.036),
+    score: signal.score,
+    confidence: signal.confidence,
+    funding_rate: signal.funding_rate,
+    depth_imbalance: signal.depth_imbalance,
+    source: signal.source,
+    source_quality: signal.source_quality,
+    status: 'open',
+  };
+  state.open_positions.push(pos);
+  state.seen_signal_ids.push(String(signal.signal_id));
+  const trade = {
+    ts: energyIso(),
+    event: 'OPEN',
+    position_id: pos.position_id,
+    signal_id: signal.signal_id,
+    symbol: signal.symbol,
+    asset_class: signal.asset_class,
+    route: signal.route,
+    side,
+    action: signal.action,
+    price: fillPrice,
+    quantity,
+    trade_value_usd: notional,
+    net_pnl_usd: 0,
+    score: signal.score,
+    confidence: signal.confidence,
+    source: signal.source,
+    reason: side === 'short' ? '加密 AI 按 Binance 实时行情达标做空信号开仓' : '加密 AI 按 Binance 实时行情达标做多信号开仓',
+  };
+  await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal: any, reason: string) {
+  const exitPrice = pos.side === 'short'
+    ? Number(signal?.ask_price || signal?.price || pos.last_price || pos.entry_price)
+    : Number(signal?.bid_price || signal?.price || pos.last_price || pos.entry_price);
+  const gross = cryptoTestnetPositionPnl(pos, exitPrice);
+  const fee = Number(pos.notional_usd || 0) * CRYPTO_TESTNET_FEE_RATE;
+  const net = gross - Number(pos.estimated_fee_usd || 0) - fee;
+  state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
+  const trade = {
+    ts: energyIso(),
+    event: 'CLOSE',
+    position_id: pos.position_id,
+    signal_id: pos.signal_id,
+    symbol: pos.symbol,
+    asset_class: pos.asset_class,
+    route: pos.route,
+    side: pos.side,
+    action: pos.side === 'short' ? 'BUY_TO_COVER' : 'SELL_TO_CLOSE',
+    entry_price: pos.entry_price,
+    exit_price: exitPrice,
+    quantity: pos.quantity,
+    trade_value_usd: Math.abs(exitPrice * Number(pos.quantity || 0)),
+    gross_pnl_usd: Number(gross.toFixed(2)),
+    cost_usd: Number((Number(pos.estimated_fee_usd || 0) + fee).toFixed(2)),
+    net_pnl_usd: Number(net.toFixed(2)),
+    score: pos.score,
+    confidence: pos.confidence,
+    source: signal?.source || pos.source,
+    reason,
+  };
+  state.closed_trades.push({ ...pos, ...trade, status: 'closed' });
+  await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false) {
+  const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
+  const signals = snapshot.signals || [];
+  const remaining: any[] = [];
+  let opened = 0;
+  let closed = 0;
+  for (const pos of state.open_positions || []) {
+    const signal = signals.find((row: any) => row.symbol === pos.symbol);
+    const price = Number(signal?.price || pos.last_price || pos.entry_price);
+    const pnl = cryptoTestnetPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
+    if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
+      const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
+      await closeCryptoTestnetPosition(env, state, pos, signal, reason);
+      closed += 1;
+    } else {
+      remaining.push({ ...pos, last_price: price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
+    }
+  }
+  state.open_positions = remaining;
+  markCryptoTestnetEquity(state, signals);
+  if (!forceClose && state.mode === 'running') {
+    const candidates = [...signals].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    for (const signal of candidates) {
+      const reason = canOpenCryptoTestnetPosition(signal, state);
+      if (!reason) {
+        await openCryptoTestnetPosition(env, state, signal);
+        opened += 1;
+      } else {
+        await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+          ts: energyIso(),
+          event: 'SKIP',
+          signal_id: signal.signal_id,
+          symbol: signal.symbol,
+          asset_class: signal.asset_class,
+          route: signal.route,
+          action: signal.action,
+          price: signal.price,
+          trade_value_usd: 0,
+          net_pnl_usd: 0,
+          score: signal.score,
+          confidence: signal.confidence,
+          source: signal.source,
+          reason,
+        });
+        state.seen_signal_ids.push(String(signal.signal_id));
+      }
+    }
+  }
+  markCryptoTestnetEquity(state, signals);
+  return { snapshot, opened, closed };
+}
+
+function cryptoTestnetWinRate(state: any) {
+  const trades = (state.closed_trades || []).filter((row: any) => Number.isFinite(Number(row.net_pnl_usd)));
+  if (!trades.length) return 0;
+  return trades.filter((row: any) => Number(row.net_pnl_usd || 0) > 0).length / trades.length;
+}
+
+async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
+  const userId = cryptoTestnetUserId(request, url);
+  const state = await loadCryptoTestnetAccount(env, userId);
+  const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
+  markCryptoTestnetEquity(state, snapshot.signals);
+  const trades = await recentCryptoTestnetTrades(env, userId, 180);
+  return json({
+    ok: true,
+    online_backend: Boolean(env.ENERGY_TRADING_DB),
+    db_status: env.ENERGY_TRADING_DB ? 'd1_bound' : 'not_configured',
+    version: CRYPTO_TESTNET_VERSION,
+    updated_at: energyIso(),
+    data_policy: {
+      order_mode: 'paper/testnet-mirror-configurable',
+      real_exchange_orders: false,
+      realtime_source: 'Binance USD-M Futures public endpoints',
+      note: '线上模块允许用户配置每单最高金额、最大持仓和多空策略；当前只做 D1 paper/testnet mirror 账本，不会向真实交易所发真实订单。',
+    },
+    market_health: {
+      ok: snapshot.source_status === 'binance_public_realtime',
+      status: snapshot.source_status,
+      latest_captured_at: snapshot.generated_at,
+      symbols: CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol),
+    },
+    sensors: snapshot.sensors,
+    signals: snapshot.signals,
+    summary: {
+      mode: state.mode,
+      initial_cash_usd: state.initial_cash_usd,
+      equity_usd: state.equity_usd,
+      realized_pnl_usd: state.realized_pnl_usd,
+      unrealized_pnl_usd: state.unrealized_pnl_usd || 0,
+      open_positions: (state.open_positions || []).length,
+      max_open_positions: state.config?.max_open_positions || 4,
+      closed_trades: (state.closed_trades || []).length,
+      win_rate: cryptoTestnetWinRate(state),
+      max_drawdown_usd: state.max_drawdown_usd || 0,
+      config: state.config,
+    },
+    positions: state.open_positions || [],
+    recent_trades: trades,
+  }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const existing = await loadCryptoTestnetAccount(env, userId, body);
+  const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
+  const state = body?.reset_account || isFresh ? defaultCryptoTestnetAccount(userId, body) : existing;
+  state.display_user_id = userId;
+  state.config = {
+    ...(state.config || {}),
+    fixed_trade_usd: Number(body.fixed_trade_usd || body.max_order_usd || state.config?.fixed_trade_usd || 1_000),
+    max_open_positions: Number(body.max_open_positions || state.config?.max_open_positions || 4),
+    max_symbol_positions: Number(body.max_symbol_positions || state.config?.max_symbol_positions || 1),
+    stop_loss_pct: Number(body.stop_loss_pct || state.config?.stop_loss_pct || 0.018),
+    take_profit_pct: Number(body.take_profit_pct || state.config?.take_profit_pct || 0.036),
+    min_signal_score: Number(body.min_signal_score || state.config?.min_signal_score || 0.66),
+    max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 8 * 60),
+    side_policy: String(body.side_policy || state.config?.side_policy || 'both'),
+    allow_short: body.allow_short !== false,
+    strategy: String(body.strategy || state.config?.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
+  };
+  if (body.capital_usd && isFresh) {
+    state.initial_cash_usd = Number(body.capital_usd);
+    state.realized_pnl_usd = 0;
+    state.equity_usd = Number(body.capital_usd);
+    state.peak_equity_usd = Number(body.capital_usd);
+  }
+  state.mode = 'running';
+  state.started_at = state.started_at || energyIso();
+  state.stopped_at = '';
+  const result = await cryptoTestnetTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveCryptoTestnetAccount(env, state);
+  return json({ ok: true, action: 'started', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function cryptoTestnetTick(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const state = await loadCryptoTestnetAccount(env, userId, body);
+  const result = await cryptoTestnetTickInternal(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveCryptoTestnetAccount(env, state);
+  return json({ ok: true, user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function cryptoTestnetStop(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const state = await loadCryptoTestnetAccount(env, userId, body);
+  const result = await cryptoTestnetTickInternal(env, state, Boolean(body?.liquidate !== false));
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = energyIso();
+  await saveCryptoTestnetAccount(env, state);
+  return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
 
 function workerFootballKickoffTime(match: any) {
@@ -2388,6 +2944,17 @@ async function handleApi(request: Request, env: Env) {
     }
   }
 
+  if (url.pathname === '/api/crypto-testnet/dashboard' && request.method === 'GET') {
+    try {
+      return await cryptoTestnetDashboard(request, env, url);
+    } catch (error) {
+      return json(
+        { ok: false, error: error instanceof Error ? error.message : 'Crypto testnet dashboard failed.' },
+        { status: 500, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
   if (url.pathname.startsWith('/api/football/predict/') && request.method === 'GET') {
     const feed = getWorkerFootballFeed();
     const matchId = decodeURIComponent(url.pathname.replace('/api/football/predict/', ''));
@@ -2508,6 +3075,18 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/gold-trading/stop') {
       return goldTradingStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/start') {
+      return cryptoTestnetStart(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/tick') {
+      return cryptoTestnetTick(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/stop') {
+      return cryptoTestnetStop(request, env, url);
     }
 
     if (url.pathname === '/api/energy/adapt-csv') {
