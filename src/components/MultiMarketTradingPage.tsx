@@ -5,94 +5,34 @@ type Props = {
   locale: Locale;
 };
 
-type MarketSignal = {
-  captured_at?: string;
-  symbol: string;
-  name?: string;
-  asset_class?: string;
-  price?: number;
-  action?: string;
-  score?: number;
-  confidence?: number;
-  r1?: number;
-  r6?: number;
-  r24?: number;
-  source?: string;
-  reject_reason?: string;
-};
-
-type MarketTrade = {
-  ts?: string;
-  event?: string;
-  symbol?: string;
-  asset_class?: string;
-  side?: string;
-  action?: string;
-  price?: number;
-  entry_price?: number;
-  exit_price?: number;
-  quantity?: number;
-  trade_value_usd?: number;
-  gross_pnl_usd?: number;
-  cost_usd?: number;
-  net_pnl_usd?: number;
-  score?: number;
-  confidence?: number;
-  source?: string;
-  reason?: string;
-};
-
-type Dashboard = {
-  ok: boolean;
-  online_backend: boolean;
-  db_status: string;
-  version: string;
-  updated_at: string;
-  market_health: {
-    ok: boolean;
-    status: string;
-    latest_captured_at?: string;
-    symbols?: string[];
-    note?: string;
-  };
-  signals: MarketSignal[];
-  summary: {
-    mode: string;
-    initial_cash_usd: number;
-    equity_usd: number;
-    realized_pnl_usd: number;
-    unrealized_pnl_usd: number;
-    open_positions: number;
-    max_open_positions: number;
-    closed_trades: number;
-    win_rate: number;
-    max_drawdown_usd: number;
-    config?: Record<string, unknown>;
-  };
-  positions: Array<Record<string, unknown>>;
-  recent_trades: MarketTrade[];
-};
-
 const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
-    title: '股票 / 加密货币 / 黄金 AI 模拟交易',
-    subtitle: '这是多市场总入口：BTC、ETH、SPY、QQQ、GLD 使用公开真实行情快照做 paper trading；GLD 是黄金 ETF 代理。若要测试黄金期货/现货代理的专属策略，请进入下方“黄金专属交易”。',
+    title: '加密货币 / 黄金 AI 交易控制台',
+    subtitle: '这是多市场交易入口：BTC/ETH 走 Binance Testnet 或本地模拟账本；黄金策略走独立黄金专属交易。旧的 Yahoo 多市场通用 paper 模块已移除。',
     model: '模型说明',
-    modelText: '该模块复用 HFCD 的稳定门思想：只在趋势强度、波动归一化分数和信号置信度达标时开仓；BTC/ETH 适合 24 小时验证，SPY/QQQ 是股票代理，GLD 是黄金 ETF 代理。黄金专属策略使用 GC=F/GLD 实时行情优先级，并单独记录黄金交易账本。',
+    modelText: '加密模块复用 HFCD 的频率路由和黑暗森林传感器：只在 BTC/ETH 的趋势、深度、资金费率和置信度达标时执行；黄金专属策略使用 GC=F/GLD 实时行情优先级，并单独记录黄金交易账本。',
     goldEntry: '进入黄金专属交易',
     goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
     cryptoPanel: '加密 Testnet 镜像',
-    cryptoHint: 'BTC/ETH 使用 Binance U本位合约公开实时数据，支持做多/做空、单笔最高金额、最大持仓和单币持仓限制；当前只写模拟/Testnet 镜像账本，不会真实下单。',
+    cryptoHint: 'BTC/ETH 使用 Binance U本位合约公开实时数据，支持做多/做空、单笔最高金额、最大持仓和单币持仓限制；执行模式可选本地模拟账本或 Binance Futures Testnet 测试网下单。',
     maxSymbolPositions: '单币最大持仓',
     sidePolicy: '多空策略',
+    orderExecution: '执行模式',
+    paperMode: '本地模拟账本',
+    binanceTestnetMode: 'Binance Testnet 下单',
     both: '做多 + 做空',
     longOnly: '只做多',
     shortOnly: '只做空',
     cryptoStart: '启动加密模拟',
     cryptoTick: '加密运行一轮',
     cryptoStop: '停止并清仓',
+    reconcile: '仓位对账',
+    closeAll: 'Testnet 全部平仓',
     cryptoHealth: '加密安全状态',
+    testnetAccount: 'Testnet 账户',
+    testnetPositions: 'Testnet 持仓',
+    testnetOrders: 'Testnet 挂单',
     sensors: '黑暗森林传感器',
     capital: '起始资金',
     fixedTrade: '单次金额',
@@ -127,23 +67,31 @@ const COPY: Record<string, Record<string, string>> = {
   },
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
-    title: 'AI Paper Trading for Crypto, Stocks, and Gold',
-    subtitle: 'This is the multi-market entry. BTC, ETH, SPY, QQQ, and GLD use public live snapshots for paper trading; GLD is the gold ETF proxy. Use the dedicated gold entry for GC=F-first gold testing.',
+    title: 'AI Trading Console for Crypto and Gold',
+    subtitle: 'BTC/ETH use Binance Testnet or local paper ledger. Gold uses the dedicated gold engine. The old Yahoo multi-market paper module has been removed.',
     model: 'Model',
-    modelText: 'The engine applies HFCD-style stability gates. BTC/ETH provide 24h validation; SPY/QQQ are equity proxies; GLD is the gold ETF proxy. The dedicated gold strategy uses GC=F first and GLD as fallback with a separate gold ledger.',
+    modelText: 'The crypto module applies HFCD frequency routing and DarkForest sensors. BTC/ETH execute only when trend, depth, funding, and confidence gates pass. Gold is handled by the dedicated GC=F/GLD engine.',
     goldEntry: 'Open dedicated gold trading',
     goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
     cryptoPanel: 'Crypto Testnet Mirror',
-    cryptoHint: 'BTC/ETH use Binance USD-M futures public realtime data. Long/short, max order amount, max positions, and per-symbol caps are configurable. This writes a paper/testnet mirror ledger only; no real exchange order is sent.',
+    cryptoHint: 'BTC/ETH use Binance USD-M futures public realtime data. Long/short, max order amount, max positions, and per-symbol caps are configurable. Execution can be local paper ledger or Binance Futures Testnet orders.',
     maxSymbolPositions: 'Max per symbol',
     sidePolicy: 'Side policy',
+    orderExecution: 'Execution mode',
+    paperMode: 'Local paper ledger',
+    binanceTestnetMode: 'Binance Testnet orders',
     both: 'Long + Short',
     longOnly: 'Long only',
     shortOnly: 'Short only',
     cryptoStart: 'Start Crypto Simulation',
     cryptoTick: 'Run Crypto Tick',
     cryptoStop: 'Stop and Liquidate',
+    reconcile: 'Reconcile',
+    closeAll: 'Testnet Close All',
     cryptoHealth: 'Crypto safety',
+    testnetAccount: 'Testnet Account',
+    testnetPositions: 'Testnet Positions',
+    testnetOrders: 'Testnet Orders',
     sensors: 'DarkForest sensors',
     capital: 'Capital',
     fixedTrade: 'Trade amount',
@@ -231,19 +179,9 @@ function translate(value?: string) {
 
 export default function MultiMarketTradingPage({ locale }: Props) {
   const copy = COPY[locale] || COPY.zh;
-  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [cryptoDashboard, setCryptoDashboard] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [config, setConfig] = useState({
-    capital_usd: 100_000,
-    fixed_trade_usd: 1_000,
-    max_open_positions: 8,
-    stop_loss_pct: 0.018,
-    take_profit_pct: 0.036,
-    min_signal_score: 0.72,
-    max_holding_minutes: 360,
-  });
   const [cryptoConfig, setCryptoConfig] = useState({
     capital_usd: 100_000,
     fixed_trade_usd: 1_000,
@@ -254,15 +192,9 @@ export default function MultiMarketTradingPage({ locale }: Props) {
     min_signal_score: 0.66,
     max_holding_minutes: 480,
     side_policy: 'both',
+    order_execution: 'paper',
+    testnet_close_all_on_stop: true,
   });
-
-  const userId = useMemo(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('hfcd_market_user_id') : '';
-    if (stored) return stored;
-    const id = `market_user_${Math.random().toString(36).slice(2, 10)}`;
-    if (typeof window !== 'undefined') window.localStorage.setItem('hfcd_market_user_id', id);
-    return id;
-  }, []);
 
   const cryptoUserId = useMemo(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('hfcd_crypto_testnet_user_id') : '';
@@ -272,36 +204,11 @@ export default function MultiMarketTradingPage({ locale }: Props) {
     return id;
   }, []);
 
-  const loadDashboard = useCallback(async () => {
-    const res = await fetch(`/api/market-trading/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
-    const data = await res.json() as Dashboard;
-    setDashboard(data);
-  }, [userId]);
-
   const loadCryptoDashboard = useCallback(async () => {
     const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, { cache: 'no-store' });
     const data = await res.json();
     setCryptoDashboard(data);
   }, [cryptoUserId]);
-
-  const postAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
-    setLoading(true);
-    try {
-      const res = await fetch(path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, ...body }),
-      });
-      const data = await res.json() as { ok?: boolean; error?: string };
-      if (!data.ok) throw new Error(data.error || 'request failed');
-      setMessage('操作已完成。');
-      await loadDashboard();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : '操作失败。');
-    } finally {
-      setLoading(false);
-    }
-  }, [loadDashboard, userId]);
 
   const postCryptoAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
     setLoading(true);
@@ -311,35 +218,21 @@ export default function MultiMarketTradingPage({ locale }: Props) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ user_id: cryptoUserId, ...body }),
       });
-      const data = await res.json() as { ok?: boolean; error?: string };
+      const text = await res.text();
+      const data = text ? JSON.parse(text) as { ok?: boolean; error?: string } : {};
       if (!data.ok) throw new Error(data.error || 'request failed');
-      setMessage('加密模拟交易操作已完成。');
+      setMessage('加密交易操作已完成。');
       await loadCryptoDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '加密模拟交易操作失败。');
+      setMessage(error instanceof Error ? error.message : '加密交易操作失败。');
     } finally {
       setLoading(false);
     }
   }, [cryptoUserId, loadCryptoDashboard]);
 
   useEffect(() => {
-    loadDashboard().catch(() => setMessage('读取多市场交易引擎失败。'));
-  }, [loadDashboard]);
-
-  useEffect(() => {
     loadCryptoDashboard().catch(() => setMessage('读取加密 Testnet 镜像失败。'));
   }, [loadCryptoDashboard]);
-
-  useEffect(() => {
-    const timer = window.setInterval(async () => {
-      if (dashboard?.summary?.mode === 'running') {
-        await postAction('/api/market-trading/tick');
-      } else {
-        await loadDashboard().catch(() => undefined);
-      }
-    }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [dashboard?.summary?.mode, loadDashboard, postAction]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
@@ -352,15 +245,15 @@ export default function MultiMarketTradingPage({ locale }: Props) {
     return () => window.clearInterval(timer);
   }, [cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
 
-  const summary = dashboard?.summary;
-  const signals = dashboard?.signals || [];
-  const trades = dashboard?.recent_trades || [];
-  const positions = dashboard?.positions || [];
   const cryptoSummary = cryptoDashboard?.summary;
   const cryptoSignals = cryptoDashboard?.signals || [];
   const cryptoTrades = cryptoDashboard?.recent_trades || [];
   const cryptoPositions = cryptoDashboard?.positions || [];
   const cryptoSensors = cryptoDashboard?.sensors || [];
+  const testnet = cryptoDashboard?.testnet || {};
+  const testnetPositions = Array.isArray(testnet.positions) ? testnet.positions : [];
+  const testnetOrders = Array.isArray(testnet.open_orders) ? testnet.open_orders : [];
+  const testnetAccount = testnet.account || {};
 
   return (
     <div className="min-h-full bg-[#0b1118] px-5 py-6 pb-14 text-slate-100">
@@ -443,10 +336,32 @@ export default function MultiMarketTradingPage({ locale }: Props) {
               <option value="short_only">{copy.shortOnly}</option>
             </select>
           </label>
+          <label className="w-full text-xs font-bold text-emerald-50/55 md:w-64">
+            {copy.orderExecution}
+            <select
+              className="mt-2 w-full rounded-2xl border border-emerald-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
+              value={cryptoConfig.order_execution}
+              onChange={(event) => setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }))}
+            >
+              <option value="paper">{copy.paperMode}</option>
+              <option value="binance_testnet">{copy.binanceTestnetMode}</option>
+            </select>
+          </label>
+          <label className="flex w-full items-center gap-3 rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3 text-xs font-bold text-emerald-50/65 md:w-auto">
+            <input
+              type="checkbox"
+              checked={cryptoConfig.testnet_close_all_on_stop}
+              onChange={(event) => setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }))}
+              className="h-4 w-4 accent-emerald-300"
+            />
+            停止时同步 Testnet 平仓
+          </label>
           <div className="flex flex-wrap gap-3">
             <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', cryptoConfig)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick')} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile')} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100">{copy.reconcile}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all')} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100">{copy.closeAll}</button>
           </div>
         </div>
 
@@ -463,6 +378,37 @@ export default function MultiMarketTradingPage({ locale }: Props) {
               <p className="mt-2 text-xl font-black text-white">{value}</p>
             </div>
           ))}
+        </div>
+
+        <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-black text-white">{copy.testnetAccount}</h3>
+              <p className="mt-1 text-xs leading-5 text-cyan-50/60">
+                状态：{testnet.status || 'loading'} · 执行：{cryptoDashboard?.data_policy?.order_mode || '-'} · 主网下单：禁止
+              </p>
+              {testnet.error ? <p className="mt-2 text-xs font-bold text-amber-200">Testnet 提示：{testnet.error}</p> : null}
+            </div>
+            <div className="grid gap-3 text-xs sm:grid-cols-3">
+              <div className="rounded-2xl border border-cyan-200/10 bg-black/20 p-3">
+                <p className="text-cyan-50/45">钱包余额</p>
+                <p className="mt-1 text-lg font-black text-white">{money(testnetAccount.total_wallet_balance ?? testnetAccount.totalWalletBalance)}</p>
+              </div>
+              <div className="rounded-2xl border border-cyan-200/10 bg-black/20 p-3">
+                <p className="text-cyan-50/45">可用余额</p>
+                <p className="mt-1 text-lg font-black text-white">{money(testnetAccount.available_balance ?? testnetAccount.availableBalance)}</p>
+              </div>
+              <div className="rounded-2xl border border-cyan-200/10 bg-black/20 p-3">
+                <p className="text-cyan-50/45">挂单 / 持仓</p>
+                <p className="mt-1 text-lg font-black text-white">{testnetOrders.length} / {testnetPositions.length}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <TestnetTable title={copy.testnetPositions} rows={testnetPositions} type="positions" />
+            <TestnetTable title={copy.testnetOrders} rows={testnetOrders} type="orders" />
+          </div>
         </div>
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
@@ -513,146 +459,7 @@ export default function MultiMarketTradingPage({ locale }: Props) {
         </div>
       </section>
 
-      <section className="mt-5 rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-        <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-7">
-          {[
-            ['capital_usd', copy.capital],
-            ['fixed_trade_usd', copy.fixedTrade],
-            ['max_open_positions', copy.maxPositions],
-            ['stop_loss_pct', copy.stopLoss],
-            ['take_profit_pct', copy.takeProfit],
-            ['min_signal_score', '最低稳定分'],
-            ['max_holding_minutes', '最长持有分钟'],
-          ].map(([key, label]) => (
-            <label key={key} className="text-xs font-bold text-cyan-50/55">
-              {label}
-              <input
-                className="mt-2 w-full rounded-2xl border border-cyan-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
-                type="number"
-                step={key.includes('pct') || key.includes('score') ? '0.001' : '1'}
-                value={(config as any)[key]}
-                onChange={(event) => setConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }))}
-              />
-            </label>
-          ))}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-3">
-          <button disabled={loading || summary?.mode === 'running'} onClick={() => postAction('/api/market-trading/start', config)} className="rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-cyan-950 disabled:opacity-45">{copy.start}</button>
-          <button disabled={loading} onClick={() => postAction('/api/market-trading/tick')} className="rounded-2xl border border-cyan-200/15 bg-cyan-300/12 px-5 py-3 text-sm font-black text-cyan-100">{copy.tick}</button>
-          <button disabled={loading} onClick={() => postAction('/api/market-trading/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.stop}</button>
-          <button onClick={() => {
-            const blob = new Blob([JSON.stringify(dashboard, null, 2)], { type: 'application/json' });
-            const href = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = href;
-            a.download = `hfcd-multimarket-trading-${Date.now()}.json`;
-            a.click();
-            URL.revokeObjectURL(href);
-          }} className="rounded-2xl border border-cyan-200/15 bg-white/[0.05] px-5 py-3 text-sm font-black text-cyan-100">{copy.export}</button>
-        </div>
-        {message ? <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-100">{message}</div> : null}
-      </section>
-
-      <section className="mt-5 grid gap-4 md:grid-cols-5">
-        {[
-          [copy.status, summary?.mode || 'loading'],
-          [copy.equity, money(summary?.equity_usd)],
-          [copy.pnl, money(summary?.realized_pnl_usd)],
-          [copy.unrealized, money(summary?.unrealized_pnl_usd)],
-          [copy.winOpen, `${((summary?.win_rate || 0) * 100).toFixed(1)}% / ${summary?.open_positions || 0}/${summary?.max_open_positions || 0}`],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-[24px] border border-cyan-200/10 bg-black/20 p-5">
-            <p className="text-xs font-bold text-cyan-50/45">{label}</p>
-            <p className="mt-3 text-2xl font-black text-white">{value}</p>
-          </div>
-        ))}
-      </section>
-
-      <section className="mt-5 rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-        <h2 className="text-lg font-black text-white">{copy.data}</h2>
-        <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${dashboard?.market_health?.ok ? 'border-cyan-200/15 bg-cyan-300/10 text-cyan-100' : 'border-amber-300/30 bg-amber-300/10 text-amber-100'}`}>
-          状态：{dashboard?.market_health?.status || '-'} · 标的：{dashboard?.market_health?.symbols?.join(', ') || '-'} · 最新：{dashboard?.market_health?.latest_captured_at || '-'}
-          <br />
-          {dashboard?.market_health?.note || ''}
-        </div>
-      </section>
-
-      <section className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-          <h2 className="text-xl font-black text-white">{copy.signals}</h2>
-          <div className="mt-4 space-y-3">
-            {signals.map((row) => (
-              <div key={`${row.symbol}-${row.captured_at}`} className="rounded-2xl border border-cyan-200/10 bg-black/25 p-4">
-                <p className="text-sm font-black text-white">{row.symbol} · {row.name}</p>
-                <p className="mt-2 text-xs text-cyan-50/65">
-                  {translate(row.action)} · 价格 {numberText(row.price, row.symbol?.includes('-USD') ? 2 : 4)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 源 {row.source}
-                </p>
-                <p className="mt-1 text-xs text-cyan-50/45">1步 {pct(row.r1)} · 6步 {pct(row.r6)} · 24步 {pct(row.r24)} {row.reject_reason ? `· ${row.reject_reason}` : ''}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-          <h2 className="text-xl font-black text-white">{copy.positions}</h2>
-          <div className="mt-4 overflow-auto">
-            <table className="min-w-[720px] w-full text-left text-sm">
-              <thead className="text-xs text-cyan-50/45">
-                <tr>{[copy.symbol, copy.side, copy.price, copy.amount, copy.qty, copy.pnlCol, copy.source].map((head) => <th key={head} className="border-b border-cyan-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
-              </thead>
-              <tbody>
-                {positions.length ? positions.map((row: any, index) => (
-                  <tr key={`${row.position_id}-${index}`} className="border-b border-cyan-200/8 text-cyan-50/86">
-                    <td className="px-3 py-3">{row.symbol}</td>
-                    <td className="px-3 py-3">{row.side === 'short' ? '做空' : '做多'}</td>
-                    <td className="px-3 py-3">{numberText(row.last_price || row.entry_price, row.symbol?.includes('-USD') ? 2 : 4)}</td>
-                    <td className="px-3 py-3">{money(row.notional_usd)}</td>
-                    <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
-                    <td className={`px-3 py-3 font-black ${Number(row.unrealized_pnl_usd || 0) < 0 ? 'text-red-300' : 'text-cyan-200'}`}>{money(row.unrealized_pnl_usd as number)}</td>
-                    <td className="px-3 py-3">{row.source || '-'}</td>
-                  </tr>
-                )) : (
-                  <tr><td className="px-3 py-6 text-cyan-50/50" colSpan={7}>暂无持仓。</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-5 overflow-hidden rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-        <h2 className="text-xl font-black text-white">{copy.history}</h2>
-        <div className="mt-4 overflow-auto">
-          <table className="min-w-[1180px] w-full text-left text-sm">
-            <thead className="text-xs text-cyan-50/45">
-              <tr>
-                {[copy.time, copy.event, copy.symbol, copy.action, copy.side, copy.price, copy.amount, copy.qty, copy.pnlCol, copy.score, copy.source, copy.reason].map((head) => (
-                  <th key={head} className="border-b border-cyan-200/10 px-3 py-3 font-black">{head}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((row, index) => (
-                <tr key={`${row.ts}-${index}`} className="border-b border-cyan-200/8 text-cyan-50/86">
-                  <td className="px-3 py-3">{row.ts ? new Date(row.ts).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-3"><span className="rounded-full bg-cyan-300/12 px-3 py-1 text-xs font-black text-cyan-200">{translate(row.event)}</span></td>
-                  <td className="px-3 py-3">{row.symbol || '-'}</td>
-                  <td className="px-3 py-3">{translate(row.action)}</td>
-                  <td className="px-3 py-3">{row.side === 'short' ? '做空' : row.side === 'long' ? '做多' : '-'}</td>
-                  <td className="px-3 py-3">{numberText(row.exit_price ?? row.entry_price ?? row.price, row.symbol?.includes('-USD') ? 2 : 4)}</td>
-                  <td className="px-3 py-3">{money(row.trade_value_usd)}</td>
-                  <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
-                  <td className={`px-3 py-3 font-black ${Number(row.net_pnl_usd || 0) < 0 ? 'text-red-300' : 'text-cyan-200'}`}>{money(row.net_pnl_usd)}</td>
-                  <td className="px-3 py-3">{numberText(row.score, 3)} / {pct(row.confidence)}</td>
-                  <td className="px-3 py-3">{row.source || '-'}</td>
-                  <td className="px-3 py-3">{translate(row.reason)}</td>
-                </tr>
-              ))}
-              {!trades.length ? <tr><td className="px-3 py-6 text-cyan-50/50" colSpan={12}>暂无交易记录。</td></tr> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {message ? <div className="mt-5 rounded-2xl border border-emerald-200/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{message}</div> : null}
     </div>
   );
 }
@@ -685,6 +492,55 @@ function MiniTradeTable({ title, rows, type }: { title: string; rows: any[]; typ
               </tr>
             ))}
             {!rows.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={9}>暂无记录。</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TestnetTable({ title, rows, type }: { title: string; rows: any[]; type: 'positions' | 'orders' }) {
+  const heads = type === 'positions'
+    ? ['标的', '方向', '数量', '入场价', '标记价', '未实现盈亏']
+    : ['标的', '方向', '类型', '价格', '数量', '状态'];
+
+  return (
+    <div className="rounded-[20px] border border-cyan-200/10 bg-black/18 p-4">
+      <h4 className="text-sm font-black text-white">{title}</h4>
+      <div className="mt-3 overflow-auto">
+        <table className="min-w-[560px] w-full text-left text-xs">
+          <thead className="text-cyan-50/45">
+            <tr>
+              {heads.map((head) => (
+                <th key={head} className="border-b border-cyan-200/10 px-3 py-3 font-black">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${row.symbol || row.order_id || row.orderId || 'row'}-${index}`} className="border-b border-cyan-200/8 text-cyan-50/80">
+                {type === 'positions' ? (
+                  <>
+                    <td className="px-3 py-3 font-black">{row.symbol || '-'}</td>
+                    <td className="px-3 py-3">{Number(row.position_amt ?? row.positionAmt ?? 0) < 0 ? '做空' : '做多'}</td>
+                    <td className="px-3 py-3">{numberText(Math.abs(Number(row.position_amt ?? row.positionAmt ?? 0)), 6)}</td>
+                    <td className="px-3 py-3">{numberText(row.entry_price ?? row.entryPrice, 3)}</td>
+                    <td className="px-3 py-3">{numberText(row.mark_price ?? row.markPrice, 3)}</td>
+                    <td className={`px-3 py-3 font-black ${Number(row.unrealized_pnl_usd ?? row.unRealizedProfit ?? row.unrealizedProfit ?? 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.unrealized_pnl_usd ?? row.unRealizedProfit ?? row.unrealizedProfit)}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-3 py-3 font-black">{row.symbol || '-'}</td>
+                    <td className="px-3 py-3">{row.side || '-'}</td>
+                    <td className="px-3 py-3">{row.type || '-'}</td>
+                    <td className="px-3 py-3">{numberText(row.price, 3)}</td>
+                    <td className="px-3 py-3">{numberText(row.orig_qty ?? row.origQty ?? row.executed_qty ?? row.executedQty, 6)}</td>
+                    <td className="px-3 py-3">{row.status || '-'}</td>
+                  </>
+                )}
+              </tr>
+            ))}
+            {!rows.length ? <tr><td className="px-3 py-6 text-cyan-50/50" colSpan={heads.length}>暂无 Testnet 数据。</td></tr> : null}
           </tbody>
         </table>
       </div>

@@ -49,6 +49,8 @@ type Env = {
   HFCD_GCS_BUCKET?: string;
   HFCD_SOURCE_GCS_PREFIX?: string;
   DATABENTO_API_KEY?: string;
+  BINANCE_TESTNET_API_KEY?: string;
+  BINANCE_TESTNET_API_SECRET?: string;
   NODE_ENV?: string;
 };
 const instructionCache = new Map<string, string>();
@@ -970,12 +972,13 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
-const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V2_24_CryptoConfigurablePaperTestnet';
+const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V2_25_CryptoBinanceTestnetExecution';
 const CRYPTO_TESTNET_SYMBOLS = [
   { symbol: 'BTCUSDT', name: 'Bitcoin USDT Perpetual', cadence: '1h', route: 'btc_main_1h_v2_11' },
   { symbol: 'ETHUSDT', name: 'Ethereum USDT Perpetual', cadence: '2h', route: 'eth_main_2h_v2_11' },
 ];
 const CRYPTO_TESTNET_FEE_RATE = 0.0004;
+const BINANCE_TESTNET_BASE_URL = 'https://testnet.binancefuture.com';
 const GOLD_TRADING_VERSION = 'HFCD_Trading_V1_1_GoldBidirectionalPaperEngine';
 const GOLD_SYMBOL = 'GC=F';
 const GOLD_FALLBACK_SYMBOL = 'GLD';
@@ -2008,6 +2011,192 @@ function cryptoTestnetStorageUserId(userId: string) {
   return `crypto_testnet_${String(userId).replace(/[^\w.-]/g, '_').slice(0, 64)}`;
 }
 
+function binanceTestnetConfigured(env: Env) {
+  return Boolean(env.BINANCE_TESTNET_API_KEY && env.BINANCE_TESTNET_API_SECRET);
+}
+
+function binanceTestnetAssertConfigured(env: Env) {
+  if (!binanceTestnetConfigured(env)) {
+    throw new Error('Binance Testnet API key/secret not configured in Worker secrets.');
+  }
+}
+
+function cryptoTestnetQuantity(symbol: string, rawQuantity: number) {
+  const precision = symbol === 'BTCUSDT' ? 3 : 3;
+  const factor = 10 ** precision;
+  return Number((Math.floor(Number(rawQuantity || 0) * factor) / factor).toFixed(precision));
+}
+
+async function hmacSha256Hex(secret: string, message: string) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function binanceTestnetSignedRequest(env: Env, method: string, path: string, params: Record<string, string | number | boolean> = {}) {
+  binanceTestnetAssertConfigured(env);
+  const payload: Record<string, string | number | boolean> = {
+    recvWindow: 5000,
+    ...params,
+    timestamp: Date.now(),
+  };
+  const search = new URLSearchParams();
+  for (const key of Object.keys(payload).sort()) {
+    const value = payload[key];
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  }
+  const query = search.toString();
+  const signature = await hmacSha256Hex(String(env.BINANCE_TESTNET_API_SECRET), query);
+  const url = `${BINANCE_TESTNET_BASE_URL}${path}?${query}&signature=${signature}`;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      'X-MBX-APIKEY': String(env.BINANCE_TESTNET_API_KEY),
+      accept: 'application/json',
+      'user-agent': 'HFCD-ThingNature-OS/1.0',
+    },
+  });
+  const text = await response.text();
+  let payloadJson: any = {};
+  try {
+    payloadJson = text ? JSON.parse(text) : {};
+  } catch {
+    payloadJson = { message: text };
+  }
+  if (!response.ok) {
+    throw new Error(payloadJson?.msg || payloadJson?.message || `Binance Testnet ${method} ${path} failed with ${response.status}`);
+  }
+  return payloadJson;
+}
+
+async function binanceTestnetMarketOrder(env: Env, params: {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  reduceOnly?: boolean;
+  clientOrderId?: string;
+}) {
+  const quantity = cryptoTestnetQuantity(params.symbol, params.quantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error(`Invalid Binance Testnet quantity for ${params.symbol}.`);
+  const orderParams: Record<string, string | number | boolean> = {
+    symbol: params.symbol,
+    side: params.side,
+    type: 'MARKET',
+    quantity,
+    newClientOrderId: params.clientOrderId || `hfcd_${Date.now()}_${params.symbol}`,
+  };
+  if (params.reduceOnly) orderParams.reduceOnly = 'true';
+  return binanceTestnetSignedRequest(env, 'POST', '/fapi/v1/order', orderParams);
+}
+
+async function binanceTestnetAccountSnapshot(env: Env) {
+  if (!binanceTestnetConfigured(env)) {
+    return {
+      configured: false,
+      mode: 'not_configured',
+      status: 'secrets_missing',
+      positions: [],
+      open_orders: [],
+      account: null,
+    };
+  }
+  try {
+    const [account, positions, openOrders] = await Promise.all([
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/account'),
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk'),
+      binanceTestnetSignedRequest(env, 'GET', '/fapi/v1/openOrders'),
+    ]);
+    const symbols = new Set(CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol));
+    const filteredPositions = (Array.isArray(positions) ? positions : [])
+      .filter((row: any) => symbols.has(row.symbol))
+      .map((row: any) => ({
+        symbol: row.symbol,
+        position_amt: Number(row.positionAmt || 0),
+        entry_price: Number(row.entryPrice || 0),
+        mark_price: Number(row.markPrice || 0),
+        unrealized_pnl_usd: Number(row.unRealizedProfit || 0),
+        liquidation_price: Number(row.liquidationPrice || 0),
+        leverage: Number(row.leverage || 0),
+      }))
+      .filter((row: any) => Math.abs(row.position_amt) > 0.0000001);
+    const filteredOrders = (Array.isArray(openOrders) ? openOrders : [])
+      .filter((row: any) => symbols.has(row.symbol))
+      .map((row: any) => ({
+        symbol: row.symbol,
+        order_id: row.orderId,
+        client_order_id: row.clientOrderId,
+        side: row.side,
+        type: row.type,
+        price: Number(row.price || 0),
+        orig_qty: Number(row.origQty || 0),
+        executed_qty: Number(row.executedQty || 0),
+        status: row.status,
+      }));
+    return {
+      configured: true,
+      mode: 'binance_futures_testnet',
+      status: 'connected',
+      account: {
+        total_wallet_balance: Number(account?.totalWalletBalance || 0),
+        available_balance: Number(account?.availableBalance || 0),
+        total_unrealized_profit: Number(account?.totalUnrealizedProfit || 0),
+      },
+      positions: filteredPositions,
+      open_orders: filteredOrders,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      mode: 'binance_futures_testnet',
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Binance Testnet account snapshot failed.',
+      positions: [],
+      open_orders: [],
+      account: null,
+    };
+  }
+}
+
+async function binanceTestnetCloseAll(env: Env) {
+  binanceTestnetAssertConfigured(env);
+  const report: any = { cancelled: [], closed: [], errors: [] };
+  for (const symbol of CRYPTO_TESTNET_SYMBOLS.map((row) => row.symbol)) {
+    try {
+      await binanceTestnetSignedRequest(env, 'DELETE', '/fapi/v1/allOpenOrders', { symbol });
+      report.cancelled.push(symbol);
+    } catch (error) {
+      report.errors.push({ symbol, action: 'cancel_open_orders', error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const positions = await binanceTestnetSignedRequest(env, 'GET', '/fapi/v2/positionRisk');
+  for (const pos of Array.isArray(positions) ? positions : []) {
+    if (!CRYPTO_TESTNET_SYMBOLS.some((row) => row.symbol === pos.symbol)) continue;
+    const amt = Number(pos.positionAmt || 0);
+    if (Math.abs(amt) <= 0.0000001) continue;
+    try {
+      const side = amt > 0 ? 'SELL' : 'BUY';
+      const order = await binanceTestnetMarketOrder(env, {
+        symbol: pos.symbol,
+        side,
+        quantity: Math.abs(amt),
+        reduceOnly: true,
+        clientOrderId: `hfcd_close_${Date.now()}_${pos.symbol}`,
+      });
+      report.closed.push({ symbol: pos.symbol, side, quantity: Math.abs(amt), order_id: order.orderId });
+    } catch (error) {
+      report.errors.push({ symbol: pos.symbol, action: 'close_position', error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return report;
+}
+
 function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
   const capital = Number(body.capital_usd || body.capital || 100_000);
   return {
@@ -2035,6 +2224,8 @@ function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
       max_holding_minutes: Number(body.max_holding_minutes || 8 * 60),
       side_policy: String(body.side_policy || 'both'),
       allow_short: body.allow_short !== false,
+      order_execution: String(body.order_execution || 'paper'),
+      testnet_close_all_on_stop: body.testnet_close_all_on_stop !== false,
       strategy: String(body.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
     },
   };
@@ -2053,6 +2244,8 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   normalized.display_user_id = normalized.display_user_id || userId;
   normalized.user_id = normalized.user_id || cryptoTestnetStorageUserId(userId);
   if (!normalized.config.side_policy) normalized.config.side_policy = 'both';
+  if (!normalized.config.order_execution) normalized.config.order_execution = 'paper';
+  if (normalized.config.testnet_close_all_on_stop === undefined) normalized.config.testnet_close_all_on_stop = true;
   if (normalized.config.allow_short === undefined || state?.version !== CRYPTO_TESTNET_VERSION) {
     normalized.config.allow_short = true;
   }
@@ -2304,9 +2497,21 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
     : Number(signal.ask_price || signal.price);
   const quantity = notional / Math.max(fillPrice, 0.0001);
   const fee = notional * CRYPTO_TESTNET_FEE_RATE;
+  let exchangeOrder: any = null;
+  if (cfg.order_execution === 'binance_testnet') {
+    exchangeOrder = await binanceTestnetMarketOrder(env, {
+      symbol: signal.symbol,
+      side: side === 'short' ? 'SELL' : 'BUY',
+      quantity,
+      reduceOnly: false,
+      clientOrderId: `hfcd_open_${Date.now()}_${signal.symbol}`,
+    });
+  }
   const pos = {
     position_id: `CT-${Date.now()}-${signal.symbol}`,
     signal_id: signal.signal_id,
+    execution_mode: cfg.order_execution === 'binance_testnet' ? 'binance_testnet' : 'paper',
+    exchange_order_id: exchangeOrder?.orderId || null,
     opened_at: energyIso(),
     target_exit_at: energyIso(new Date(Date.now() + Number(cfg.max_holding_minutes || signal.holding_minutes || 480) * 60000)),
     symbol: signal.symbol,
@@ -2349,6 +2554,8 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any) {
     score: signal.score,
     confidence: signal.confidence,
     source: signal.source,
+    exchange_order_id: exchangeOrder?.orderId || null,
+    execution_mode: pos.execution_mode,
     reason: side === 'short' ? '加密 AI 按 Binance 实时行情达标做空信号开仓' : '加密 AI 按 Binance 实时行情达标做多信号开仓',
   };
   await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
@@ -2362,6 +2569,16 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
   const gross = cryptoTestnetPositionPnl(pos, exitPrice);
   const fee = Number(pos.notional_usd || 0) * CRYPTO_TESTNET_FEE_RATE;
   const net = gross - Number(pos.estimated_fee_usd || 0) - fee;
+  let exchangeOrder: any = null;
+  if ((state.config?.order_execution === 'binance_testnet' || pos.execution_mode === 'binance_testnet') && reason !== 'shadow_close_only') {
+    exchangeOrder = await binanceTestnetMarketOrder(env, {
+      symbol: pos.symbol,
+      side: pos.side === 'short' ? 'BUY' : 'SELL',
+      quantity: Number(pos.quantity || 0),
+      reduceOnly: true,
+      clientOrderId: `hfcd_close_${Date.now()}_${pos.symbol}`,
+    });
+  }
   state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
   const trade = {
     ts: energyIso(),
@@ -2383,6 +2600,8 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
     score: pos.score,
     confidence: pos.confidence,
     source: signal?.source || pos.source,
+    exchange_order_id: exchangeOrder?.orderId || null,
+    execution_mode: pos.execution_mode || state.config?.order_execution || 'paper',
     reason,
   };
   state.closed_trades.push({ ...pos, ...trade, status: 'closed' });
@@ -2403,8 +2622,17 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
     if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
       const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
-      await closeCryptoTestnetPosition(env, state, pos, signal, reason);
-      closed += 1;
+      try {
+        await closeCryptoTestnetPosition(env, state, pos, signal, reason);
+        closed += 1;
+      } catch (error) {
+        remaining.push({
+          ...pos,
+          last_price: price,
+          unrealized_pnl_usd: Number(pnl.toFixed(2)),
+          last_error: error instanceof Error ? error.message : String(error),
+        });
+      }
     } else {
       remaining.push({ ...pos, last_price: price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
     }
@@ -2416,8 +2644,28 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     for (const signal of candidates) {
       const reason = canOpenCryptoTestnetPosition(signal, state);
       if (!reason) {
-        await openCryptoTestnetPosition(env, state, signal);
-        opened += 1;
+        try {
+          await openCryptoTestnetPosition(env, state, signal);
+          opened += 1;
+        } catch (error) {
+          await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+            ts: energyIso(),
+            event: 'SKIP',
+            signal_id: signal.signal_id,
+            symbol: signal.symbol,
+            asset_class: signal.asset_class,
+            route: signal.route,
+            action: signal.action,
+            price: signal.price,
+            trade_value_usd: 0,
+            net_pnl_usd: 0,
+            score: signal.score,
+            confidence: signal.confidence,
+            source: signal.source,
+            reason: error instanceof Error ? `Binance Testnet 下单失败：${error.message}` : 'Binance Testnet 下单失败',
+          });
+          state.seen_signal_ids.push(String(signal.signal_id));
+        }
       } else {
         await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
           ts: energyIso(),
@@ -2455,6 +2703,7 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
   const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
   markCryptoTestnetEquity(state, snapshot.signals);
   const trades = await recentCryptoTestnetTrades(env, userId, 180);
+  const testnet = await binanceTestnetAccountSnapshot(env);
   return json({
     ok: true,
     online_backend: Boolean(env.ENERGY_TRADING_DB),
@@ -2462,10 +2711,13 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
     version: CRYPTO_TESTNET_VERSION,
     updated_at: energyIso(),
     data_policy: {
-      order_mode: 'paper/testnet-mirror-configurable',
-      real_exchange_orders: false,
+      order_mode: state.config?.order_execution === 'binance_testnet' ? 'binance_futures_testnet_signed_orders' : 'paper/testnet-mirror-configurable',
+      real_exchange_orders: state.config?.order_execution === 'binance_testnet',
+      production_mainnet_orders: false,
       realtime_source: 'Binance USD-M Futures public endpoints',
-      note: '线上模块允许用户配置每单最高金额、最大持仓和多空策略；当前只做 D1 paper/testnet mirror 账本，不会向真实交易所发真实订单。',
+      note: state.config?.order_execution === 'binance_testnet'
+        ? '当前执行模式为 Binance Futures Testnet，只向 testnet.binancefuture.com 发测试网订单，不连接主网。'
+        : '当前执行模式为 D1 paper/testnet mirror，只写模拟账本，不向交易所发订单。',
     },
     market_health: {
       ok: snapshot.source_status === 'binance_public_realtime',
@@ -2490,6 +2742,7 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
     },
     positions: state.open_positions || [],
     recent_trades: trades,
+    testnet,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
@@ -2511,8 +2764,13 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
     max_holding_minutes: Number(body.max_holding_minutes || state.config?.max_holding_minutes || 8 * 60),
     side_policy: String(body.side_policy || state.config?.side_policy || 'both'),
     allow_short: body.allow_short !== false,
+    order_execution: String(body.order_execution || state.config?.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper',
+    testnet_close_all_on_stop: body.testnet_close_all_on_stop !== false,
     strategy: String(body.strategy || state.config?.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
   };
+  if (state.config.order_execution === 'binance_testnet') {
+    binanceTestnetAssertConfigured(env);
+  }
   if (body.capital_usd && isFresh) {
     state.initial_cash_usd = Number(body.capital_usd);
     state.realized_pnl_usd = 0;
@@ -2542,12 +2800,41 @@ async function cryptoTestnetStop(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
-  const result = await cryptoTestnetTickInternal(env, state, Boolean(body?.liquidate !== false));
+  const shouldLiquidate = Boolean(body?.liquidate !== false);
+  const result = await cryptoTestnetTickInternal(env, state, shouldLiquidate);
+  let testnetCloseAll: any = null;
+  if (shouldLiquidate && (state.config?.order_execution === 'binance_testnet' || body?.testnet_close_all === true) && state.config?.testnet_close_all_on_stop !== false) {
+    testnetCloseAll = await binanceTestnetCloseAll(env);
+  }
   state.mode = 'stopped';
   state.stopped_at = energyIso();
   state.last_tick_at = energyIso();
   await saveCryptoTestnetAccount(env, state);
-  return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+  return json({ ok: true, action: 'stopped', user_id: userId, result, testnet_close_all: testnetCloseAll, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function cryptoTestnetReconcile(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const state = await loadCryptoTestnetAccount(env, userId, body);
+  const testnet = await binanceTestnetAccountSnapshot(env);
+  state.last_reconcile_at = energyIso();
+  state.last_testnet_status = testnet.status;
+  await saveCryptoTestnetAccount(env, state);
+  return json({ ok: true, user_id: userId, testnet, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function cryptoTestnetCloseAll(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const state = await loadCryptoTestnetAccount(env, userId, body);
+  const result = await binanceTestnetCloseAll(env);
+  const tick = await cryptoTestnetTickInternal(env, state, true);
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = energyIso();
+  await saveCryptoTestnetAccount(env, state);
+  return json({ ok: true, action: 'testnet_close_all', user_id: userId, result, tick, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
@@ -3087,6 +3374,14 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/crypto-testnet/stop') {
       return cryptoTestnetStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/reconcile') {
+      return cryptoTestnetReconcile(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/close-all') {
+      return cryptoTestnetCloseAll(request, env, url);
     }
 
     if (url.pathname === '/api/energy/adapt-csv') {
