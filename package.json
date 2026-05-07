@@ -100,6 +100,7 @@
     "trading:v2.23:crypto-testnet-reconcile": "python3 scripts/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror.py --safety-action reconcile",
     "trading:v2.23:crypto-testnet-close-all": "python3 scripts/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror.py --safety-action close-all --cancel-open-orders",
     "trading:v2.23:crypto-testnet-daemon": "python3 scripts/hfcd_trading_v2_23_crypto_frequency_router_testnet_mirror.py --cycles 0 --interval-minutes 15 --liquidation-seconds 8 --order-mode signal --main-side-policy both",
+    "trading:v2.23:crypto-testnet-health": "python3 scripts/hfcd_trading_v2_23_crypto_health_check.py",
     "trading:v2.23:crypto-testnet-launchd-install": "zsh scripts/install_hfcd_crypto_testnet_launchagent.sh",
     "trading:v2.23:crypto-testnet-launchd-uninstall": "zsh scripts/uninstall_hfcd_crypto_testnet_launchagent.sh"
   },

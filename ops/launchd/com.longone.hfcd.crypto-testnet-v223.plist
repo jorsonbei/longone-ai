@@ -6,9 +6,6 @@
   <key>Label</key>
   <string>com.longone.hfcd.crypto-testnet-v223</string>
 
-  <key>WorkingDirectory</key>
-  <string>/Users/beijisheng/Desktop/420/物性论os</string>
-
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
