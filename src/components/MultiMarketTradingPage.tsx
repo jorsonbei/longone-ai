@@ -16,8 +16,10 @@ const COPY: Record<string, Record<string, string>> = {
     goldEntry: '进入黄金专属交易',
     goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
     cryptoPanel: 'V3.1 短波动前向账本',
-    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。用户可设置单笔最高金额、最大持仓和单标的持仓；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
+    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、盘口深度、点差、波动和剩余持仓预算自适应计算；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
     maxSymbolPositions: '单币最大持仓',
+    adaptiveSizing: '自适应仓位',
+    maxPositionPct: '单次权益上限',
     sidePolicy: '多空策略',
     orderExecution: '执行模式',
     paperMode: '本地模拟账本',
@@ -46,7 +48,7 @@ const COPY: Record<string, Record<string, string>> = {
     testnetOrders: 'Testnet 挂单',
     sensors: '黑暗森林传感器',
     capital: '起始资金',
-    fixedTrade: '单次金额',
+    fixedTrade: '单笔最高金额',
     maxPositions: '最大持仓',
     stopLoss: '止损比例',
     takeProfit: '止盈比例',
@@ -85,8 +87,10 @@ const COPY: Record<string, Record<string, string>> = {
     goldEntry: 'Open dedicated gold trading',
     goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
     cryptoPanel: 'V3.1 Short-Vol Forward Ledger',
-    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Binance Demo API affects BTC/SOL testnet orders only; ETF routes are paper-only.',
+    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, depth, spread, volatility, and remaining risk budget.',
     maxSymbolPositions: 'Max per symbol',
+    adaptiveSizing: 'Adaptive sizing',
+    maxPositionPct: 'Equity cap / trade',
     sidePolicy: 'Side policy',
     orderExecution: 'Execution mode',
     paperMode: 'Local paper ledger',
@@ -115,7 +119,7 @@ const COPY: Record<string, Record<string, string>> = {
     testnetOrders: 'Testnet Orders',
     sensors: 'DarkForest sensors',
     capital: 'Capital',
-    fixedTrade: 'Trade amount',
+    fixedTrade: 'Max trade amount',
     maxPositions: 'Max positions',
     stopLoss: 'Stop loss %',
     takeProfit: 'Take profit %',
@@ -176,8 +180,10 @@ const reasonText: Record<string, string> = {
   稳定分数不足: '稳定分数不足',
   达到最大持仓数: '达到最大持仓数',
   单标的持仓数已满: '单标的持仓数已满',
+  单币种持仓数已满: '单币种持仓数已满',
   本轮信号已处理: '本轮信号已处理',
   '行情源为回退模拟，暂不交易': '行情源为回退模拟，暂不交易',
+  自适应仓位预算不足: '自适应仓位预算不足',
 };
 
 function money(value?: number) {
@@ -207,6 +213,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const [cryptoConfig, setCryptoConfig] = useState({
     capital_usd: 100_000,
     fixed_trade_usd: 1_000,
+    adaptive_sizing: true,
+    max_position_pct: 0.04,
     max_open_positions: 4,
     max_symbol_positions: 1,
     stop_loss_pct: 0.018,
@@ -284,6 +292,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         ...prev,
         capital_usd: Number(remoteConfig.capital_usd || data?.summary?.initial_cash_usd || prev.capital_usd),
         fixed_trade_usd: Number(remoteConfig.fixed_trade_usd || prev.fixed_trade_usd),
+        adaptive_sizing: remoteConfig.adaptive_sizing !== false,
+        max_position_pct: Number(remoteConfig.max_position_pct || prev.max_position_pct),
         max_open_positions: Number(remoteConfig.max_open_positions || prev.max_open_positions),
         max_symbol_positions: Number(remoteConfig.max_symbol_positions || prev.max_symbol_positions),
         stop_loss_pct: Number(remoteConfig.stop_loss_pct || prev.stop_loss_pct),
@@ -411,6 +421,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           {[
             ['capital_usd', copy.capital],
             ['fixed_trade_usd', '单笔最高金额'],
+            ['max_position_pct', copy.maxPositionPct],
             ['max_open_positions', copy.maxPositions],
             ['max_symbol_positions', copy.maxSymbolPositions],
             ['stop_loss_pct', copy.stopLoss],
@@ -453,6 +464,18 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         </div>
 
         <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end">
+          <label className="flex w-full items-center gap-3 rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3 text-xs font-bold text-emerald-50/65 md:w-56">
+            <input
+              type="checkbox"
+              checked={cryptoConfig.adaptive_sizing}
+              onChange={(event) => {
+                userEditedCryptoConfig.current = true;
+                setCryptoConfig((prev) => ({ ...prev, adaptive_sizing: event.target.checked }));
+              }}
+              className="h-4 w-4 accent-emerald-300"
+            />
+            {copy.adaptiveSizing}
+          </label>
           <label className="w-full text-xs font-bold text-emerald-50/55 md:w-56">
             {copy.sidePolicy}
             <select
@@ -667,10 +690,10 @@ function MiniTradeTable({ title, rows, type }: { title: string; rows: any[]; typ
     <div className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">
       <h3 className="text-lg font-black text-white">{title}</h3>
       <div className="mt-3 overflow-auto">
-        <table className="min-w-[760px] w-full text-left text-xs">
+        <table className="min-w-[980px] w-full text-left text-xs">
           <thead className="text-emerald-50/45">
             <tr>
-              {['时间', '事件', '标的', '方向', '价格', '金额', '数量', '净收益', '原因'].map((head) => (
+              {['时间', '事件', '标的', '方向', '价格', '金额', '数量', '净收益', '仓位逻辑', '原因'].map((head) => (
                 <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>
               ))}
             </tr>
@@ -686,10 +709,14 @@ function MiniTradeTable({ title, rows, type }: { title: string; rows: any[]; typ
                 <td className="px-3 py-3">{money(row.trade_value_usd ?? row.notional_usd)}</td>
                 <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
                 <td className={`px-3 py-3 font-black ${Number(row.net_pnl_usd ?? row.unrealized_pnl_usd ?? 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.net_pnl_usd ?? row.unrealized_pnl_usd)}</td>
+                <td className="px-3 py-3">
+                  <span className="block font-bold text-emerald-100/85">{row.sizing_mode === 'energy_style_adaptive_cap' ? '自适应' : row.sizing_mode ? '固定上限' : '-'}</span>
+                  {row.sizing_reason ? <span className="mt-1 block max-w-[260px] text-[11px] leading-4 text-emerald-50/45">{row.sizing_reason}</span> : null}
+                </td>
                 <td className="px-3 py-3">{translate(row.reason)}</td>
               </tr>
             ))}
-            {!rows.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={9}>暂无记录。</td></tr> : null}
+            {!rows.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={10}>暂无记录。</td></tr> : null}
           </tbody>
         </table>
       </div>

@@ -2372,6 +2372,8 @@ function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
     seen_signal_ids: [] as string[],
     config: {
       fixed_trade_usd: Number(body.fixed_trade_usd || body.max_order_usd || 1_000),
+      adaptive_sizing: body.adaptive_sizing !== false,
+      max_position_pct: Number(body.max_position_pct || 0.04),
       max_open_positions: Number(body.max_open_positions || 4),
       max_symbol_positions: Number(body.max_symbol_positions || 1),
       stop_loss_pct: Number(body.stop_loss_pct || 0.018),
@@ -2401,6 +2403,8 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   normalized.user_id = normalized.user_id || cryptoTestnetStorageUserId(userId);
   if (!normalized.config.side_policy) normalized.config.side_policy = 'both';
   if (!normalized.config.order_execution) normalized.config.order_execution = 'paper';
+  if (normalized.config.adaptive_sizing === undefined) normalized.config.adaptive_sizing = true;
+  if (!Number.isFinite(Number(normalized.config.max_position_pct))) normalized.config.max_position_pct = 0.04;
   if (normalized.config.testnet_close_all_on_stop === undefined) normalized.config.testnet_close_all_on_stop = true;
   if (normalized.config.allow_short === undefined || state?.version !== CRYPTO_TESTNET_VERSION) {
     normalized.config.allow_short = true;
@@ -2414,6 +2418,8 @@ function mergeCryptoTestnetConfig(state: any, body: any = {}) {
   return {
     ...current,
     fixed_trade_usd: Number(has('fixed_trade_usd') ? body.fixed_trade_usd : has('max_order_usd') ? body.max_order_usd : current.fixed_trade_usd || 1_000),
+    adaptive_sizing: has('adaptive_sizing') ? body.adaptive_sizing !== false : current.adaptive_sizing !== false,
+    max_position_pct: Number(has('max_position_pct') ? body.max_position_pct : current.max_position_pct || 0.04),
     max_open_positions: Number(has('max_open_positions') ? body.max_open_positions : current.max_open_positions || 4),
     max_symbol_positions: Number(has('max_symbol_positions') ? body.max_symbol_positions : current.max_symbol_positions || 1),
     stop_loss_pct: Number(has('stop_loss_pct') ? body.stop_loss_pct : current.stop_loss_pct || 0.018),
@@ -2768,6 +2774,91 @@ function markCryptoTestnetEquity(state: any, signals: any[] = []) {
   state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), state.equity_usd - Number(state.peak_equity_usd || state.equity_usd));
 }
 
+function cryptoClamp(value: number, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, Number(value || 0)));
+}
+
+function cryptoOpenNotional(state: any, symbol?: string) {
+  return (state.open_positions || []).reduce((sum: number, pos: any) => {
+    if (symbol && pos.symbol !== symbol) return sum;
+    return sum + Math.abs(Number(pos.notional_usd || pos.trade_value_usd || 0));
+  }, 0);
+}
+
+function cryptoSizingThreshold(signal: any, cfg: any) {
+  return Math.max(
+    Number(signal?.head_threshold || 0),
+    Number(cfg?.min_signal_score || 0),
+    Number(signal?.action === 'SELL_SHORT' ? signal?.short_min_signal_score || 0 : signal?.long_min_signal_score || 0),
+    0.1,
+  );
+}
+
+function cryptoAdaptiveSizing(signal: any, state: any) {
+  const cfg = state.config || {};
+  const cap = Math.max(Number(cfg.fixed_trade_usd || 1_000), 1);
+  const equity = Math.max(Number(state.equity_usd || state.initial_cash_usd || 0), 0);
+  const maxOpen = Math.max(Number(cfg.max_open_positions || 4), 1);
+  const maxSymbol = Math.max(Number(cfg.max_symbol_positions || 1), 1);
+  const globalBudget = cap * maxOpen;
+  const symbolBudget = cap * maxSymbol;
+  const remainingGlobal = Math.max(0, globalBudget - cryptoOpenNotional(state));
+  const remainingSymbol = Math.max(0, symbolBudget - cryptoOpenNotional(state, signal.symbol));
+  const cashBudget = Math.max(0, equity * Number(cfg.max_position_pct || 0.04));
+  const hardCap = Math.max(0, Math.min(cap, remainingGlobal, remainingSymbol, cashBudget || cap));
+
+  if (cfg.adaptive_sizing === false) {
+    return {
+      notional_usd: Number(hardCap.toFixed(2)),
+      sizing_mode: 'fixed_cap',
+      sizing_reason: '按用户单笔最高金额执行；仍受全局/单币/权益上限约束。',
+      score_edge: 0,
+      confidence_factor: 1,
+      liquidity_factor: 1,
+      risk_factor: 1,
+      remaining_global_usd: Number(remainingGlobal.toFixed(2)),
+      remaining_symbol_usd: Number(remainingSymbol.toFixed(2)),
+    };
+  }
+
+  const threshold = cryptoSizingThreshold(signal, cfg);
+  const score = Number(signal.score || 0);
+  const edge = cryptoClamp((score - threshold) / Math.max(0.18, threshold), 0, 1.25);
+  const confidence = cryptoClamp(Number(signal.confidence || 0.5), 0, 0.99);
+  const confidenceFactor = cryptoClamp(0.28 + edge * 0.48 + confidence * 0.28, 0.22, 1);
+  const spreadBps = Math.max(Number(signal.spread_bps || 0), 0);
+  const spreadFactor = cryptoClamp(1 - spreadBps / 35, 0.35, 1);
+  const realizedVol = Math.max(Number(signal.realized_vol || 0.004), 0.0015);
+  const riskFactor = cryptoClamp(0.018 / realizedVol, 0.38, 1.15);
+  const depthUsd = signal.side === 'short' ? Number(signal.bid_depth_usd || 0) : Number(signal.ask_depth_usd || 0);
+  const liquidityFactor = depthUsd > 0
+    ? cryptoClamp(depthUsd / Math.max(cap * 12, 1), 0.35, 1)
+    : signal.asset_class === 'crypto_perp' ? 0.55 : 0.72;
+  const shortFactor = signal.side === 'short' && signal.validated_side_policy !== 'both' ? 0.72 : 1;
+  const raw = cap * confidenceFactor * spreadFactor * riskFactor * liquidityFactor * shortFactor;
+  const minUseful = Math.min(cap, Math.max(25, cap * 0.18));
+  const notional = hardCap < minUseful ? 0 : Math.min(hardCap, Math.max(minUseful, raw));
+  const reasonParts = [
+    `score_edge=${edge.toFixed(2)}`,
+    `confidence=${confidenceFactor.toFixed(2)}`,
+    `liquidity=${liquidityFactor.toFixed(2)}`,
+    `risk=${riskFactor.toFixed(2)}`,
+  ];
+  if (shortFactor < 1) reasonParts.push('short_forward_shadow_discount');
+  return {
+    notional_usd: Number(notional.toFixed(2)),
+    sizing_mode: 'energy_style_adaptive_cap',
+    sizing_reason: `能源模型式自适应仓位：${reasonParts.join(' · ')}`,
+    score_edge: Number(edge.toFixed(4)),
+    confidence_factor: Number(confidenceFactor.toFixed(4)),
+    liquidity_factor: Number(liquidityFactor.toFixed(4)),
+    spread_factor: Number(spreadFactor.toFixed(4)),
+    risk_factor: Number(riskFactor.toFixed(4)),
+    remaining_global_usd: Number(remainingGlobal.toFixed(2)),
+    remaining_symbol_usd: Number(remainingSymbol.toFixed(2)),
+  };
+}
+
 function canOpenCryptoTestnetPosition(signal: any, state: any) {
   const cfg = state.config || {};
   if (state.mode !== 'running') return 'AI未运行';
@@ -2780,14 +2871,17 @@ function canOpenCryptoTestnetPosition(signal: any, state: any) {
   if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
   const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
   if (sameSymbol >= Number(cfg.max_symbol_positions || 1)) return '单币种持仓数已满';
+  const sizing = cryptoAdaptiveSizing(signal, state);
+  if (Number(sizing.notional_usd || 0) <= 0) return '自适应仓位预算不足';
   if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) return '本轮加密信号已处理';
   return '';
 }
 
 async function openCryptoTestnetPosition(env: Env, state: any, signal: any, credentials?: BinanceTestnetCredentials | null) {
   const cfg = state.config || {};
-  const maxByEquity = Number(state.equity_usd || state.initial_cash_usd || 0) * 0.25;
-  const notional = Math.min(Number(cfg.fixed_trade_usd || 1_000), maxByEquity);
+  const sizing = cryptoAdaptiveSizing(signal, state);
+  const notional = Number(sizing.notional_usd || 0);
+  if (notional <= 0) throw new Error('自适应仓位预算不足，未开仓');
   const side = signal.action === 'SELL_SHORT' ? 'short' : 'long';
   const fillPrice = side === 'short'
     ? Number(signal.bid_price || signal.price)
@@ -2824,6 +2918,17 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     last_price: signal.price,
     quantity,
     notional_usd: notional,
+    base_trade_cap_usd: Number(cfg.fixed_trade_usd || 1_000),
+    adaptive_sizing: cfg.adaptive_sizing !== false,
+    sizing_mode: sizing.sizing_mode,
+    sizing_reason: sizing.sizing_reason,
+    score_edge: sizing.score_edge,
+    confidence_factor: sizing.confidence_factor,
+    liquidity_factor: sizing.liquidity_factor,
+    spread_factor: sizing.spread_factor,
+    risk_factor: sizing.risk_factor,
+    remaining_global_usd_at_entry: sizing.remaining_global_usd,
+    remaining_symbol_usd_at_entry: sizing.remaining_symbol_usd,
     estimated_fee_usd: fee,
     stop_loss_usd: notional * Number(cfg.stop_loss_pct || 0.018),
     take_profit_usd: notional * Number(cfg.take_profit_pct || 0.036),
@@ -2854,6 +2959,12 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     net_pnl_usd: 0,
     score: signal.score,
     confidence: signal.confidence,
+    sizing_mode: sizing.sizing_mode,
+    sizing_reason: sizing.sizing_reason,
+    score_edge: sizing.score_edge,
+    confidence_factor: sizing.confidence_factor,
+    liquidity_factor: sizing.liquidity_factor,
+    risk_factor: sizing.risk_factor,
     source: signal.source,
     exchange_order_id: exchangeOrder?.orderId || null,
     execution_mode: pos.execution_mode,
