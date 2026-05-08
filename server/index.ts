@@ -108,6 +108,31 @@ const FOOTBALL_AUTO_REFRESH_INTERVAL_MS = Number(
 );
 const FOOTBALL_STARTUP_REFRESH_DELAY_MS = Number(process.env.FOOTBALL_STARTUP_REFRESH_DELAY_MS || 15 * 1000);
 const FOOTBALL_AUTO_REFRESH_ENABLED = process.env.FOOTBALL_AUTO_REFRESH_ENABLED !== 'false';
+const FOOTBALL_AUTO_REFRESH_MODE = normalizeFootballRefreshMode(process.env.FOOTBALL_AUTO_REFRESH_MODE || 'scores');
+const hfcdFootballSettlementSummary = path.join(
+  hfcdFootballHandoffRoot,
+  'run_outputs',
+  'hfcd_football_settlement_2026-05-07',
+  'settlement_summary.json',
+);
+const hfcdFootballSettlementDetail = path.join(
+  hfcdFootballHandoffRoot,
+  'run_outputs',
+  'hfcd_football_settlement_2026-05-07',
+  'settlement_detail.csv',
+);
+const apiFootballCompetitionMap: Record<string, { league: number; season: number }> = {
+  E0: { league: 39, season: 2025 },
+  D1: { league: 78, season: 2025 },
+  SP1: { league: 140, season: 2025 },
+  IT1: { league: 135, season: 2025 },
+  F1: { league: 61, season: 2025 },
+  N1: { league: 88, season: 2025 },
+  J1: { league: 98, season: 2026 },
+  UCL: { league: 2, season: 2025 },
+  UEL: { league: 3, season: 2025 },
+};
+const apiFootballFixtureCache = new Map<string, any[]>();
 
 const app = express();
 const instructionCache = new Map<string, string>();
@@ -115,6 +140,10 @@ const MAX_INSTRUCTION_CACHE = 120;
 const execFileAsync = promisify(execFile);
 
 app.use(express.json({ limit: '60mb' }));
+
+function normalizeFootballRefreshMode(value: string): 'cache' | 'live' | 'scores' {
+  return value === 'live' || value === 'cache' || value === 'scores' ? value : 'scores';
+}
 
 function setInstructionCache(key: string, value: string) {
   if (instructionCache.size >= MAX_INSTRUCTION_CACHE) {
@@ -488,7 +517,7 @@ function normalizeFootballRecommendation(recommendation: Record<string, any>) {
   }
 }
 
-function normalizeFootballSimpleFeed(feed: any) {
+function normalizeFootballSimpleFeed(feed: any, options: { includePast?: boolean } = {}) {
   const rawMatches = Array.isArray(feed?.matches) ? feed.matches : [];
   let expiredFiltered = 0;
 
@@ -517,7 +546,9 @@ function normalizeFootballSimpleFeed(feed: any) {
     }
   }
 
-  const matches = rawMatches.filter((match: Record<string, any>) => isUpcomingFootballMatch(match));
+  const matches = options.includePast
+    ? rawMatches
+    : rawMatches.filter((match: Record<string, any>) => isUpcomingFootballMatch(match));
   expiredFiltered = rawMatches.length - matches.length;
   feed.matches = matches;
   const officialCount = matches.filter((match: Record<string, any>) => match.prediction_state === 'official_available').length;
@@ -547,11 +578,11 @@ function normalizeFootballSimpleFeed(feed: any) {
   return feed;
 }
 
-function readFootballFeed() {
+function readFootballFeed(options: { includePast?: boolean } = {}) {
   if (!fs.existsSync(hfcdFootballSimpleFeed)) {
     throw new Error(`HFCD football simple predict feed has not been generated: ${hfcdFootballSimpleFeed}`);
   }
-  return normalizeFootballSimpleFeed(readJsonFile(hfcdFootballSimpleFeed));
+  return normalizeFootballSimpleFeed(readJsonFile(hfcdFootballSimpleFeed), options);
 }
 
 function footballPredictionSnapshot(reason: string, mode: 'cache' | 'live' | 'scores', feed: Record<string, any>) {
@@ -933,6 +964,7 @@ function getFootballRefreshStatus() {
   return {
     enabled: FOOTBALL_AUTO_REFRESH_ENABLED,
     intervalMs: FOOTBALL_AUTO_REFRESH_INTERVAL_MS,
+    mode: FOOTBALL_AUTO_REFRESH_MODE,
     inFlight: Boolean(footballRefreshInFlight),
     nextRefreshAt: footballNextRefreshAt,
     lastRefresh: footballLastRefresh,
@@ -949,7 +981,7 @@ function scheduleFootballDailyRefresh() {
   };
 
   setTimeout(() => {
-    void runFootballRefreshOnce('startup_auto_refresh', 'cache').catch((error) => {
+    void runFootballRefreshOnce('startup_auto_refresh', FOOTBALL_AUTO_REFRESH_MODE).catch((error) => {
       console.error('Football startup auto-refresh failed:', error);
     });
   }, Math.max(0, FOOTBALL_STARTUP_REFRESH_DELAY_MS));
@@ -957,16 +989,16 @@ function scheduleFootballDailyRefresh() {
   scheduleNext();
   footballRefreshTimer = setInterval(() => {
     scheduleNext();
-    void runFootballRefreshOnce('daily_auto_refresh', 'cache').catch((error) => {
+    void runFootballRefreshOnce('daily_auto_refresh', FOOTBALL_AUTO_REFRESH_MODE).catch((error) => {
       console.error('Football daily auto-refresh failed:', error);
     });
   }, FOOTBALL_AUTO_REFRESH_INTERVAL_MS);
 }
 
 function selectedTeamFromRecommendation(match: Record<string, any>, recommendation: Record<string, any>) {
-  const selection = String(recommendation.selection || '').toLowerCase();
-  const home = String(match.home_team || '').toLowerCase();
-  const away = String(match.away_team || '').toLowerCase();
+  const selection = normalizeFootballTeamName(recommendation.selection || '');
+  const home = normalizeFootballTeamName(match.home_team || '');
+  const away = normalizeFootballTeamName(match.away_team || '');
   if (selection.includes(home)) return 'home';
   if (selection.includes(away)) return 'away';
   if (selection === 'home') return 'home';
@@ -1006,13 +1038,315 @@ function settleFootballRecommendation(match: Record<string, any>, recommendation
   return 'unsupported';
 }
 
+function normalizeFootballTeamName(value: unknown) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/\b(fc|cf|sc|sv|vfl|vfb|tsg|afc|rc|cd|ud|ac|as|ssc|1)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(football|club|calcio|deportivo)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function footballTeamSimilarity(a: unknown, b: unknown) {
+  const left = normalizeFootballTeamName(a);
+  const right = normalizeFootballTeamName(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.94;
+  const aliases: Record<string, string[]> = {
+    'athletic bilbao': ['athletic club', 'athletic'],
+    koln: ['cologne', 'koeln'],
+    'real sociedad': ['sociedad'],
+    'atletico madrid': ['atleti'],
+    'mainz 05': ['mainz'],
+    'hoffenheim': ['1899 hoffenheim'],
+  };
+  const aliasHit = Object.entries(aliases).some(([canonical, values]) => {
+    const names = [canonical, ...values].map(normalizeFootballTeamName);
+    return names.includes(left) && names.includes(right);
+  });
+  if (aliasHit) return 0.92;
+  const leftTokens = new Set(left.split(' ').filter(Boolean));
+  const rightTokens = new Set(right.split(' ').filter(Boolean));
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size || 1;
+  return intersection / union;
+}
+
+function footballDateKey(value: unknown) {
+  const time = new Date(String(value || '')).getTime();
+  if (!Number.isFinite(time)) return null;
+  return new Date(time).toISOString().slice(0, 10);
+}
+
+function footballDateRange(fromIso: string, toIso: string) {
+  const from = new Date(`${fromIso.slice(0, 10)}T00:00:00Z`).getTime();
+  const to = new Date(`${toIso.slice(0, 10)}T00:00:00Z`).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return [];
+  const days: string[] = [];
+  for (let current = from; current <= to; current += 24 * 60 * 60 * 1000) {
+    days.push(new Date(current).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+async function fetchApiFootballFixtures(date: string, competition?: string | null) {
+  const apiKey = process.env.API_FOOTBALL_KEY;
+  if (!apiKey) {
+    throw new Error('API_FOOTBALL_KEY is not configured.');
+  }
+  const competitionInfo = competition ? apiFootballCompetitionMap[String(competition)] : null;
+  const cacheKey = `${date}:${competitionInfo?.league || 'all'}:${competitionInfo?.season || 'any'}`;
+  if (apiFootballFixtureCache.has(cacheKey)) {
+    return apiFootballFixtureCache.get(cacheKey) || [];
+  }
+
+  const params = new URLSearchParams({ date, timezone: 'UTC' });
+  if (competitionInfo) {
+    params.set('league', String(competitionInfo.league));
+    params.set('season', String(competitionInfo.season));
+  }
+  const response = await fetch(`https://v3.football.api-sports.io/fixtures?${params.toString()}`, {
+    headers: { 'x-apisports-key': apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`API-Football fixtures failed: HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const fixtures = Array.isArray(payload?.response) ? payload.response : [];
+  apiFootballFixtureCache.set(cacheKey, fixtures);
+  return fixtures;
+}
+
+function matchApiFootballFixture(match: Record<string, any>, fixtures: any[]) {
+  let best: { fixture: any; score: number } | null = null;
+  for (const fixture of fixtures) {
+    const homeScore = footballTeamSimilarity(match.home_team, fixture?.teams?.home?.name);
+    const awayScore = footballTeamSimilarity(match.away_team, fixture?.teams?.away?.name);
+    const reversedHomeScore = footballTeamSimilarity(match.home_team, fixture?.teams?.away?.name);
+    const reversedAwayScore = footballTeamSimilarity(match.away_team, fixture?.teams?.home?.name);
+    const direct = (homeScore + awayScore) / 2;
+    const reversed = (reversedHomeScore + reversedAwayScore) / 2;
+    const score = Math.max(direct, reversed * 0.82);
+    if (!best || score > best.score) {
+      best = { fixture, score };
+    }
+  }
+  return best && best.score >= 0.54 ? best : null;
+}
+
+function normalizeFootballSettlement(settlement: string) {
+  if (settlement === 'win' || settlement === 'hit') return 'hit';
+  if (settlement === 'loss') return 'miss';
+  return settlement || 'pending';
+}
+
+function updateFootballSettlementBucket(bucket: Record<string, any>, settlement: string) {
+  bucket.count += 1;
+  if (settlement === 'hit') bucket.hit += 1;
+  else if (settlement === 'miss') bucket.miss += 1;
+  else if (settlement === 'push') bucket.push += 1;
+  else if (settlement === 'unmatched') bucket.unmatched += 1;
+  else if (settlement === 'unsupported' || settlement === 'unknown_market') bucket.unknown_market += 1;
+  else bucket.pending += 1;
+  const decided = bucket.hit + bucket.miss;
+  bucket.hit_rate_decided = decided > 0 ? bucket.hit / decided : null;
+}
+
+function summarizeFootballSettlementRows(rows: Array<Record<string, any>>) {
+  const createBucket = () => ({
+    hit: 0,
+    miss: 0,
+    push: 0,
+    pending: 0,
+    unmatched: 0,
+    unknown_market: 0,
+    count: 0,
+    hit_rate_decided: null as number | null,
+  });
+  const summary = {
+    all: createBucket(),
+    official_accuracy: createBucket(),
+    watchlist: createBucket(),
+  };
+  for (const row of rows) {
+    const settlement = normalizeFootballSettlement(row.settlement);
+    updateFootballSettlementBucket(summary.all, settlement);
+    if (row.scope === 'official_accuracy') updateFootballSettlementBucket(summary.official_accuracy, settlement);
+    if (row.scope === 'watchlist') updateFootballSettlementBucket(summary.watchlist, settlement);
+  }
+  return summary;
+}
+
+function settlementScopeForMatch(match: Record<string, any>, recommendation: Record<string, any>) {
+  const conclusion = footballConclusion(match, recommendation);
+  return conclusion === 'official_accuracy' ? 'official_accuracy' : 'watchlist';
+}
+
+async function buildFootballSettlementFromApi(fromIso: string, toIso: string) {
+  const feed = readFootballFeed({ includePast: true });
+  const fromTime = new Date(fromIso).getTime();
+  const toTime = new Date(toIso).getTime();
+  const rows: Array<Record<string, any>> = [];
+  const apiQueries = new Set<string>();
+  const apiErrors: string[] = [];
+
+  const matches = (feed.matches || []).filter((match: Record<string, any>) => {
+    const kickoff = footballKickoffTime(match);
+    const recommendation = match.top_recommendation || match.recommendations?.[0];
+    return recommendation && kickoff !== null && kickoff >= fromTime && kickoff <= toTime;
+  });
+
+  for (const match of matches) {
+    const recommendation = match.top_recommendation || match.recommendations?.[0];
+    const date = footballDateKey(match.commence_time);
+    let settlement = 'pending';
+    let score = '';
+    let apiHome = '';
+    let apiAway = '';
+    let apiStatus = '';
+    let matchScoreQuality = 0;
+
+    if (date) {
+      const queryKey = `${date}:${match.competition || 'all'}`;
+      apiQueries.add(queryKey);
+      try {
+        const fixtures = await fetchApiFootballFixtures(date, match.competition);
+        const best = matchApiFootballFixture(match, fixtures);
+        if (best) {
+          const fixture = best.fixture;
+          const homeScore = Number(fixture?.goals?.home);
+          const awayScore = Number(fixture?.goals?.away);
+          apiHome = fixture?.teams?.home?.name || '';
+          apiAway = fixture?.teams?.away?.name || '';
+          apiStatus = fixture?.fixture?.status?.short || '';
+          matchScoreQuality = best.score;
+          if (Number.isFinite(homeScore) && Number.isFinite(awayScore) && ['FT', 'AET', 'PEN'].includes(apiStatus)) {
+            score = `${homeScore}-${awayScore}`;
+            settlement = normalizeFootballSettlement(
+              settleFootballRecommendation(match, recommendation, { home_score: homeScore, away_score: awayScore }),
+            );
+          } else {
+            settlement = 'pending';
+          }
+        } else {
+          settlement = 'unmatched';
+        }
+      } catch (error) {
+        apiErrors.push(`${queryKey}: ${error instanceof Error ? error.message : String(error)}`);
+        settlement = 'pending';
+      }
+    } else {
+      settlement = 'unmatched';
+    }
+
+    rows.push({
+      event_id: match.event_id,
+      league: match.competition || '',
+      kickoff_utc: match.commence_time || '',
+      home: match.home_team || '',
+      away: match.away_team || '',
+      scope: settlementScopeForMatch(match, recommendation),
+      prediction_state: match.prediction_state || '',
+      market: recommendation.market || '',
+      selection: recommendation.predicted_result || recommendation.selection || '',
+      model_prob: recommendation.model_prob ?? null,
+      historical_hit_rate: recommendation.historical_hit_rate ?? null,
+      accuracy_grade: recommendation.accuracy_grade || null,
+      confidence_level: recommendation.confidence_level || null,
+      api_home: apiHome,
+      api_away: apiAway,
+      match_score_quality: matchScoreQuality,
+      api_status: apiStatus,
+      score,
+      settlement,
+      note: apiErrors.length ? 'API-Football returned at least one query warning.' : '',
+    });
+  }
+
+  const checkedUntil = new Date(toIso).toISOString();
+  const generatedAt = feed.generated_at || null;
+  return {
+    ok: true,
+    source: 'api_football_live',
+    feed_generated_at_utc: generatedAt,
+    checked_until_utc: checkedUntil,
+    elapsed_days_exact: generatedAt ? Number(((new Date(checkedUntil).getTime() - new Date(generatedAt).getTime()) / 86400000).toFixed(4)) : null,
+    elapsed_calendar_days_utc: footballDateRange(fromIso, toIso).length,
+    selected_predictions: rows.length,
+    api_error_count: apiErrors.length,
+    api_errors: apiErrors,
+    api_query_keys: [...apiQueries],
+    summary: summarizeFootballSettlementRows(rows),
+    rows,
+  };
+}
+
+function readFootballSettlementArtifact() {
+  if (!fs.existsSync(hfcdFootballSettlementSummary) || !fs.existsSync(hfcdFootballSettlementDetail)) {
+    return null;
+  }
+  const summary = readJsonFile(hfcdFootballSettlementSummary);
+  const rows = parseCsv(fs.readFileSync(hfcdFootballSettlementDetail, 'utf8')).map((row) => ({
+    ...row,
+    settlement: normalizeFootballSettlement(row.settlement),
+    model_prob: row.model_prob ? Number(row.model_prob) : null,
+    historical_hit_rate: row.historical_hit_rate ? Number(row.historical_hit_rate) : null,
+    match_score_quality: row.match_score_quality ? Number(row.match_score_quality) : null,
+  }));
+  return {
+    ok: true,
+    source: 'settlement_artifact',
+    feed_generated_at_utc: summary.feed_generated_at_utc || null,
+    checked_until_utc: summary.checked_until_utc || null,
+    elapsed_days_exact: summary.elapsed_days_exact ?? null,
+    elapsed_calendar_days_utc: summary.elapsed_calendar_days_utc ?? null,
+    selected_predictions: rows.length,
+    api_error_count: summary.api_error_count ?? 0,
+    api_errors: summary.api_errors || [],
+    api_query_keys: summary.api_query_keys || [],
+    summary: summarizeFootballSettlementRows(rows),
+    rows,
+  };
+}
+
+async function buildFootballSettlementReport(fromIso?: string, toIso?: string, preferArtifact = false) {
+  const feed = readFootballFeed({ includePast: true });
+  const from = fromIso || feed.generated_at || new Date(Date.now() - 7 * 86400000).toISOString();
+  const to = toIso || new Date().toISOString();
+  if (!preferArtifact && process.env.API_FOOTBALL_KEY) {
+    try {
+      return await buildFootballSettlementFromApi(from, to);
+    } catch (error) {
+      const artifact = readFootballSettlementArtifact();
+      if (artifact) {
+        return {
+          ...artifact,
+          fallback_reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      throw error;
+    }
+  }
+  const artifact = readFootballSettlementArtifact();
+  if (artifact) return artifact;
+  if (!process.env.API_FOOTBALL_KEY) {
+    throw new Error('API_FOOTBALL_KEY is not configured and no settlement artifact exists.');
+  }
+  return buildFootballSettlementFromApi(from, to);
+}
+
 function buildFootballToolContext(content: string) {
   if (!/(足球|比赛|预测|串关|赔率|BTTS|Titan007|英超|西甲|德甲|意甲|法甲|欧冠|欧联|日职|football|soccer|parlay|odds)/i.test(content)) {
     return '';
   }
 
   try {
-    const feed = readFootballFeed();
+    const feed = readFootballFeed({ includePast: true });
     const query = content.toLowerCase();
     const relevantMatches = (feed.matches || [])
       .filter((match: Record<string, any>) => {
@@ -1129,6 +1463,16 @@ app.get('/api/hfcd/football/simple-predict', (_req, res) => {
   }
 });
 
+app.get('/api/hfcd/football/accuracy-feed', (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(readFootballFeed());
+  } catch (error) {
+    console.error('HFCD football accuracy feed read failed:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to read football accuracy feed.' });
+  }
+});
+
 app.get('/api/football/fixtures', (_req, res) => {
   try {
     const feed = readFootballFeed();
@@ -1233,6 +1577,20 @@ app.post('/api/football/refresh-odds', async (req, res) => {
   } catch (error) {
     console.error('Football refresh-odds API failed:', error);
     res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football refresh failed.' });
+  }
+});
+
+app.get('/api/football/settlement', async (req, res) => {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const preferArtifact = req.query.source === 'artifact';
+    const payload = await buildFootballSettlementReport(from, to, preferArtifact);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(payload);
+  } catch (error) {
+    console.error('Football settlement API failed:', error);
+    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Football settlement failed.' });
   }
 });
 

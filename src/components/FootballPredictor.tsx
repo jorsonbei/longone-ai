@@ -1033,7 +1033,7 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
   React.useEffect(() => {
     const timer = window.setInterval(() => {
       void loadFeed();
-    }, 5 * 60 * 1000);
+    }, 10 * 60 * 1000);
     return () => window.clearInterval(timer);
   }, [loadFeed]);
 
@@ -1342,7 +1342,7 @@ export function FootballPredictor({ locale = 'zh' }: { locale?: Locale }) {
           </div>
         </div>
 
-        <aside className="min-w-0 space-y-6">
+        <aside className="min-w-0 space-y-6 xl:sticky xl:top-6 xl:self-start">
           <SelectedMatchPanel match={selectedMatch} copy={copy} accuracyLabels={accuracyLabels} locale={locale} />
           <ParlayPanel parlays={relatedParlays} copy={copy} accuracyLabels={accuracyLabels} locale={locale} />
         </aside>
