@@ -380,6 +380,11 @@ function money(value?: number) {
   return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+function moneyOrDash(value?: number | null) {
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) return '-';
+  return money(Number(value));
+}
+
 function num(value?: number, digits = 2) {
   return Number(value || 0).toFixed(digits);
 }
@@ -447,8 +452,24 @@ export default function EnergyTradingPage({ locale }: Props) {
   }, [loadDashboard, userId]);
 
   useEffect(() => {
-    loadDashboard().catch(() => setMessage('读取线上交易引擎失败。'));
-  }, [loadDashboard]);
+    let cancelled = false;
+    setDashboard(null);
+    setLoading(true);
+    fetch(`${apiPrefix}/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' })
+      .then((res) => res.json() as Promise<Dashboard>)
+      .then((data) => {
+        if (!cancelled) setDashboard(data);
+      })
+      .catch(() => {
+        if (!cancelled) setMessage('读取线上交易引擎失败。');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiPrefix, userId]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
@@ -478,6 +499,10 @@ export default function EnergyTradingPage({ locale }: Props) {
           <button
             key={key}
             onClick={() => {
+              if (key !== activeDesk) {
+                setDashboard(null);
+                setLoading(true);
+              }
               setActiveDesk(key);
               setMessage('');
             }}
@@ -557,9 +582,9 @@ export default function EnergyTradingPage({ locale }: Props) {
       <section className="mt-5 grid gap-4 md:grid-cols-5">
         {[
           [copy.status, dashboard?.summary?.mode || 'loading'],
-          [copy.equity, money(dashboard?.summary?.settled_equity_usd ?? dashboard?.summary?.cash_usd)],
-          [copy.pnl, money(dashboard?.summary?.realized_pnl_usd)],
-          [copy.unrealizedPnl, money(dashboard?.summary?.unrealized_pnl_usd)],
+          [copy.equity, moneyOrDash(dashboard?.summary?.settled_equity_usd ?? dashboard?.summary?.cash_usd)],
+          [copy.pnl, moneyOrDash(dashboard?.summary?.realized_pnl_usd)],
+          [copy.unrealizedPnl, moneyOrDash(dashboard?.summary?.unrealized_pnl_usd)],
           [copy.winOpen, `${((dashboard?.summary?.win_rate || 0) * 100).toFixed(1)}% / ${dashboard?.summary?.open_positions || 0}/${dashboard?.summary?.max_open_positions || 0}`],
         ].map(([label, value]) => (
           <div key={label} className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-5">

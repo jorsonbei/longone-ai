@@ -94,15 +94,25 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
 
+def normalize_accounting(state: dict[str, Any]) -> dict[str, Any]:
+    state.setdefault("initial_cash_usd", 100_000.0)
+    state.setdefault("realized_pnl_usd", 0.0)
+    state["settled_equity_usd"] = float(state["initial_cash_usd"]) + float(state["realized_pnl_usd"])
+    state["cash_usd"] = state["settled_equity_usd"]
+    return state
+
+
 def load_state() -> dict[str, Any]:
     if STATE_PATH.exists():
         try:
-            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            return normalize_accounting(json.loads(STATE_PATH.read_text(encoding="utf-8")))
         except Exception:
             pass
-    return {
+    return normalize_accounting({
         "version": VERSION,
+        "initial_cash_usd": 100_000.0,
         "cash_usd": 100_000.0,
+        "settled_equity_usd": 100_000.0,
         "realized_pnl_usd": 0.0,
         "positions": [],
         "seen_signal_ids": [],
@@ -115,7 +125,7 @@ def load_state() -> dict[str, Any]:
             "take_profit_pct": 0.036,
             "fee_rate": 0.00055,
         },
-    }
+    })
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -220,6 +230,10 @@ def position_pnl(pos: dict[str, Any], price: float) -> float:
     return gross - float(pos.get("open_fee_usd", 0.0))
 
 
+def settled_equity(state: dict[str, Any]) -> float:
+    return float(state.get("initial_cash_usd", 100_000.0)) + float(state.get("realized_pnl_usd", 0.0))
+
+
 def append_rows(rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -309,14 +323,15 @@ def run_once() -> dict[str, Any]:
             "net_pnl_usd": -fee,
             "reason": "exact_lineage_forward_open",
         }
-        state["cash_usd"] = float(state["cash_usd"]) - fee
         state.setdefault("positions", []).append(position)
         state.setdefault("seen_signal_ids", []).append(signal["signal_id"])
         state["seen_signal_ids"] = state["seen_signal_ids"][-500:]
         events.append(position)
 
     unrealized = sum(float(p.get("unrealized_pnl_usd", 0.0)) for p in state.get("positions", []))
-    state["equity_usd"] = float(state["cash_usd"]) + unrealized
+    state["settled_equity_usd"] = settled_equity(state)
+    state["cash_usd"] = state["settled_equity_usd"]
+    state["equity_usd"] = float(state["settled_equity_usd"]) + unrealized
     state["updated_at"] = utc_now().isoformat()
     save_state(state)
     append_rows(events)
@@ -337,6 +352,7 @@ def run_once() -> dict[str, Any]:
         "open_positions": len(state.get("positions", [])),
         "realized_pnl_usd": round(float(state.get("realized_pnl_usd", 0)), 2),
         "unrealized_pnl_usd": round(unrealized, 2),
+        "settled_equity_usd": round(float(state.get("settled_equity_usd", settled_equity(state))), 2),
         "equity_usd": round(float(state.get("equity_usd", 0)), 2),
         "closed_trades": int(len(closed)),
         "win_rate": round(float((closed["net_pnl_usd"] > 0).mean()), 4) if len(closed) else 0.0,

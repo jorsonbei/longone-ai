@@ -318,6 +318,7 @@ function defaultEnergyTradingAccount(userId: string, body: any = {}) {
     stopped_at: '',
     initial_cash_usd: capital,
     cash_usd: capital,
+    settled_equity_usd: capital,
     realized_pnl_usd: 0,
     equity_usd: capital,
     peak_equity_usd: capital,
@@ -1221,6 +1222,7 @@ function defaultCommodityEnergyAccount(userId: string, body: any = {}) {
     stopped_at: '',
     initial_cash_usd: capital,
     cash_usd: capital,
+    settled_equity_usd: capital,
     realized_pnl_usd: 0,
     equity_usd: capital,
     peak_equity_usd: capital,
@@ -1273,6 +1275,10 @@ function commodityEnergyPositionPnl(pos: any, currentPrice: number) {
   return gross - Number(pos.open_fee_usd || 0);
 }
 
+function commodityEnergySettledEquity(state: any) {
+  return Number(state.initial_cash_usd || 0) + Number(state.realized_pnl_usd || 0);
+}
+
 function commodityEnergyEquity(state: any, signals: any[] = []) {
   const priceBySymbol = new Map(signals.map((signal) => [signal.symbol, Number(signal.price || 0)]));
   let unrealized = 0;
@@ -1283,7 +1289,10 @@ function commodityEnergyEquity(state: any, signals: any[] = []) {
     pos.unrealized_pnl_usd = Number(pnl.toFixed(2));
     unrealized += pnl;
   }
-  const equity = Number(state.cash_usd || 0) + unrealized;
+  const settledEquity = commodityEnergySettledEquity(state);
+  const equity = settledEquity + unrealized;
+  state.settled_equity_usd = settledEquity;
+  state.cash_usd = settledEquity;
   state.equity_usd = equity;
   state.peak_equity_usd = Math.max(Number(state.peak_equity_usd || equity), equity);
   state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), equity - Number(state.peak_equity_usd || equity));
@@ -1342,7 +1351,6 @@ async function openCommodityEnergyPosition(env: Env, state: any, signal: any) {
     stop_loss_pct: Number(state.config?.stop_loss_pct || 0.018),
     take_profit_pct: Number(state.config?.take_profit_pct || 0.036),
   };
-  state.cash_usd = Number(state.cash_usd || 0) - fee;
   state.open_positions = [...(state.open_positions || []), pos];
   state.seen_signal_ids = [...(state.seen_signal_ids || []), String(signal.signal_id)].slice(-500);
   await insertEnergyTrade(env, state.user_id, {
@@ -1429,6 +1437,8 @@ async function commodityEnergyTick(env: Env, state: any, forceSettle = false) {
     }
   }
   state.open_positions = remaining;
+  state.settled_equity_usd = commodityEnergySettledEquity(state);
+  state.cash_usd = state.settled_equity_usd;
 
   if (!forceSettle && state.mode === 'running') {
     const candidates = [...signals].sort((a: any, b: any) => Number(b.score || 0) - Number(a.score || 0));
@@ -1492,7 +1502,7 @@ async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
       mode: state.mode,
       equity_usd: state.equity_usd,
       cash_usd: state.cash_usd,
-      settled_equity_usd: state.cash_usd,
+      settled_equity_usd: state.settled_equity_usd ?? commodityEnergySettledEquity(state),
       realized_pnl_usd: state.realized_pnl_usd,
       unrealized_pnl_usd: unrealizedPnl,
       open_positions: (state.open_positions || []).length,
@@ -1528,6 +1538,7 @@ async function commodityEnergyStart(request: Request, env: Env, url: URL) {
   if (body.capital_usd && isFresh) {
     state.initial_cash_usd = Number(body.capital_usd);
     state.cash_usd = Number(body.capital_usd);
+    state.settled_equity_usd = Number(body.capital_usd);
     state.equity_usd = Number(body.capital_usd);
     state.peak_equity_usd = Number(body.capital_usd);
   }
