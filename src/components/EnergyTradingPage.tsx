@@ -63,6 +63,18 @@ type Dashboard = {
   db_status: string;
   version: string;
   updated_at: string;
+  ledger?: {
+    source?: string;
+    api_prefix?: string;
+    user_id?: string;
+    user_id_suffix?: string;
+    dashboard_updated_at?: string;
+    account_started_at?: string;
+    account_stopped_at?: string;
+    account_last_tick_at?: string;
+    browser_storage_key?: string;
+    note?: string;
+  };
   market_health: {
     ok: boolean;
     status: string;
@@ -82,6 +94,12 @@ type Dashboard = {
     max_open_positions: number;
     win_rate: number;
     config?: Record<string, unknown>;
+  };
+  account?: {
+    user_id?: string;
+    started_at?: string;
+    stopped_at?: string;
+    last_tick_at?: string;
   };
   recent_trades: EnergyTrade[];
   risk_optimization?: {
@@ -140,7 +158,9 @@ const COPY: Record<Locale, {
   start: string;
   tick: string;
   stop: string;
+  reset: string;
   export: string;
+  exportLedgerId: string;
   capital: string;
   fixedTrade: string;
   maxPositions: string;
@@ -177,7 +197,9 @@ const COPY: Record<Locale, {
     start: '启动 AI 自动交易',
     tick: 'AI 运行一轮',
     stop: '停止并清仓结算',
+    reset: '重置商品账本',
     export: '导出记录',
+    exportLedgerId: '导出账本 ID',
     capital: '总资金',
     fixedTrade: '单次金额',
     maxPositions: '最大持仓',
@@ -214,7 +236,9 @@ const COPY: Record<Locale, {
     start: 'Start AI Trading',
     tick: 'Run One AI Tick',
     stop: 'Stop and Liquidate',
+    reset: 'Reset Commodity Ledger',
     export: 'Export',
+    exportLedgerId: 'Export Ledger ID',
     capital: 'Capital',
     fixedTrade: 'Trade amount',
     maxPositions: 'Max positions',
@@ -251,7 +275,9 @@ const COPY: Record<Locale, {
     start: 'Bat dau AI',
     tick: 'Chay mot vong',
     stop: 'Dung va tat toan',
+    reset: 'Dat lai so hang hoa',
     export: 'Xuat du lieu',
+    exportLedgerId: 'Xuat Ledger ID',
     capital: 'Tong von',
     fixedTrade: 'So tien moi lenh',
     maxPositions: 'Vi the toi da',
@@ -288,7 +314,9 @@ const COPY: Record<Locale, {
     start: 'AI取引開始',
     tick: 'AIを1回実行',
     stop: '停止して清算',
+    reset: '商品台帳をリセット',
     export: 'エクスポート',
+    exportLedgerId: 'Ledger IDを出力',
     capital: '資金',
     fixedTrade: '1回金額',
     maxPositions: '最大建玉',
@@ -451,6 +479,47 @@ export default function EnergyTradingPage({ locale }: Props) {
     }
   }, [loadDashboard, userId]);
 
+  const resetCommodityLedger = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/commodity-energy-trading/reset', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, ...config }),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error || 'reset failed');
+      setMessage('能源商品线上账本已重置。');
+      await loadDashboard();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '重置失败。');
+    } finally {
+      setLoading(false);
+    }
+  }, [config, loadDashboard, userId]);
+
+  const exportLedgerId = useCallback(() => {
+    const payload = {
+      active_desk: activeDesk,
+      browser_storage_key: 'hfcd_energy_user_id',
+      browser_user_id: userId,
+      api_prefix: apiPrefix,
+      online_ledger_user_id: dashboard?.ledger?.user_id || dashboard?.account?.user_id || (activeDesk === 'commodity' ? `commodity_${userId}`.slice(0, 80) : userId),
+      online_ledger_user_id_suffix: dashboard?.ledger?.user_id_suffix || (dashboard?.ledger?.user_id || dashboard?.account?.user_id || userId).slice(-10),
+      source: dashboard?.ledger?.source || (dashboard?.online_backend ? 'longone_worker_d1' : 'worker_default_no_d1'),
+      dashboard_updated_at: dashboard?.updated_at || '',
+      account_last_tick_at: dashboard?.ledger?.account_last_tick_at || dashboard?.account?.last_tick_at || '',
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = `hfcd-${activeDesk}-ledger-id-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(href);
+    setMessage(`已导出当前浏览器账本 ID：${payload.online_ledger_user_id_suffix}`);
+  }, [activeDesk, apiPrefix, dashboard, userId]);
+
   useEffect(() => {
     let cancelled = false;
     setDashboard(null);
@@ -486,6 +555,10 @@ export default function EnergyTradingPage({ locale }: Props) {
   const decisions = dashboard?.decisions || [];
   const risk = dashboard?.risk_optimization;
   const diag = dashboard?.win_rate_diagnostics;
+  const ledgerUserId = dashboard?.ledger?.user_id || dashboard?.account?.user_id || (activeDesk === 'commodity' ? `commodity_${userId}`.slice(0, 80) : userId);
+  const ledgerSuffix = dashboard?.ledger?.user_id_suffix || ledgerUserId.slice(-10);
+  const ledgerSource = dashboard?.ledger?.source || (dashboard?.online_backend ? 'longone_worker_d1' : 'worker_default_no_d1');
+  const ledgerUpdatedAt = dashboard?.ledger?.account_last_tick_at || dashboard?.ledger?.dashboard_updated_at || dashboard?.updated_at || '-';
 
   return (
     <div className="min-h-full bg-[#0b1512] px-5 py-6 pb-14 text-slate-100">
@@ -575,6 +648,14 @@ export default function EnergyTradingPage({ locale }: Props) {
           }} className="rounded-2xl border border-emerald-200/15 bg-white/[0.05] px-5 py-3 text-sm font-black text-emerald-100">
             {copy.export}
           </button>
+          <button onClick={exportLedgerId} className="rounded-2xl border border-emerald-200/15 bg-white/[0.05] px-5 py-3 text-sm font-black text-emerald-100">
+            {copy.exportLedgerId}
+          </button>
+          {activeDesk === 'commodity' ? (
+            <button disabled={loading} onClick={resetCommodityLedger} className="rounded-2xl border border-amber-200/30 bg-amber-300/14 px-5 py-3 text-sm font-black text-amber-100">
+              {copy.reset}
+            </button>
+          ) : null}
         </div>
         {message ? <div className="mt-4 rounded-2xl border border-emerald-200/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{message}</div> : null}
       </section>
@@ -599,6 +680,25 @@ export default function EnergyTradingPage({ locale }: Props) {
         <div className="mt-3 rounded-2xl border border-emerald-200/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
           状态：{dashboard?.market_health?.status || '-'} · D1：{dashboard?.db_status || '-'} · 最新：{dashboard?.market_health?.latest_captured_at || '-'} · 行数：{dashboard?.market_health?.rows || 0}
         </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3">
+            <p className="text-xs font-black text-emerald-50/45">账本来源</p>
+            <p className="mt-1 break-all text-sm font-bold text-emerald-100">{ledgerSource}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3">
+            <p className="text-xs font-black text-emerald-50/45">线上账本 ID 后缀</p>
+            <p className="mt-1 break-all text-sm font-bold text-emerald-100">{ledgerSuffix}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200/10 bg-black/20 px-4 py-3">
+            <p className="text-xs font-black text-emerald-50/45">账本更新时间</p>
+            <p className="mt-1 break-all text-sm font-bold text-emerald-100">{ledgerUpdatedAt}</p>
+          </div>
+        </div>
+        {activeDesk === 'commodity' ? (
+          <p className="mt-3 text-xs leading-5 text-amber-200/75">
+            当前页面显示的是 longone 线上 Worker/D1 账本；本地 heartbeat 的 outputs/ 文件账本不会自动等同于这个浏览器用户账本。
+          </p>
+        ) : null}
         {activeDesk === 'commodity' && dashboard?.routes?.length ? (
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {dashboard.routes.map((route) => (

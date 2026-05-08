@@ -316,6 +316,7 @@ function defaultEnergyTradingAccount(userId: string, body: any = {}) {
     mode: 'stopped',
     started_at: '',
     stopped_at: '',
+    last_tick_at: '',
     initial_cash_usd: capital,
     cash_usd: capital,
     settled_equity_usd: capital,
@@ -378,6 +379,12 @@ async function saveEnergyAccount(env: Env, state: any) {
     .prepare('INSERT OR REPLACE INTO energy_accounts (user_id, state_json, updated_at) VALUES (?, ?, ?)')
     .bind(state.user_id, JSON.stringify(state), energyIso())
     .run();
+}
+
+async function clearEnergyTrades(env: Env, userId: string) {
+  const db = await ensureEnergyTradingDb(env);
+  if (!db) return;
+  await db.prepare('DELETE FROM energy_trades WHERE user_id = ?').bind(userId).run();
 }
 
 async function insertEnergyTrade(env: Env, userId: string, row: any) {
@@ -1220,6 +1227,7 @@ function defaultCommodityEnergyAccount(userId: string, body: any = {}) {
     mode: 'stopped',
     started_at: '',
     stopped_at: '',
+    last_tick_at: '',
     initial_cash_usd: capital,
     cash_usd: capital,
     settled_equity_usd: capital,
@@ -1482,12 +1490,25 @@ async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
   const feed = await buildCommodityEnergySignals();
   const unrealizedPnl = commodityEnergyEquity(state, feed.signals || []);
   const trades = await recentEnergyTrades(env, userId, 160);
+  const updatedAt = energyIso();
   return json({
     ok: true,
     online_backend: Boolean(env.ENERGY_TRADING_DB),
     db_status: env.ENERGY_TRADING_DB ? 'd1_bound' : 'not_configured',
     version: COMMODITY_ENERGY_VERSION,
-    updated_at: energyIso(),
+    updated_at: updatedAt,
+    ledger: {
+      source: env.ENERGY_TRADING_DB ? 'longone_worker_d1' : 'worker_default_no_d1',
+      api_prefix: '/api/commodity-energy-trading',
+      user_id: userId,
+      user_id_suffix: userId.slice(-10),
+      dashboard_updated_at: updatedAt,
+      account_started_at: state.started_at || '',
+      account_stopped_at: state.stopped_at || '',
+      account_last_tick_at: state.last_tick_at || '',
+      browser_storage_key: 'hfcd_energy_user_id',
+      note: 'This is the longone online Worker/D1 ledger for the browser user id, not the local outputs/ heartbeat file ledger.',
+    },
     source_status: feed.source_status,
     routes: COMMODITY_ENERGY_ROUTES,
     decisions: feed.signals,
@@ -1571,6 +1592,31 @@ async function commodityEnergyStop(request: Request, env: Env, url: URL) {
   state.last_tick_at = energyIso();
   await saveCommodityEnergyAccount(env, state);
   return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function commodityEnergyReset(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = commodityEnergyUserId(request, url, body);
+  const state: any = defaultCommodityEnergyAccount(userId, body);
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = '';
+  await clearEnergyTrades(env, userId);
+  await saveCommodityEnergyAccount(env, state);
+  return json(
+    {
+      ok: true,
+      action: 'reset',
+      user_id: userId,
+      ledger: {
+        source: env.ENERGY_TRADING_DB ? 'longone_worker_d1' : 'worker_default_no_d1',
+        user_id: userId,
+        user_id_suffix: userId.slice(-10),
+      },
+      account: state,
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }
 
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
@@ -4761,6 +4807,10 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/commodity-energy-trading/stop') {
       return commodityEnergyStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/commodity-energy-trading/reset') {
+      return commodityEnergyReset(request, env, url);
     }
 
     if (url.pathname === '/api/market-trading/start') {
