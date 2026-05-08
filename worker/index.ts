@@ -1027,6 +1027,541 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
   return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
+const COMMODITY_ENERGY_VERSION = 'HFCD_Commodity_V5_18_ExactLineageForwardShadow';
+const COMMODITY_ENERGY_FEE_RATE = 0.00055;
+const COMMODITY_ENERGY_ROUTES = [
+  {
+    symbol: 'CL=F',
+    display_symbol: 'CL=F',
+    name: 'WTI 原油期货',
+    cadence: '3h',
+    lineage_id: 'CL_V5_4_3h',
+    source_version: 'V5.4',
+    lineage_role: 'pnl_pf_core',
+    source_rule: 'CL=F_3h_ensemble_conf0.56_cons2_q0.45_max2',
+    lookback_minutes: 180,
+    max_units: 2,
+    min_score: 0.66,
+    blind_hit_rate: 0.64,
+    blind_profit_factor: 4.408892,
+    blind_pnl_usd: 136.96218,
+    actions_per_day: 2.882883,
+  },
+  {
+    symbol: 'HO=F',
+    display_symbol: 'HO=F',
+    name: '取暖油期货',
+    cadence: '2h',
+    lineage_id: 'HO_V5_9_2h',
+    source_version: 'V5.9',
+    lineage_role: 'hit_rate_core',
+    source_rule: 'HO=F_2h_ensemble_ridge_density_rate0.28_q0.00_max1_rw0.35_floor0.2309',
+    lookback_minutes: 120,
+    max_units: 1,
+    min_score: 0.68,
+    blind_hit_rate: 0.722222,
+    blind_profit_factor: 3.805406,
+    blind_pnl_usd: 37.313686,
+    actions_per_day: 1.714286,
+  },
+];
+
+function commodityEnergyUserId(request: Request, url: URL, body?: any) {
+  const base = energyUserId(request, url, body);
+  return `commodity_${base}`.slice(0, 80);
+}
+
+function commodityEnergyRoute(symbol: string) {
+  return COMMODITY_ENERGY_ROUTES.find((route) => route.symbol === symbol) || COMMODITY_ENERGY_ROUTES[0];
+}
+
+function commodityEnergyFallbackSeries(route: any) {
+  const base = route.symbol === 'CL=F' ? 96 : 3.9;
+  const now = Date.now();
+  const rows = Array.from({ length: 360 }, (_, index) => {
+    const t = now - (359 - index) * 5 * 60000;
+    const wave =
+      Math.sin(t / 5400000 + route.symbol.length) * 0.006 +
+      Math.sin(t / 43200000 + route.symbol.charCodeAt(0)) * 0.012;
+    return {
+      ts: new Date(t).toISOString(),
+      close: Number((base * (1 + wave)).toFixed(route.symbol === 'HO=F' ? 4 : 2)),
+      volume: 1000 + Math.round(Math.abs(Math.sin(t / 3600000)) * 800),
+    };
+  });
+  return {
+    ...route,
+    source: `fallback_simulated:${route.symbol}:5m`,
+    is_real_market_data: false,
+    rows,
+  };
+}
+
+async function fetchCommodityEnergySeries(route: any) {
+  try {
+    const response = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(route.symbol)}?range=10d&interval=5m&includePrePost=true`,
+      {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'HFCD-ThingNature-OS/1.0',
+        },
+      },
+    );
+    if (!response.ok) throw new Error(`Yahoo ${route.symbol} ${response.status}`);
+    const payload: any = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps: number[] = result?.timestamp || [];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const closes: Array<number | null> = quote.close || [];
+    const volumes: Array<number | null> = quote.volume || [];
+    const rows = timestamps.map((ts, index) => ({
+      ts: new Date(ts * 1000).toISOString(),
+      close: closes[index] === null ? NaN : Number(closes[index]),
+      volume: volumes[index] === null ? 0 : Number(volumes[index] || 0),
+    })).filter((row) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length < 80) throw new Error(`Yahoo ${route.symbol} insufficient rows`);
+    return {
+      ...route,
+      source: `yahoo_chart:${route.symbol}:5m`,
+      is_real_market_data: true,
+      rows,
+    };
+  } catch {
+    return commodityEnergyFallbackSeries(route);
+  }
+}
+
+function commodityEnergyStd(values: number[]) {
+  return marketStd(values.filter((value) => Number.isFinite(value)));
+}
+
+function buildCommodityEnergySignal(series: any) {
+  const rows = series.rows || [];
+  const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
+  const volumes = rows.map((row: any) => Number(row.volume || 0)).filter((value: number) => Number.isFinite(value));
+  const latest = rows[rows.length - 1] || { ts: energyIso(), close: 0 };
+  const price = Number(latest.close || closes[closes.length - 1] || 0);
+  const barsPerHorizon = Math.max(1, Math.round(Number(series.lookback_minutes || 120) / 5));
+  const dayBars = Math.min(288, Math.max(barsPerHorizon * 2, 48));
+  const prev = closes[closes.length - 2] || price;
+  const horizonBase = closes[Math.max(0, closes.length - 1 - barsPerHorizon)] || prev;
+  const dayBase = closes[Math.max(0, closes.length - 1 - dayBars)] || horizonBase;
+  const returns = closes.slice(-Math.max(dayBars, 72)).map((value: number, index: number, arr: number[]) =>
+    index === 0 ? 0 : value / arr[index - 1] - 1,
+  ).slice(1);
+  const vol = Math.max(commodityEnergyStd(returns), 0.00035);
+  const r1 = price / prev - 1;
+  const rHorizon = price / horizonBase - 1;
+  const rDay = price / dayBase - 1;
+  const recentVol = volumes.slice(-barsPerHorizon).reduce((sum: number, value: number) => sum + value, 0);
+  const baseVol = volumes.slice(-dayBars).reduce((sum: number, value: number) => sum + value, 0) / Math.max(dayBars / barsPerHorizon, 1);
+  const volumeShock = Math.max(-1, Math.min(1, (recentVol / Math.max(baseVol, 1) - 1) / 2));
+  const signedScore = Math.max(-3, Math.min(3, (0.68 * rHorizon + 0.22 * rDay + 0.10 * volumeShock * vol) / vol));
+  const score = Math.abs(signedScore);
+  const action = score >= Number(series.min_score || 0.66)
+    ? signedScore > 0 ? 'BUY_LONG' : 'SELL_SHORT'
+    : 'NO_TRADE';
+  const capturedAt = latest.ts || energyIso();
+  return {
+    signal_id: `${series.symbol}-${series.cadence}-${Math.floor(new Date(capturedAt).getTime() / 300000)}-${action}`,
+    captured_at: capturedAt,
+    symbol: series.symbol,
+    display_symbol: series.display_symbol || series.symbol,
+    name: series.name,
+    cadence: series.cadence,
+    lineage_id: series.lineage_id,
+    source_version: series.source_version,
+    source_rule: series.source_rule,
+    lineage_role: series.lineage_role,
+    scheduler_role: '1m/5m_execution_check_only',
+    price: Number(price.toFixed(series.symbol === 'HO=F' ? 4 : 2)),
+    action,
+    side: action === 'BUY_LONG' ? 'long' : action === 'SELL_SHORT' ? 'short' : 'flat',
+    score: Number(score.toFixed(4)),
+    signed_score: Number(signedScore.toFixed(4)),
+    min_score: Number(series.min_score || 0.66),
+    confidence: Number(Math.max(0.4, Math.min(0.98, 0.46 + score * 0.16)).toFixed(4)),
+    r1: Number(r1.toFixed(6)),
+    r_horizon: Number(rHorizon.toFixed(6)),
+    r_day: Number(rDay.toFixed(6)),
+    realized_vol_5m: Number(vol.toFixed(6)),
+    volume_shock: Number(volumeShock.toFixed(4)),
+    max_units: Number(series.max_units || 1),
+    blind_hit_rate: Number(series.blind_hit_rate || 0),
+    blind_profit_factor: Number(series.blind_profit_factor || 0),
+    blind_pnl_usd: Number(series.blind_pnl_usd || 0),
+    actions_per_day: Number(series.actions_per_day || 0),
+    holding_minutes: Number(series.lookback_minutes || 120),
+    source: series.source,
+    is_real_market_data: Boolean(series.is_real_market_data),
+    status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
+    reject_reason: action === 'NO_TRADE' ? 'lineage_score_underthreshold' : '',
+  };
+}
+
+async function buildCommodityEnergySignals() {
+  const seriesList = await Promise.all(COMMODITY_ENERGY_ROUTES.map(fetchCommodityEnergySeries));
+  const signals = seriesList.map(buildCommodityEnergySignal);
+  return {
+    generated_at: energyIso(),
+    version: COMMODITY_ENERGY_VERSION,
+    source_status: signals.every((signal) => signal.is_real_market_data) ? 'live_public_yahoo_5m' : 'mixed_or_fallback',
+    signals,
+  };
+}
+
+function defaultCommodityEnergyAccount(userId: string, body: any = {}) {
+  const capital = Number(body.capital_usd || body.capital || 100_000);
+  return {
+    version: COMMODITY_ENERGY_VERSION,
+    user_id: userId,
+    mode: 'stopped',
+    started_at: '',
+    stopped_at: '',
+    initial_cash_usd: capital,
+    cash_usd: capital,
+    realized_pnl_usd: 0,
+    equity_usd: capital,
+    peak_equity_usd: capital,
+    max_drawdown_usd: 0,
+    open_positions: [] as any[],
+    closed_trades: [] as any[],
+    seen_signal_ids: [] as string[],
+    seen_audit_signal_ids: [] as string[],
+    config: {
+      fixed_trade_usd: Number(body.fixed_trade_usd || 1000),
+      max_open_positions: Number(body.max_open_positions || 4),
+      max_symbol_positions: Number(body.max_symbol_positions || 1),
+      stop_loss_pct: Number(body.stop_loss_pct || 0.018),
+      take_profit_pct: Number(body.take_profit_pct || 0.036),
+      min_signal_score: Number(body.min_signal_score || 0.66),
+      fee_rate: COMMODITY_ENERGY_FEE_RATE,
+      allow_short: body.allow_short !== false,
+      sizing_mode: String(body.sizing_mode || 'score_scaled'),
+    },
+  };
+}
+
+async function loadCommodityEnergyAccount(env: Env, userId: string) {
+  const db = await ensureEnergyTradingDb(env);
+  if (!db) return defaultCommodityEnergyAccount(userId);
+  const row = await db.prepare('SELECT state_json FROM energy_accounts WHERE user_id = ?').bind(userId).first();
+  if (!row?.state_json) return defaultCommodityEnergyAccount(userId);
+  try {
+    const parsed = JSON.parse(String(row.state_json));
+    if (parsed?.version !== COMMODITY_ENERGY_VERSION) {
+      return { ...defaultCommodityEnergyAccount(userId), ...parsed, version: COMMODITY_ENERGY_VERSION };
+    }
+    return parsed;
+  } catch {
+    return defaultCommodityEnergyAccount(userId);
+  }
+}
+
+async function saveCommodityEnergyAccount(env: Env, state: any) {
+  state.version = COMMODITY_ENERGY_VERSION;
+  return saveEnergyAccount(env, state);
+}
+
+function commodityEnergyPositionPnl(pos: any, currentPrice: number) {
+  const side = String(pos.side || '').toLowerCase();
+  const qty = Number(pos.quantity || 0);
+  const entry = Number(pos.entry_price || 0);
+  if (!qty || !entry || !currentPrice) return 0;
+  const gross = side === 'short' ? (entry - currentPrice) * qty : (currentPrice - entry) * qty;
+  return gross - Number(pos.open_fee_usd || 0);
+}
+
+function commodityEnergyEquity(state: any, signals: any[] = []) {
+  const priceBySymbol = new Map(signals.map((signal) => [signal.symbol, Number(signal.price || 0)]));
+  let unrealized = 0;
+  for (const pos of state.open_positions || []) {
+    const current = priceBySymbol.get(pos.symbol) || Number(pos.mark_price || pos.entry_price || 0);
+    const pnl = commodityEnergyPositionPnl(pos, current);
+    pos.mark_price = current;
+    pos.unrealized_pnl_usd = Number(pnl.toFixed(2));
+    unrealized += pnl;
+  }
+  const equity = Number(state.cash_usd || 0) + unrealized;
+  state.equity_usd = equity;
+  state.peak_equity_usd = Math.max(Number(state.peak_equity_usd || equity), equity);
+  state.max_drawdown_usd = Math.min(Number(state.max_drawdown_usd || 0), equity - Number(state.peak_equity_usd || equity));
+  return unrealized;
+}
+
+function commodityEnergyCanOpen(signal: any, state: any) {
+  const cfg = state.config || {};
+  if (state.mode !== 'running') return 'AI未运行';
+  if (signal.action === 'NO_TRADE') return '主血统分数不足';
+  if (signal.side === 'short' && cfg.allow_short === false) return '做空已关闭';
+  if (Number(signal.score || 0) < Math.max(Number(cfg.min_signal_score || 0.66), Number(signal.min_score || 0.66))) return '稳定分不足';
+  if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
+  const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
+  if (sameSymbol >= Number(cfg.max_symbol_positions || 1)) return '该商品持仓已满';
+  if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) return '本轮信号已处理';
+  return '';
+}
+
+function commodityEnergyOrderAmount(signal: any, state: any) {
+  const cfg = state.config || {};
+  const base = Number(cfg.fixed_trade_usd || 1000);
+  if (cfg.sizing_mode !== 'score_scaled') return base;
+  const scaled = base * Math.max(0.35, Math.min(Number(signal.max_units || 1), Number(signal.score || 0) / Math.max(Number(signal.min_score || 0.66), 0.1)));
+  const cashCap = Number(state.cash_usd || 0) * 0.2;
+  return Number(Math.max(0, Math.min(scaled, cashCap)).toFixed(2));
+}
+
+async function openCommodityEnergyPosition(env: Env, state: any, signal: any) {
+  const amount = commodityEnergyOrderAmount(signal, state);
+  const price = Number(signal.price || 0);
+  const fee = amount * Number(state.config?.fee_rate || COMMODITY_ENERGY_FEE_RATE);
+  const quantity = amount / Math.max(price, 1e-9);
+  const now = new Date();
+  const pos = {
+    position_id: `${signal.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    signal_id: signal.signal_id,
+    symbol: signal.symbol,
+    name: signal.name,
+    side: signal.side,
+    action: signal.action,
+    cadence: signal.cadence,
+    lineage_id: signal.lineage_id,
+    source_version: signal.source_version,
+    source_rule: signal.source_rule,
+    entry_time: energyIso(now),
+    target_exit_at: energyIso(new Date(now.getTime() + Number(signal.holding_minutes || 120) * 60000)),
+    entry_price: price,
+    mark_price: price,
+    quantity,
+    trade_value_usd: amount,
+    open_fee_usd: fee,
+    unrealized_pnl_usd: -fee,
+    score: signal.score,
+    confidence: signal.confidence,
+    stop_loss_pct: Number(state.config?.stop_loss_pct || 0.018),
+    take_profit_pct: Number(state.config?.take_profit_pct || 0.036),
+  };
+  state.cash_usd = Number(state.cash_usd || 0) - fee;
+  state.open_positions = [...(state.open_positions || []), pos];
+  state.seen_signal_ids = [...(state.seen_signal_ids || []), String(signal.signal_id)].slice(-500);
+  await insertEnergyTrade(env, state.user_id, {
+    ts: pos.entry_time,
+    event: 'OPEN',
+    symbol: pos.symbol,
+    node: pos.name,
+    horizon: pos.cadence,
+    signal_source: `${pos.source_version} ${pos.lineage_id}`,
+    action: pos.action,
+    side: pos.side,
+    entry_price: pos.entry_price,
+    price_spread: pos.entry_price,
+    quantity: pos.quantity,
+    entry_trade_value_usd: amount,
+    net_pnl_usd: -fee,
+    score: pos.score,
+    confidence: pos.confidence,
+    reason: 'ExactLineage 前向开仓',
+    position_id: pos.position_id,
+  });
+}
+
+async function closeCommodityEnergyPosition(env: Env, state: any, pos: any, exitPrice: number, reason: string) {
+  const amount = Number(pos.trade_value_usd || 0);
+  const closeFee = amount * Number(state.config?.fee_rate || COMMODITY_ENERGY_FEE_RATE);
+  const pnlBeforeCloseFee = commodityEnergyPositionPnl(pos, exitPrice);
+  const netPnl = pnlBeforeCloseFee - closeFee;
+  state.cash_usd = Number(state.cash_usd || 0) + netPnl;
+  state.realized_pnl_usd = Number(state.realized_pnl_usd || 0) + netPnl;
+  const closed = {
+    ...pos,
+    exit_time: energyIso(),
+    exit_price: exitPrice,
+    close_fee_usd: closeFee,
+    net_pnl_usd: Number(netPnl.toFixed(2)),
+    reason,
+  };
+  state.closed_trades = [...(state.closed_trades || []), closed].slice(-500);
+  await insertEnergyTrade(env, state.user_id, {
+    ts: closed.exit_time,
+    event: 'CLOSE',
+    symbol: pos.symbol,
+    node: pos.name,
+    horizon: pos.cadence,
+    signal_source: `${pos.source_version} ${pos.lineage_id}`,
+    action: pos.action,
+    side: pos.side,
+    entry_price: pos.entry_price,
+    exit_price: exitPrice,
+    price_spread: exitPrice,
+    quantity: pos.quantity,
+    entry_trade_value_usd: pos.trade_value_usd,
+    exit_trade_value_usd: pos.trade_value_usd + netPnl,
+    net_pnl_usd: Number(netPnl.toFixed(2)),
+    pnl_pct_of_trade: Number((netPnl / Math.max(Number(pos.trade_value_usd || 1), 1)).toFixed(4)),
+    score: pos.score,
+    reason,
+    position_id: pos.position_id,
+  });
+}
+
+async function commodityEnergyTick(env: Env, state: any, forceSettle = false) {
+  const feed = await buildCommodityEnergySignals();
+  const signals = feed.signals || [];
+  const priceBySymbol = new Map(signals.map((signal: any) => [signal.symbol, Number(signal.price || 0)]));
+  const remaining: any[] = [];
+  let settled = 0;
+  let opened = 0;
+  const now = new Date();
+
+  for (const pos of state.open_positions || []) {
+    const price = priceBySymbol.get(pos.symbol) || Number(pos.mark_price || pos.entry_price || 0);
+    const pnl = commodityEnergyPositionPnl(pos, price);
+    const pctPnl = pnl / Math.max(Number(pos.trade_value_usd || 1), 1);
+    const due = forceSettle || new Date(pos.target_exit_at).getTime() <= now.getTime();
+    const stopLoss = Number(pos.stop_loss_pct || state.config?.stop_loss_pct || 0.018);
+    const takeProfit = Number(pos.take_profit_pct || state.config?.take_profit_pct || 0.036);
+    if (due || pctPnl <= -stopLoss || pctPnl >= takeProfit) {
+      await closeCommodityEnergyPosition(env, state, { ...pos, unrealized_pnl_usd: pnl }, price, due ? '到期结算' : (pnl > 0 ? '止盈结算' : '止损结算'));
+      settled += 1;
+    } else {
+      remaining.push({ ...pos, mark_price: price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
+    }
+  }
+  state.open_positions = remaining;
+
+  if (!forceSettle && state.mode === 'running') {
+    const candidates = [...signals].sort((a: any, b: any) => Number(b.score || 0) - Number(a.score || 0));
+    for (const signal of candidates) {
+      const reason = commodityEnergyCanOpen(signal, state);
+      if (!reason) {
+        await openCommodityEnergyPosition(env, state, signal);
+        opened += 1;
+      } else {
+        await insertEnergyTrade(env, state.user_id, {
+          ts: energyIso(),
+          event: 'SKIP',
+          symbol: signal.symbol,
+          node: signal.name,
+          horizon: signal.cadence,
+          signal_source: `${signal.source_version} ${signal.lineage_id}`,
+          action: signal.action,
+          side: signal.side,
+          price_spread: signal.price,
+          entry_trade_value_usd: 0,
+          exit_trade_value_usd: 0,
+          net_pnl_usd: 0,
+          score: signal.score,
+          confidence: signal.confidence,
+          reason,
+          signal_id: signal.signal_id,
+        });
+        if (reason !== '该商品持仓已满' && reason !== '达到最大持仓数') {
+          state.seen_signal_ids = [...(state.seen_signal_ids || []), String(signal.signal_id)].slice(-500);
+        }
+      }
+    }
+  }
+  const unrealized = commodityEnergyEquity(state, signals);
+  return { feed, opened, settled, unrealized_pnl_usd: unrealized };
+}
+
+async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
+  const userId = commodityEnergyUserId(request, url);
+  const state = await loadCommodityEnergyAccount(env, userId);
+  const feed = await buildCommodityEnergySignals();
+  const unrealizedPnl = commodityEnergyEquity(state, feed.signals || []);
+  const trades = await recentEnergyTrades(env, userId, 160);
+  return json({
+    ok: true,
+    online_backend: Boolean(env.ENERGY_TRADING_DB),
+    db_status: env.ENERGY_TRADING_DB ? 'd1_bound' : 'not_configured',
+    version: COMMODITY_ENERGY_VERSION,
+    updated_at: energyIso(),
+    source_status: feed.source_status,
+    routes: COMMODITY_ENERGY_ROUTES,
+    decisions: feed.signals,
+    market_health: {
+      ok: true,
+      status: feed.source_status,
+      latest_captured_at: feed.signals?.[0]?.captured_at,
+      rows: feed.signals?.length || 0,
+      note: 'V5.18 只接 CL=F 3h 与 HO=F 2h 两条通过血统；1m/5m 只做执行检查。',
+    },
+    summary: {
+      mode: state.mode,
+      equity_usd: state.equity_usd,
+      cash_usd: state.cash_usd,
+      settled_equity_usd: state.cash_usd,
+      realized_pnl_usd: state.realized_pnl_usd,
+      unrealized_pnl_usd: unrealizedPnl,
+      open_positions: (state.open_positions || []).length,
+      max_open_positions: state.config?.max_open_positions || 4,
+      win_rate: (state.closed_trades || []).length
+        ? (state.closed_trades || []).filter((trade: any) => Number(trade.net_pnl_usd || 0) > 0).length / (state.closed_trades || []).length
+        : 0,
+      config: state.config,
+    },
+    account: state,
+    recent_trades: trades,
+  }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function commodityEnergyStart(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = commodityEnergyUserId(request, url, body);
+  const existing = await loadCommodityEnergyAccount(env, userId);
+  const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
+  const state = body?.reset_account || isFresh ? defaultCommodityEnergyAccount(userId, body) : existing;
+  const cfg = state.config || {};
+  state.config = {
+    ...cfg,
+    fixed_trade_usd: Number(body.fixed_trade_usd || cfg.fixed_trade_usd || 1000),
+    max_open_positions: Number(body.max_open_positions || cfg.max_open_positions || 4),
+    max_symbol_positions: Number(body.max_symbol_positions || cfg.max_symbol_positions || 1),
+    stop_loss_pct: Number(body.stop_loss_pct || cfg.stop_loss_pct || 0.018),
+    take_profit_pct: Number(body.take_profit_pct || cfg.take_profit_pct || 0.036),
+    min_signal_score: Number(body.min_signal_score || cfg.min_signal_score || 0.66),
+    allow_short: body.allow_short !== false,
+    sizing_mode: String(body.sizing_mode || cfg.sizing_mode || 'score_scaled'),
+  };
+  if (body.capital_usd && isFresh) {
+    state.initial_cash_usd = Number(body.capital_usd);
+    state.cash_usd = Number(body.capital_usd);
+    state.equity_usd = Number(body.capital_usd);
+    state.peak_equity_usd = Number(body.capital_usd);
+  }
+  state.mode = 'running';
+  state.started_at = state.started_at || energyIso();
+  state.stopped_at = '';
+  state.last_tick_at = energyIso();
+  await commodityEnergyTick(env, state, false);
+  await saveCommodityEnergyAccount(env, state);
+  return json({ ok: true, action: 'started', user_id: userId, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function commodityEnergyTickApi(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = commodityEnergyUserId(request, url, body);
+  const state = await loadCommodityEnergyAccount(env, userId);
+  const result = await commodityEnergyTick(env, state, false);
+  state.last_tick_at = energyIso();
+  await saveCommodityEnergyAccount(env, state);
+  return json({ ok: true, user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function commodityEnergyStop(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = commodityEnergyUserId(request, url, body);
+  const state = await loadCommodityEnergyAccount(env, userId);
+  const result = await commodityEnergyTick(env, state, Boolean(body?.liquidate !== false));
+  state.mode = 'stopped';
+  state.stopped_at = energyIso();
+  state.last_tick_at = energyIso();
+  await saveCommodityEnergyAccount(env, state);
+  return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
@@ -1722,15 +2257,61 @@ async function goldTradingTickInternal(env: Env, state: any, forceClose = false)
   const snapshot = await buildGoldSnapshot(Number(state.config?.min_signal_score || 1.1));
   const signal = snapshot.signal;
   const remaining: any[] = [];
+  const sameSideContinued = new Set<string>();
+  const sameSideClosedThisTick = new Set<string>();
   let opened = 0;
   let closed = 0;
   for (const pos of state.open_positions || []) {
     const pnl = goldPositionPnl(pos, Number(signal.price || pos.last_price || pos.entry_price)) - Number(pos.estimated_fee_usd || 0);
     const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
-    if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
+    const takeProfit = pnl >= Number(pos.take_profit_usd || 0);
+    const stopLoss = pnl <= -Number(pos.stop_loss_usd || 0);
+    const sameSideSignalStillValid = !forceClose
+      && due
+      && !takeProfit
+      && !stopLoss
+      && signal?.is_real_market_data
+      && signal?.side === pos.side
+      && ['BUY_LONG', 'SELL_SHORT'].includes(String(signal?.action || ''))
+      && Number(signal?.score || 0) >= Number(state.config?.min_signal_score || 1.1);
+
+    if (sameSideSignalStillValid) {
+      const extended = {
+        ...pos,
+        last_price: signal.price,
+        unrealized_pnl_usd: Number(pnl.toFixed(2)),
+        target_exit_at: energyIso(new Date(Date.now() + Number(state.config?.max_holding_minutes || 24 * 60) * 60000)),
+        last_signal_id: signal.signal_id,
+        last_extended_at: energyIso(),
+      };
+      remaining.push(extended);
+      sameSideContinued.add(`${pos.symbol}:${pos.side}`);
+      if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+        state.seen_signal_ids.push(String(signal.signal_id));
+      }
+      await insertGoldTrade(env, state.display_user_id || state.user_id, {
+        ts: energyIso(),
+        event: 'HOLD_EXTEND',
+        position_id: pos.position_id,
+        signal_id: signal.signal_id,
+        symbol: pos.symbol,
+        asset_class: pos.asset_class,
+        side: pos.side,
+        action: signal.action,
+        price: signal.price,
+        trade_value_usd: Number(pos.notional_usd || 0),
+        net_pnl_usd: 0,
+        unrealized_pnl_usd: Number(pnl.toFixed(2)),
+        score: signal.score,
+        q_core: signal.q_core,
+        source: signal.source,
+        reason: '同向信号继续有效，延展持仓，避免平仓后同向重开',
+      });
+    } else if (due || takeProfit || stopLoss) {
       const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
       await closeGoldPosition(env, state, pos, signal, reason);
       closed += 1;
+      sameSideClosedThisTick.add(`${pos.symbol}:${pos.side}`);
     } else {
       remaining.push({ ...pos, last_price: signal.price, unrealized_pnl_usd: Number(pnl.toFixed(2)) });
     }
@@ -1738,7 +2319,12 @@ async function goldTradingTickInternal(env: Env, state: any, forceClose = false)
   state.open_positions = remaining;
   markGoldEquity(state, signal);
   if (!forceClose && state.mode === 'running') {
-    const reason = canOpenGoldPosition(signal, state);
+    const sameSideKey = `${signal.symbol}:${signal.side}`;
+    const reason = sameSideContinued.has(sameSideKey)
+      ? '同向持仓已续持，本轮不重复开仓'
+      : sameSideClosedThisTick.has(sameSideKey)
+        ? '同向持仓刚刚结算，本轮不重复开仓'
+        : canOpenGoldPosition(signal, state);
     if (!reason) {
       await openGoldPosition(env, state, signal);
       opened += 1;
@@ -1789,6 +2375,12 @@ async function goldTradingDashboard(request: Request, env: Env, url: URL) {
       realtime_status: snapshot.source_status,
       note: '交易 tick 使用线上实时/准实时黄金行情；fallback 模拟行情只展示，不允许开仓。',
       databento_ready: Boolean(env.DATABENTO_API_KEY),
+    },
+    history_policy: {
+      user_id: userId,
+      storage: 'D1 market_accounts + market_trades',
+      scope: 'per_browser_user',
+      recent_trade_limit: 160,
     },
     baseline: GOLD_BASELINE,
     opportunity_roadmap: GOLD_OPPORTUNITY_ROADMAP,
@@ -2382,6 +2974,9 @@ function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
       max_holding_minutes: Number(body.max_holding_minutes || 8 * 60),
       side_policy: String(body.side_policy || 'both'),
       allow_short: body.allow_short !== false,
+      allow_scale_in: body.allow_scale_in !== false,
+      allow_reduce: body.allow_reduce !== false,
+      allow_reverse: body.allow_reverse !== false,
       order_execution: String(body.order_execution || 'paper'),
       testnet_close_all_on_stop: body.testnet_close_all_on_stop !== false,
       strategy: String(body.strategy || 'v2_23_frequency_router_btc1h_eth2h_bidirectional'),
@@ -2401,6 +2996,7 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   };
   normalized.display_user_id = normalized.display_user_id || userId;
   normalized.user_id = normalized.user_id || cryptoTestnetStorageUserId(userId);
+  if (!Array.isArray(normalized.seen_audit_signal_ids)) normalized.seen_audit_signal_ids = [];
   if (!normalized.config.side_policy) normalized.config.side_policy = 'both';
   if (!normalized.config.order_execution) normalized.config.order_execution = 'paper';
   if (normalized.config.adaptive_sizing === undefined) normalized.config.adaptive_sizing = true;
@@ -2409,6 +3005,9 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   if (normalized.config.allow_short === undefined || state?.version !== CRYPTO_TESTNET_VERSION) {
     normalized.config.allow_short = true;
   }
+  if (normalized.config.allow_scale_in === undefined) normalized.config.allow_scale_in = true;
+  if (normalized.config.allow_reduce === undefined) normalized.config.allow_reduce = true;
+  if (normalized.config.allow_reverse === undefined) normalized.config.allow_reverse = true;
   return normalized;
 }
 
@@ -2428,6 +3027,9 @@ function mergeCryptoTestnetConfig(state: any, body: any = {}) {
     max_holding_minutes: Number(has('max_holding_minutes') ? body.max_holding_minutes : current.max_holding_minutes || 8 * 60),
     side_policy: String(has('side_policy') ? body.side_policy : current.side_policy || 'both'),
     allow_short: body.allow_short !== false,
+    allow_scale_in: has('allow_scale_in') ? body.allow_scale_in !== false : current.allow_scale_in !== false,
+    allow_reduce: has('allow_reduce') ? body.allow_reduce !== false : current.allow_reduce !== false,
+    allow_reverse: has('allow_reverse') ? body.allow_reverse !== false : current.allow_reverse !== false,
     order_execution: String(has('order_execution') ? body.order_execution : current.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper',
     testnet_close_all_on_stop: has('testnet_close_all_on_stop') ? body.testnet_close_all_on_stop !== false : current.testnet_close_all_on_stop !== false,
     strategy: String(has('strategy') ? body.strategy : current.strategy || 'v3_1_shortvol_bidirectional_forward_ledger'),
@@ -3060,6 +3662,166 @@ async function closeCryptoTestnetPosition(env: Env, state: any, pos: any, signal
   return trade;
 }
 
+async function addCryptoTestnetPosition(env: Env, state: any, pos: any, signal: any, credentials?: BinanceTestnetCredentials | null) {
+  const cfg = state.config || {};
+  const sizing = cryptoAdaptiveSizing(signal, state);
+  const notional = Number(sizing.notional_usd || 0);
+  if (notional <= 0) return null;
+
+  const side = signal.action === 'SELL_SHORT' ? 'short' : 'long';
+  const fillPrice = side === 'short'
+    ? Number(signal.bid_price || signal.price)
+    : Number(signal.ask_price || signal.price);
+  const addQty = notional / Math.max(fillPrice, 0.0001);
+  const oldQty = Math.abs(Number(pos.quantity || 0));
+  const oldNotional = Math.abs(Number(pos.notional_usd || pos.trade_value_usd || 0));
+  const fee = notional * CRYPTO_TESTNET_FEE_RATE;
+  let exchangeOrder: any = null;
+  const canSendExchangeOrder = cfg.order_execution === 'binance_testnet' && cryptoRouteIsExchangeTradeable(signal.symbol);
+  if (canSendExchangeOrder) {
+    exchangeOrder = await binanceTestnetMarketOrder(env, {
+      symbol: signal.symbol,
+      side: side === 'short' ? 'SELL' : 'BUY',
+      quantity: addQty,
+      reduceOnly: false,
+      clientOrderId: `hfcd_add_${Date.now()}_${signal.symbol}`,
+    }, credentials);
+  }
+
+  const totalQty = oldQty + addQty;
+  const totalNotional = oldNotional + notional;
+  pos.quantity = totalQty;
+  pos.notional_usd = Number(totalNotional.toFixed(2));
+  pos.entry_price = Number(((Number(pos.entry_price || fillPrice) * oldQty + fillPrice * addQty) / Math.max(totalQty, 0.0000001)).toFixed(cryptoRoutePriceDigits(signal.symbol)));
+  pos.last_price = signal.price;
+  pos.estimated_fee_usd = Number((Number(pos.estimated_fee_usd || 0) + fee).toFixed(4));
+  pos.stop_loss_usd = Number((totalNotional * Number(cfg.stop_loss_pct || 0.018)).toFixed(2));
+  pos.take_profit_usd = Number((totalNotional * Number(cfg.take_profit_pct || 0.036)).toFixed(2));
+  pos.score = Math.max(Number(pos.score || 0), Number(signal.score || 0));
+  pos.confidence = Math.max(Number(pos.confidence || 0), Number(signal.confidence || 0));
+  pos.last_signal_id = signal.signal_id;
+  pos.last_scaled_at = energyIso();
+  pos.scale_in_count = Number(pos.scale_in_count || 0) + 1;
+
+  const trade = {
+    ts: energyIso(),
+    event: 'ADD',
+    position_id: pos.position_id,
+    signal_id: signal.signal_id,
+    symbol: signal.symbol,
+    asset_class: signal.asset_class,
+    route: signal.route,
+    side,
+    action: signal.action,
+    price: fillPrice,
+    quantity: addQty,
+    trade_value_usd: notional,
+    net_pnl_usd: 0,
+    score: signal.score,
+    confidence: signal.confidence,
+    sizing_mode: sizing.sizing_mode,
+    sizing_reason: sizing.sizing_reason,
+    score_edge: sizing.score_edge,
+    confidence_factor: sizing.confidence_factor,
+    liquidity_factor: sizing.liquidity_factor,
+    risk_factor: sizing.risk_factor,
+    source: signal.source,
+    exchange_order_id: exchangeOrder?.orderId || null,
+    execution_mode: pos.execution_mode || (canSendExchangeOrder ? 'binance_testnet' : 'paper'),
+    reason: '同向信号增强，按能源模型式仓位控制加仓',
+  };
+  await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function reduceCryptoTestnetPosition(env: Env, state: any, pos: any, signal: any, ratio: number, reason: string, credentials?: BinanceTestnetCredentials | null) {
+  const currentQty = Math.abs(Number(pos.quantity || 0));
+  if (currentQty <= 0) return null;
+  const reduceQty = Math.min(currentQty, currentQty * Math.max(0, Math.min(1, ratio)));
+  if (reduceQty <= 0) return null;
+  const exitPrice = pos.side === 'short'
+    ? Number(signal?.ask_price || signal?.price || pos.last_price || pos.entry_price)
+    : Number(signal?.bid_price || signal?.price || pos.last_price || pos.entry_price);
+  const share = reduceQty / Math.max(currentQty, 0.0000001);
+  const gross = cryptoTestnetPositionPnl({ ...pos, quantity: reduceQty }, exitPrice);
+  const entryFeeShare = Number(pos.estimated_fee_usd || 0) * share;
+  const exitFee = Math.abs(exitPrice * reduceQty) * CRYPTO_TESTNET_FEE_RATE;
+  const net = gross - entryFeeShare - exitFee;
+  let exchangeOrder: any = null;
+  if (pos.execution_mode === 'binance_testnet' && cryptoRouteIsExchangeTradeable(pos.symbol)) {
+    exchangeOrder = await binanceTestnetMarketOrder(env, {
+      symbol: pos.symbol,
+      side: pos.side === 'short' ? 'BUY' : 'SELL',
+      quantity: reduceQty,
+      reduceOnly: true,
+      clientOrderId: `hfcd_reduce_${Date.now()}_${pos.symbol}`,
+    }, credentials);
+  }
+
+  state.realized_pnl_usd = Number((Number(state.realized_pnl_usd || 0) + net).toFixed(2));
+  const remainingQty = currentQty - reduceQty;
+  const remainingNotional = Number(pos.notional_usd || 0) * (remainingQty / Math.max(currentQty, 0.0000001));
+  pos.quantity = remainingQty;
+  pos.notional_usd = Number(remainingNotional.toFixed(2));
+  pos.estimated_fee_usd = Number((Number(pos.estimated_fee_usd || 0) - entryFeeShare).toFixed(4));
+  pos.stop_loss_usd = Number((remainingNotional * Number(state.config?.stop_loss_pct || 0.018)).toFixed(2));
+  pos.take_profit_usd = Number((remainingNotional * Number(state.config?.take_profit_pct || 0.036)).toFixed(2));
+  pos.last_price = signal?.price || exitPrice;
+  pos.last_reduced_at = energyIso();
+  pos.reduce_count = Number(pos.reduce_count || 0) + 1;
+
+  const trade = {
+    ts: energyIso(),
+    event: 'REDUCE',
+    position_id: pos.position_id,
+    signal_id: signal?.signal_id || pos.signal_id,
+    symbol: pos.symbol,
+    asset_class: pos.asset_class,
+    route: pos.route,
+    side: pos.side,
+    action: pos.side === 'short' ? 'BUY_TO_COVER' : 'SELL_TO_CLOSE',
+    entry_price: pos.entry_price,
+    exit_price: exitPrice,
+    quantity: reduceQty,
+    trade_value_usd: Math.abs(exitPrice * reduceQty),
+    gross_pnl_usd: Number(gross.toFixed(2)),
+    cost_usd: Number((entryFeeShare + exitFee).toFixed(2)),
+    net_pnl_usd: Number(net.toFixed(2)),
+    score: signal?.score ?? pos.score,
+    confidence: signal?.confidence ?? pos.confidence,
+    source: signal?.source || pos.source,
+    exchange_order_id: exchangeOrder?.orderId || null,
+    execution_mode: pos.execution_mode || state.config?.order_execution || 'paper',
+    reason,
+  };
+  await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
+  return trade;
+}
+
+async function enforceCryptoPositionLimits(env: Env, state: any, signals: any[], credentials?: BinanceTestnetCredentials | null) {
+  const maxOpen = Math.max(Number(state.config?.max_open_positions || 4), 0);
+  const maxSymbol = Math.max(Number(state.config?.max_symbol_positions || 1), 0);
+  const sorted = [...(state.open_positions || [])].sort((a, b) => new Date(String(b.opened_at || 0)).getTime() - new Date(String(a.opened_at || 0)).getTime());
+  const keep: any[] = [];
+  const symbolCounts = new Map<string, number>();
+  let closed = 0;
+  for (const pos of sorted) {
+    const symbol = String(pos.symbol || '');
+    const symbolCount = symbolCounts.get(symbol) || 0;
+    const shouldKeep = keep.length < maxOpen && symbolCount < maxSymbol;
+    if (shouldKeep) {
+      keep.push(pos);
+      symbolCounts.set(symbol, symbolCount + 1);
+    } else {
+      const signal = signals.find((row: any) => row.symbol === pos.symbol);
+      await closeCryptoTestnetPosition(env, state, pos, signal, '用户风险上限收缩，超额持仓自动平仓', credentials);
+      closed += 1;
+    }
+  }
+  state.open_positions = keep.sort((a, b) => new Date(String(a.opened_at || 0)).getTime() - new Date(String(b.opened_at || 0)).getTime());
+  return closed;
+}
+
 async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false, credentials?: BinanceTestnetCredentials | null) {
   const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66));
   state.last_market_snapshot = {
@@ -3076,6 +3838,30 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
   const remaining: any[] = [];
   let opened = 0;
   let closed = 0;
+  let adjusted = 0;
+  for (const signal of signals) {
+    const auditSignalKey = `${signal.signal_id}:SIGNAL`;
+    if (!(state.seen_audit_signal_ids || []).includes(auditSignalKey)) {
+      await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+        ts: energyIso(),
+        event: 'SIGNAL',
+        signal_id: signal.signal_id,
+        symbol: signal.symbol,
+        asset_class: signal.asset_class,
+        route: signal.route,
+        side: signal.side,
+        action: signal.action,
+        price: signal.price,
+        trade_value_usd: 0,
+        net_pnl_usd: 0,
+        score: signal.score,
+        confidence: signal.confidence,
+        source: signal.source,
+        reason: signal.action === 'NO_TRADE' ? (signal.reject_reason || '前向信号未达门槛') : '前向信号快照：等待仓位控制器判定开仓/加仓/减仓/反手',
+      });
+      state.seen_audit_signal_ids = [...(state.seen_audit_signal_ids || []), auditSignalKey].slice(-500);
+    }
+  }
   for (const pos of state.open_positions || []) {
     const signal = signals.find((row: any) => row.symbol === pos.symbol);
     const price = Number(signal?.price || pos.last_price || pos.entry_price);
@@ -3099,10 +3885,133 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     }
   }
   state.open_positions = remaining;
+  closed += await enforceCryptoPositionLimits(env, state, signals, credentials);
   markCryptoTestnetEquity(state, signals);
   if (!forceClose && state.mode === 'running') {
     const candidates = [...signals].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     for (const signal of candidates) {
+      const targetSide = signal.action === 'BUY_LONG' ? 'long' : signal.action === 'SELL_SHORT' ? 'short' : '-';
+      const existing = (state.open_positions || []).find((pos: any) => pos.symbol === signal.symbol);
+      if (existing && targetSide !== '-') {
+        if (existing.side === targetSide) {
+          const threshold = cryptoSizingThreshold(signal, state.config || {});
+          const strongerSignal = Number(signal.score || 0) >= Math.max(threshold + 0.05, Number(existing.score || 0) + 0.08);
+          if (state.config?.allow_scale_in !== false && strongerSignal) {
+            try {
+              const add = await addCryptoTestnetPosition(env, state, existing, signal, credentials);
+              if (add) {
+                adjusted += 1;
+                if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+                  state.seen_signal_ids.push(String(signal.signal_id));
+                }
+                continue;
+              }
+            } catch (error) {
+              await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+                ts: energyIso(),
+                event: 'SKIP',
+                signal_id: signal.signal_id,
+                symbol: signal.symbol,
+                asset_class: signal.asset_class,
+                route: signal.route,
+                action: signal.action,
+                price: signal.price,
+                trade_value_usd: 0,
+                net_pnl_usd: 0,
+                score: signal.score,
+                confidence: signal.confidence,
+                source: signal.source,
+                reason: error instanceof Error ? `加仓失败：${error.message}` : '加仓失败',
+              });
+              state.seen_signal_ids.push(String(signal.signal_id));
+              continue;
+            }
+          }
+          await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+            ts: energyIso(),
+            event: 'HOLD',
+            signal_id: signal.signal_id,
+            symbol: signal.symbol,
+            asset_class: signal.asset_class,
+            route: signal.route,
+            side: existing.side,
+            action: signal.action,
+            price: signal.price,
+            trade_value_usd: Number(existing.notional_usd || 0),
+            net_pnl_usd: 0,
+            paper_pnl_usd: Number(existing.unrealized_pnl_usd || 0),
+            score: signal.score,
+            confidence: signal.confidence,
+            source: signal.source,
+            reason: strongerSignal ? '同向信号增强但剩余仓位预算不足，继续持有' : '同向信号存在，继续持有，不重复开仓',
+          });
+          if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+            state.seen_signal_ids.push(String(signal.signal_id));
+          }
+          continue;
+        }
+
+        if (state.config?.allow_reverse !== false && ['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) {
+          try {
+            await closeCryptoTestnetPosition(env, state, existing, signal, '反向信号确认，平仓准备反手', credentials);
+            state.open_positions = (state.open_positions || []).filter((pos: any) => pos.position_id !== existing.position_id);
+            closed += 1;
+            await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+              ts: energyIso(),
+              event: 'REVERSE',
+              signal_id: signal.signal_id,
+              symbol: signal.symbol,
+              asset_class: signal.asset_class,
+              route: signal.route,
+              side: targetSide,
+              action: signal.action,
+              price: signal.price,
+              trade_value_usd: 0,
+              net_pnl_usd: 0,
+              score: signal.score,
+              confidence: signal.confidence,
+              source: signal.source,
+              reason: `反向信号触发：${existing.side === 'long' ? '多转空' : '空转多'}`,
+            });
+          } catch (error) {
+            await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+              ts: energyIso(),
+              event: 'SKIP',
+              signal_id: signal.signal_id,
+              symbol: signal.symbol,
+              asset_class: signal.asset_class,
+              route: signal.route,
+              action: signal.action,
+              price: signal.price,
+              trade_value_usd: 0,
+              net_pnl_usd: 0,
+              score: signal.score,
+              confidence: signal.confidence,
+              source: signal.source,
+              reason: error instanceof Error ? `反手前平仓失败：${error.message}` : '反手前平仓失败',
+            });
+            state.seen_signal_ids.push(String(signal.signal_id));
+            continue;
+          }
+        }
+      }
+
+      if (existing && signal.action === 'NO_TRADE' && state.config?.allow_reduce !== false) {
+        const threshold = cryptoSizingThreshold(signal, state.config || {});
+        const weakSignal = Number(signal.score || 0) < threshold * 0.6;
+        if (weakSignal && Number(existing.unrealized_pnl_usd || 0) < 0 && !String(existing.last_reduced_signal_id || '').includes(String(signal.signal_id))) {
+          const reduced = await reduceCryptoTestnetPosition(env, state, existing, signal, 0.35, '同标的信号弱化且持仓浮亏，减仓保护', credentials);
+          if (reduced) {
+            existing.last_reduced_signal_id = signal.signal_id;
+            if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+              state.seen_signal_ids.push(String(signal.signal_id));
+            }
+            adjusted += 1;
+            continue;
+          }
+        }
+      }
+
       const reason = canOpenCryptoTestnetPosition(signal, state);
       if (!reason) {
         try {
@@ -3149,7 +4058,7 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     }
   }
   markCryptoTestnetEquity(state, signals);
-  return { snapshot, opened, closed };
+  return { snapshot, opened, closed, adjusted };
 }
 
 function cryptoTestnetWinRate(state: any) {
@@ -3191,6 +4100,13 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       note: state.config?.order_execution === 'binance_testnet'
         ? '当前执行模式为 Binance Futures Demo/Testnet；仅 BTCUSDT/SOLUSDT 会向 demo-fapi.binance.com 发测试网订单，SPY/QQQ/IWM 只写 paper 账本。'
         : '当前执行模式为 D1 paper/testnet mirror，只写模拟账本，不向交易所发订单。',
+    },
+    history_policy: {
+      user_id: userId,
+      storage: 'D1 market_accounts + market_trades',
+      scope: 'per_browser_user',
+      recent_trade_limit: 180,
+      records: 'signals/skips/open/close/add/reduce/reverse/hold with paper PnL',
     },
     market_health: {
       ok: snapshot.source_status === 'public_realtime_mixed_binance_yahoo',
@@ -3682,6 +4598,17 @@ async function handleApi(request: Request, env: Env) {
     }
   }
 
+  if (url.pathname === '/api/commodity-energy-trading/dashboard' && request.method === 'GET') {
+    try {
+      return await commodityEnergyDashboard(request, env, url);
+    } catch (error) {
+      return json(
+        { ok: false, error: error instanceof Error ? error.message : 'Commodity energy trading dashboard failed.' },
+        { status: 500, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
   if (url.pathname === '/api/market-trading/dashboard' && request.method === 'GET') {
     try {
       return await marketTradingDashboard(request, env, url);
@@ -3811,6 +4738,18 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/energy-trading/stop') {
       return energyTradingStop(request, env, url);
+    }
+
+    if (url.pathname === '/api/commodity-energy-trading/start') {
+      return commodityEnergyStart(request, env, url);
+    }
+
+    if (url.pathname === '/api/commodity-energy-trading/tick') {
+      return commodityEnergyTickApi(request, env, url);
+    }
+
+    if (url.pathname === '/api/commodity-energy-trading/stop') {
+      return commodityEnergyStop(request, env, url);
     }
 
     if (url.pathname === '/api/market-trading/start') {

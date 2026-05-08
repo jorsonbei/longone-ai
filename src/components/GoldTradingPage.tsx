@@ -25,6 +25,7 @@ type GoldTrade = {
   ts?: string;
   event?: string;
   symbol?: string;
+  side?: string;
   action?: string;
   entry_price?: number;
   exit_price?: number;
@@ -34,6 +35,7 @@ type GoldTrade = {
   gross_pnl_usd?: number;
   cost_usd?: number;
   net_pnl_usd?: number;
+  unrealized_pnl_usd?: number;
   score?: number;
   q_core?: number;
   source?: string;
@@ -187,6 +189,7 @@ const actionText: Record<string, string> = {
 const eventText: Record<string, string> = {
   OPEN: '开仓',
   CLOSE: '平仓',
+  HOLD_EXTEND: '续持',
   SKIP: '跳过',
 };
 

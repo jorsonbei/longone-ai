@@ -8,14 +8,19 @@ type Props = {
 type EnergyTrade = {
   ts?: string;
   event?: string;
+  symbol?: string;
   node?: string;
   horizon?: string;
   signal_source?: string;
   action?: string;
+  side?: string;
   entry_action?: string;
   exit_action?: string;
   roundtrip_code?: string;
   price_spread?: number;
+  entry_price?: number;
+  exit_price?: number;
+  quantity?: number;
   entry_spread?: number;
   exit_spread?: number;
   mwh?: number;
@@ -33,12 +38,21 @@ type EnergyTrade = {
 
 type EnergyDecision = {
   captured_at?: string;
+  symbol?: string;
+  name?: string;
+  price?: number;
+  score?: number;
+  side?: string;
   node?: string;
   horizon?: string;
+  cadence?: string;
   signal_source?: string;
+  source_version?: string;
+  lineage_id?: string;
   visible_spread?: number;
   model_prediction_mw?: number;
   paper_action?: string;
+  action?: string;
   tier?: string;
   reject_reason?: string;
 };
@@ -113,6 +127,8 @@ type Dashboard = {
     by_action?: Array<Record<string, unknown>>;
     by_source?: Array<Record<string, unknown>>;
   };
+  routes?: Array<Record<string, unknown>>;
+  source_status?: string;
 };
 
 const COPY: Record<Locale, {
@@ -336,7 +352,28 @@ const reasonText: Record<string, string> = {
   '模拟止盈': '模拟止盈',
   '模拟止损': '模拟止损',
   '粗略截断估计': '粗略截断估计',
+  'ExactLineage 前向开仓': 'ExactLineage 前向开仓',
+  '主血统分数不足': '主血统分数不足',
+  '稳定分不足': '稳定分不足',
+  '该商品持仓已满': '该商品持仓已满',
 };
+
+const deskCopy = {
+  power: {
+    label: '电力价差交易',
+    subtitle: 'CAISO 风格储能套利 · 电力/价差 paper engine',
+    title: 'AI 模拟交易沙盒',
+    description: '当前主线包含 V3.36 一小时执行信号和 V3.28/V3.29 三小时、六小时 roundtrip 稳定门。系统按真实交易所储能套利口径处理行情快照、价差、开平仓和结算。',
+    note: '说明：这是线上模拟账户；行情快照按真实交易所/CAISO 储能套利口径处理，当前页面不向真实交易所下单。',
+  },
+  commodity: {
+    label: '能源商品期货',
+    subtitle: 'CL=F 原油 3h + HO=F 取暖油 2h · V5.18 ExactLineage 前向账本',
+    title: '能源商品 AI 模拟交易',
+    description: '只接入 V5.17 已通过的两条血统路线：CL=F 继承 V5.4 3h 强收益路线，HO=F 继承 V5.9 2h 高命中路线。1m/5m 只做执行检查、跳过原因和 paper PnL 记录，不重新生成主信号。',
+    note: '说明：这是能源商品期货 paper trading；使用公开 5m 行情做前向模拟，不向真实期货账户下单。通过前向账本后再考虑真实接口。',
+  },
+} as const;
 
 function money(value?: number) {
   const n = Number(value || 0);
@@ -361,13 +398,20 @@ export default function EnergyTradingPage({ locale }: Props) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [activeDesk, setActiveDesk] = useState<'power' | 'commodity'>('power');
   const [config, setConfig] = useState({
     capital_usd: 1_000_000,
     fixed_trade_usd: 10_000,
     max_open_positions: 10,
+    max_symbol_positions: 1,
     stop_loss_usd: 450,
     take_profit_usd: 900,
+    stop_loss_pct: 0.018,
+    take_profit_pct: 0.036,
+    min_signal_score: 0.66,
   });
+  const desk = deskCopy[activeDesk];
+  const apiPrefix = activeDesk === 'commodity' ? '/api/commodity-energy-trading' : '/api/energy-trading';
 
   const userId = useMemo(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem('hfcd_energy_user_id') : '';
@@ -378,10 +422,10 @@ export default function EnergyTradingPage({ locale }: Props) {
   }, []);
 
   const loadDashboard = useCallback(async () => {
-    const res = await fetch(`/api/energy-trading/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+    const res = await fetch(`${apiPrefix}/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
     const data = await res.json() as Dashboard;
     setDashboard(data);
-  }, [userId]);
+  }, [apiPrefix, userId]);
 
   const postAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
     setLoading(true);
@@ -409,13 +453,13 @@ export default function EnergyTradingPage({ locale }: Props) {
   useEffect(() => {
     const timer = window.setInterval(async () => {
       if (dashboard?.summary?.mode === 'running') {
-        await postAction('/api/energy-trading/tick');
+        await postAction(`${apiPrefix}/tick`);
       } else {
         await loadDashboard().catch(() => undefined);
       }
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [dashboard?.summary?.mode, loadDashboard, postAction]);
+  }, [apiPrefix, dashboard?.summary?.mode, loadDashboard, postAction]);
 
   const trades = dashboard?.recent_trades || [];
   const decisions = dashboard?.decisions || [];
@@ -425,26 +469,55 @@ export default function EnergyTradingPage({ locale }: Props) {
   return (
     <div className="min-h-full bg-[#0b1512] px-5 py-6 pb-14 text-slate-100">
       <div className="rounded-[28px] border border-emerald-200/15 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.18),transparent_32rem),linear-gradient(180deg,#10211c_0%,#0b1512_100%)] p-6">
-        <p className="text-xs font-black uppercase tracking-[0.28em] text-emerald-200/70">{copy.eyebrow}</p>
-        <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{copy.title}</h1>
-        <p className="mt-2 max-w-5xl text-sm leading-6 text-emerald-50/62">{copy.subtitle}</p>
+        <h1 className="text-3xl font-black tracking-tight text-white">{desk.title}</h1>
+        <p className="mt-2 max-w-5xl text-sm leading-6 text-emerald-50/62">{desk.subtitle}</p>
       </div>
+
+      <section className="mt-5 grid gap-3 md:grid-cols-2">
+        {(['power', 'commodity'] as const).map((key) => (
+          <button
+            key={key}
+            onClick={() => {
+              setActiveDesk(key);
+              setMessage('');
+            }}
+            className={`rounded-[24px] border px-5 py-4 text-left transition ${
+              activeDesk === key
+                ? 'border-emerald-200/35 bg-emerald-300/16 shadow-[0_0_0_1px_rgba(167,243,208,0.15)]'
+                : 'border-emerald-200/10 bg-white/[0.03] hover:bg-white/[0.06]'
+            }`}
+          >
+            <p className="text-base font-black text-white">{deskCopy[key].label}</p>
+            <p className="mt-1 text-sm text-emerald-50/58">{deskCopy[key].subtitle}</p>
+          </button>
+        ))}
+      </section>
 
       <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
         <h2 className="text-xl font-black text-white">{copy.model}</h2>
-        <p className="mt-2 text-sm leading-6 text-emerald-50/62">{copy.modelText}</p>
-        <p className="mt-2 text-xs text-amber-200/80">说明：这是线上模拟账户；行情快照按真实交易所/CAISO 储能套利口径处理，当前页面不向真实交易所下单。真实自动交易还需要资产方 EMS/BMS、CAISO 参与者接口、报价/成交 API、合规与风控审批。</p>
+        <p className="mt-2 text-sm leading-6 text-emerald-50/62">{desk.description}</p>
+        <p className="mt-2 text-xs text-amber-200/80">{desk.note}</p>
       </section>
 
       <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
         <div className="grid gap-3 md:grid-cols-5">
-          {[
-            ['capital_usd', copy.capital],
-            ['fixed_trade_usd', copy.fixedTrade],
-            ['max_open_positions', copy.maxPositions],
-            ['stop_loss_usd', copy.stopLoss],
-            ['take_profit_usd', copy.takeProfit],
-          ].map(([key, label]) => (
+          {(activeDesk === 'commodity'
+            ? [
+                ['capital_usd', copy.capital],
+                ['fixed_trade_usd', copy.fixedTrade],
+                ['max_open_positions', copy.maxPositions],
+                ['max_symbol_positions', '单品最大持仓'],
+                ['stop_loss_pct', '止损比例'],
+                ['take_profit_pct', '止盈比例'],
+                ['min_signal_score', '最低稳定分'],
+              ]
+            : [
+                ['capital_usd', copy.capital],
+                ['fixed_trade_usd', copy.fixedTrade],
+                ['max_open_positions', copy.maxPositions],
+                ['stop_loss_usd', copy.stopLoss],
+                ['take_profit_usd', copy.takeProfit],
+              ]).map(([key, label]) => (
             <label key={key} className="text-xs font-bold text-emerald-50/55">
               {label}
               <input
@@ -457,13 +530,13 @@ export default function EnergyTradingPage({ locale }: Props) {
           ))}
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
-          <button disabled={loading || dashboard?.summary?.mode === 'running'} onClick={() => postAction('/api/energy-trading/start', config)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">
+          <button disabled={loading || dashboard?.summary?.mode === 'running'} onClick={() => postAction(`${apiPrefix}/start`, config)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">
             {copy.start}
           </button>
-          <button disabled={loading} onClick={() => postAction('/api/energy-trading/tick')} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">
+          <button disabled={loading} onClick={() => postAction(`${apiPrefix}/tick`)} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">
             {copy.tick}
           </button>
-          <button disabled={loading} onClick={() => postAction('/api/energy-trading/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">
+          <button disabled={loading} onClick={() => postAction(`${apiPrefix}/stop`, { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">
             {copy.stop}
           </button>
           <button onClick={() => {
@@ -501,6 +574,18 @@ export default function EnergyTradingPage({ locale }: Props) {
         <div className="mt-3 rounded-2xl border border-emerald-200/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
           状态：{dashboard?.market_health?.status || '-'} · D1：{dashboard?.db_status || '-'} · 最新：{dashboard?.market_health?.latest_captured_at || '-'} · 行数：{dashboard?.market_health?.rows || 0}
         </div>
+        {activeDesk === 'commodity' && dashboard?.routes?.length ? (
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {dashboard.routes.map((route) => (
+              <div key={String(route.lineage_id)} className="rounded-2xl border border-emerald-200/10 bg-black/20 p-4">
+                <p className="text-sm font-black text-white">{String(route.symbol)} · {String(route.cadence)} · {String(route.source_version)}</p>
+                <p className="mt-1 text-xs text-emerald-50/58">
+                  盲测命中 {(Number(route.blind_hit_rate || 0) * 100).toFixed(1)}% · PF {Number(route.blind_profit_factor || 0).toFixed(2)} · 动作/天 {Number(route.actions_per_day || 0).toFixed(2)}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="mt-5 rounded-[28px] border border-emerald-200/12 bg-white/[0.03] p-5">
@@ -588,8 +673,13 @@ export default function EnergyTradingPage({ locale }: Props) {
           <div className="mt-4 space-y-3">
             {decisions.map((row) => (
               <div key={`${row.horizon}-${row.captured_at}`} className="rounded-2xl border border-emerald-200/10 bg-black/25 p-4">
-                <p className="text-xs font-black text-emerald-200/70">{row.horizon} · {row.signal_source}</p>
-                <p className="mt-2 text-sm text-emerald-50/65">{row.node} · {text(row.paper_action)} · {copy.spread}: {num(row.visible_spread)} · {copy.mwh}: {num(row.model_prediction_mw, 1)} · {row.tier}</p>
+                <p className="text-xs font-black text-emerald-200/70">{row.horizon || row.cadence} · {row.signal_source || `${row.source_version || ''} ${row.lineage_id || ''}`}</p>
+                <p className="mt-2 text-sm text-emerald-50/65">
+                  {row.node || row.name || row.symbol} · {text(row.paper_action || row.action)} ·
+                  {activeDesk === 'commodity'
+                    ? ` 价格: ${num(row.price, row.symbol === 'HO=F' ? 4 : 2)} · 分数: ${num(row.score, 3)} · ${row.side || '-'}`
+                    : ` ${copy.spread}: ${num(row.visible_spread)} · ${copy.mwh}: ${num(row.model_prediction_mw, 1)} · ${row.tier}`}
+                </p>
               </div>
             ))}
           </div>
@@ -601,7 +691,7 @@ export default function EnergyTradingPage({ locale }: Props) {
             <table className="min-w-[1280px] w-full text-left text-sm">
               <thead className="text-xs text-emerald-50/45">
                 <tr>
-                  {[copy.time, copy.event, copy.horizon, copy.source, copy.node, copy.action, copy.loop, copy.spread, copy.mwh, copy.entryAmount, copy.exitAmount, copy.netPnl, '盈亏%', '风险参数', copy.reason].map((head) => (
+                  {[copy.time, copy.event, '标的', copy.horizon, copy.source, copy.node, copy.action, copy.loop, activeDesk === 'commodity' ? '价格' : copy.spread, activeDesk === 'commodity' ? '数量' : copy.mwh, copy.entryAmount, copy.exitAmount, copy.netPnl, '盈亏%', '风险参数', copy.reason].map((head) => (
                     <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>
                   ))}
                 </tr>
@@ -611,13 +701,14 @@ export default function EnergyTradingPage({ locale }: Props) {
                   <tr key={`${row.ts}-${index}`} className="border-b border-emerald-200/8 text-emerald-50/86">
                     <td className="px-3 py-3">{row.ts ? new Date(row.ts).toLocaleString() : '-'}</td>
                     <td className="px-3 py-3"><span className="rounded-full bg-emerald-300/12 px-3 py-1 text-xs font-black text-emerald-200">{text(row.event)}</span></td>
+                    <td className="px-3 py-3">{row.symbol || '-'}</td>
                     <td className="px-3 py-3">{row.horizon || '-'}</td>
                     <td className="px-3 py-3">{row.signal_source || '-'}</td>
                     <td className="px-3 py-3">{row.node || '-'}</td>
-                    <td className="px-3 py-3">{text(row.exit_action || row.entry_action || row.action)}</td>
+                    <td className="px-3 py-3">{text(row.exit_action || row.entry_action || row.action)}{row.side ? ` / ${row.side}` : ''}</td>
                     <td className="px-3 py-3">{row.roundtrip_code || '-'}</td>
-                    <td className="px-3 py-3">{num(row.price_spread ?? row.entry_spread ?? row.exit_spread)}</td>
-                    <td className="px-3 py-3">{num(row.mwh)}</td>
+                    <td className="px-3 py-3">{num(row.price_spread ?? row.entry_price ?? row.exit_price ?? row.entry_spread ?? row.exit_spread, row.symbol === 'HO=F' ? 4 : 2)}</td>
+                    <td className="px-3 py-3">{num(row.quantity ?? row.mwh, activeDesk === 'commodity' ? 6 : 2)}</td>
                     <td className="px-3 py-3">{money(row.entry_trade_value_usd)}</td>
                     <td className="px-3 py-3">{money(row.exit_trade_value_usd)}</td>
                     <td className={`px-3 py-3 font-black ${(row.net_pnl_usd || 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.net_pnl_usd)}</td>

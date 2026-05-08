@@ -166,8 +166,13 @@ const actionText: Record<string, string> = {
 };
 
 const eventText: Record<string, string> = {
+  SIGNAL: '信号',
   OPEN: '开仓',
   CLOSE: '平仓',
+  ADD: '加仓',
+  REDUCE: '减仓',
+  REVERSE: '反手',
+  HOLD: '持有',
   SKIP: '跳过',
 };
 
@@ -184,6 +189,11 @@ const reasonText: Record<string, string> = {
   本轮信号已处理: '本轮信号已处理',
   '行情源为回退模拟，暂不交易': '行情源为回退模拟，暂不交易',
   自适应仓位预算不足: '自适应仓位预算不足',
+  '同向信号存在，继续持有，不重复开仓': '同向信号存在，继续持有，不重复开仓',
+  '同向信号增强，按能源模型式仓位控制加仓': '同向信号增强，按能源模型式仓位控制加仓',
+  '反向信号确认，平仓准备反手': '反向信号确认，平仓准备反手',
+  '同标的信号弱化且持仓浮亏，减仓保护': '同标的信号弱化且持仓浮亏，减仓保护',
+  '用户风险上限收缩，超额持仓自动平仓': '用户风险上限收缩，超额持仓自动平仓',
 };
 
 function money(value?: number) {
@@ -699,23 +709,28 @@ function MiniTradeTable({ title, rows, type }: { title: string; rows: any[]; typ
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
-              <tr key={`${row.position_id || row.ts || row.symbol}-${index}`} className="border-b border-emerald-200/8 text-emerald-50/80">
-                <td className="px-3 py-3">{row.ts || row.opened_at ? new Date(row.ts || row.opened_at).toLocaleString() : '-'}</td>
-                <td className="px-3 py-3"><span className="rounded-full bg-emerald-300/12 px-3 py-1 font-black text-emerald-200">{type === 'positions' ? '持仓' : translate(row.event)}</span></td>
-                <td className="px-3 py-3 font-black">{row.symbol || '-'}</td>
-                <td className="px-3 py-3">{row.side === 'short' ? '做空' : row.side === 'long' ? '做多' : '-'}</td>
-                <td className="px-3 py-3">{numberText(row.exit_price ?? row.entry_price ?? row.price ?? row.last_price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)}</td>
-                <td className="px-3 py-3">{money(row.trade_value_usd ?? row.notional_usd)}</td>
-                <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
-                <td className={`px-3 py-3 font-black ${Number(row.net_pnl_usd ?? row.unrealized_pnl_usd ?? 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(row.net_pnl_usd ?? row.unrealized_pnl_usd)}</td>
-                <td className="px-3 py-3">
-                  <span className="block font-bold text-emerald-100/85">{row.sizing_mode === 'energy_style_adaptive_cap' ? '自适应' : row.sizing_mode ? '固定上限' : '-'}</span>
-                  {row.sizing_reason ? <span className="mt-1 block max-w-[260px] text-[11px] leading-4 text-emerald-50/45">{row.sizing_reason}</span> : null}
-                </td>
-                <td className="px-3 py-3">{translate(row.reason)}</td>
-              </tr>
-            ))}
+            {rows.map((row, index) => {
+              const displayPnl = row.event === 'HOLD' && row.paper_pnl_usd !== undefined
+                ? row.paper_pnl_usd
+                : row.net_pnl_usd ?? row.paper_pnl_usd ?? row.unrealized_pnl_usd;
+              return (
+                <tr key={`${row.position_id || row.ts || row.symbol}-${index}`} className="border-b border-emerald-200/8 text-emerald-50/80">
+                  <td className="px-3 py-3">{row.ts || row.opened_at ? new Date(row.ts || row.opened_at).toLocaleString() : '-'}</td>
+                  <td className="px-3 py-3"><span className="rounded-full bg-emerald-300/12 px-3 py-1 font-black text-emerald-200">{type === 'positions' ? '持仓' : translate(row.event)}</span></td>
+                  <td className="px-3 py-3 font-black">{row.symbol || '-'}</td>
+                  <td className="px-3 py-3">{row.side === 'short' ? '做空' : row.side === 'long' ? '做多' : '-'}</td>
+                  <td className="px-3 py-3">{numberText(row.exit_price ?? row.entry_price ?? row.price ?? row.last_price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)}</td>
+                  <td className="px-3 py-3">{money(row.trade_value_usd ?? row.notional_usd)}</td>
+                  <td className="px-3 py-3">{numberText(row.quantity, 6)}</td>
+                  <td className={`px-3 py-3 font-black ${Number(displayPnl ?? 0) < 0 ? 'text-red-300' : 'text-emerald-200'}`}>{money(displayPnl)}</td>
+                  <td className="px-3 py-3">
+                    <span className="block font-bold text-emerald-100/85">{row.sizing_mode === 'energy_style_adaptive_cap' ? '自适应' : row.sizing_mode ? '固定上限' : '-'}</span>
+                    {row.sizing_reason ? <span className="mt-1 block max-w-[260px] text-[11px] leading-4 text-emerald-50/45">{row.sizing_reason}</span> : null}
+                  </td>
+                  <td className="px-3 py-3">{translate(row.reason)}</td>
+                </tr>
+              );
+            })}
             {!rows.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={10}>暂无记录。</td></tr> : null}
           </tbody>
         </table>
