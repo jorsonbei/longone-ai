@@ -132,7 +132,8 @@
     "commodity:v5.18:forward-shadow": "python3 scripts/hfcd_commodity_v5_18_exact_lineage_forward_shadow.py",
     "commodity:v5.18:forward-shadow-daemon": "python3 scripts/hfcd_commodity_v5_18_forward_shadow_daemon.py",
     "commodity:v5.19:multihorizon-controller": "python3 scripts/hfcd_commodity_v5_19_realtime_multihorizon_position_controller.py",
-    "commodity:v5.20:lineage-execution": "python3 scripts/hfcd_commodity_v5_20_lineage_execution_layer.py"
+    "commodity:v5.20:lineage-execution": "python3 scripts/hfcd_commodity_v5_20_lineage_execution_layer.py",
+    "commodity:v5.21:property-vector": "python3 scripts/hfcd_commodity_v5_21_energy_property_vector_fusion.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
