@@ -129,7 +129,9 @@
     "commodity:v5.15:multiscale-lookback": "python3 scripts/hfcd_commodity_v5_15_realtime_multiscale_lookback.py",
     "commodity:v5.16:lineage-realtime": "python3 scripts/hfcd_commodity_v5_16_lineage_preserved_realtime_scanner.py",
     "commodity:v5.17:exact-lineage": "python3 scripts/hfcd_commodity_v5_17_exact_lineage_scheduler.py",
-    "commodity:v5.18:forward-shadow": "python3 scripts/hfcd_commodity_v5_18_exact_lineage_forward_shadow.py"
+    "commodity:v5.18:forward-shadow": "python3 scripts/hfcd_commodity_v5_18_exact_lineage_forward_shadow.py",
+    "commodity:v5.18:forward-shadow-daemon": "python3 scripts/hfcd_commodity_v5_18_forward_shadow_daemon.py",
+    "commodity:v5.19:multihorizon-controller": "python3 scripts/hfcd_commodity_v5_19_realtime_multihorizon_position_controller.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
