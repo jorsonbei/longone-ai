@@ -1035,8 +1035,39 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
   return json({ ok: true, action: 'stopped', user_id: userId, result, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
-const COMMODITY_ENERGY_VERSION = 'HFCD_Commodity_V5_18_ExactLineageForwardShadow';
+const COMMODITY_ENERGY_VERSION = 'HFCD_Commodity_V5_22_PropertyFilteredOnlineShadow';
 const COMMODITY_ENERGY_FEE_RATE = 0.00055;
+const COMMODITY_ENERGY_PROPERTY_DIMS = ['Q', 'DeltaSigma', 'C', 'Pi', 'Sigma', 'Eta', 'BSigma', 'R', 'Tau', 'Omega'];
+const COMMODITY_ENERGY_PROPERTY_WEIGHTS: Record<string, Record<string, number>> = {
+  'CL=F': { Q: 8, DeltaSigma: 18, C: 11, Pi: 13, Sigma: 17, Eta: 8, BSigma: 8, R: 7, Tau: 13, Omega: 7 },
+  'HO=F': { Q: 8, DeltaSigma: 13, C: 12, Pi: 14, Sigma: 16, Eta: 10, BSigma: 7, R: 7, Tau: 13, Omega: 10 },
+};
+const COMMODITY_ENERGY_PROPERTY_GATES: Record<string, Record<string, number>> = {
+  'CL=F': {
+    min_property_score: 0.58,
+    min_open_add_score: 0.62,
+    min_reverse_score: 0.66,
+    min_signed_abs: 0.30,
+    max_bsigma: 0.70,
+    max_reverse_bsigma: 0.66,
+    min_c: 0.55,
+    min_sigma: 0.60,
+    min_tau: 0.50,
+    max_eta: 0.90,
+  },
+  'HO=F': {
+    min_property_score: 0.57,
+    min_open_add_score: 0.61,
+    min_reverse_score: 0.65,
+    min_signed_abs: 0.30,
+    max_bsigma: 0.72,
+    max_reverse_bsigma: 0.67,
+    min_c: 0.54,
+    min_sigma: 0.60,
+    min_tau: 0.50,
+    max_eta: 0.92,
+  },
+};
 const COMMODITY_ENERGY_ROUTES = [
   {
     symbol: 'CL=F',
@@ -1144,6 +1175,133 @@ function commodityEnergyStd(values: number[]) {
   return marketStd(values.filter((value) => Number.isFinite(value)));
 }
 
+function commodityEnergyClamp01(value: number) {
+  if (!Number.isFinite(value)) return 0.5;
+  return Math.max(0, Math.min(1, value));
+}
+
+function commodityEnergyLogistic(value: number) {
+  const clipped = Math.max(-50, Math.min(50, value));
+  return 1 / (1 + Math.exp(-clipped));
+}
+
+function commodityEnergyReturnOver(closes: number[], idx: number, minutes: number, baseMinutes = 5) {
+  const bars = Math.max(1, Math.round(minutes / Math.max(baseMinutes, 1)));
+  if (idx - bars < 0) return 0;
+  return closes[idx] / Math.max(closes[idx - bars], 1e-9) - 1;
+}
+
+function commodityEnergyRollingVol(closes: number[], idx: number, bars: number) {
+  const start = Math.max(1, idx - bars);
+  const rets: number[] = [];
+  for (let i = start + 1; i <= idx; i += 1) {
+    if (closes[i - 1] > 0 && closes[i] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+  }
+  return Math.max(commodityEnergyStd(rets), 0.0001);
+}
+
+function commodityEnergyWindowEfficiency(closes: number[], idx: number, minutes: number, baseMinutes = 5) {
+  const bars = Math.max(2, Math.round(minutes / Math.max(baseMinutes, 1)));
+  if (idx - bars < 0) return 0;
+  const slice = closes.slice(idx - bars, idx + 1);
+  const net = Math.abs(slice[slice.length - 1] - slice[0]);
+  let path = 0;
+  for (let i = 1; i < slice.length; i += 1) path += Math.abs(slice[i] - slice[i - 1]);
+  return path > 0 ? net / path : 0;
+}
+
+function commodityEnergyPropertyWeights(symbol: string) {
+  return COMMODITY_ENERGY_PROPERTY_WEIGHTS[symbol] || COMMODITY_ENERGY_PROPERTY_WEIGHTS['CL=F'];
+}
+
+function commodityEnergyPropertyGates(symbol: string) {
+  return COMMODITY_ENERGY_PROPERTY_GATES[symbol] || COMMODITY_ENERGY_PROPERTY_GATES['CL=F'];
+}
+
+function commodityEnergyComputeProperties(series: any, closes: number[], volumes: number[]) {
+  const idx = closes.length - 1;
+  const baseMinutes = 5;
+  const ret60 = commodityEnergyReturnOver(closes, idx, 60, baseMinutes);
+  const ret120 = commodityEnergyReturnOver(closes, idx, 120, baseMinutes);
+  const ret180 = commodityEnergyReturnOver(closes, idx, 180, baseMinutes);
+  const ret300 = commodityEnergyReturnOver(closes, idx, 300, baseMinutes);
+  const ret1440 = commodityEnergyReturnOver(closes, idx, 1440, baseMinutes);
+  const vol1h = commodityEnergyRollingVol(closes, idx, Math.max(10, Math.round(60 / baseMinutes)));
+  const vol24h = commodityEnergyRollingVol(closes, idx, Math.max(40, Math.round(1440 / baseMinutes)));
+  const shortPressure = (ret60 + ret120) / 2;
+  const mediumPressure = (ret180 + ret300) / 2;
+  const longPressure = ret1440;
+  const close = closes[idx] || 0;
+  const window5h = closes.slice(Math.max(0, idx - Math.round(300 / baseMinutes)), idx + 1);
+  const high5h = Math.max(...window5h, close);
+  const low5h = Math.min(...window5h, close);
+  const drawdown = close / Math.max(high5h, 1e-9) - 1;
+  const rangePct = (high5h - low5h) / Math.max(close, 1e-9);
+  const recentVol = volumes.slice(Math.max(0, idx - Math.round(60 / baseMinutes)), idx + 1).reduce((sum, value) => sum + Number(value || 0), 0);
+  const dayVolSlice = volumes.slice(Math.max(0, idx - Math.round(1440 / baseMinutes)), idx + 1);
+  const baseVol = dayVolSlice.reduce((sum, value) => sum + Number(value || 0), 0) / Math.max(dayVolSlice.length, 1) * Math.max(1, Math.round(60 / baseMinutes));
+  const volumeShock = recentVol / Math.max(baseVol, 1) - 1;
+  const eff3h = commodityEnergyWindowEfficiency(closes, idx, 180, baseMinutes);
+  const eff5h = commodityEnergyWindowEfficiency(closes, idx, 300, baseMinutes);
+  const sameSign = (a: number, b: number) => Math.sign(a) === Math.sign(b) ? 1 : 0;
+  const alignment = (sameSign(ret60, ret120) + sameSign(ret120, ret180) + sameSign(ret180, ret300) + sameSign(ret300, ret1440)) / 4;
+  const properties: Record<string, number> = {
+    Q: commodityEnergyClamp01(0.72 + 0.20 * alignment - 3.5 * Math.abs(drawdown) - 1.6 * rangePct),
+    DeltaSigma: commodityEnergyLogistic((0.45 * ret300 + 0.35 * ret180 + 0.20 * ret1440) / Math.max(vol24h, 1e-5)),
+    C: commodityEnergyClamp01(0.48 + 0.24 * commodityEnergyLogistic(volumeShock) + 0.20 * (1 - Math.min(rangePct / 0.035, 1)) + 0.08 * alignment),
+    Pi: commodityEnergyClamp01(0.20 + 0.35 * eff3h + 0.25 * eff5h + 0.20 * alignment),
+    Sigma: commodityEnergyLogistic((0.50 * mediumPressure + 0.25 * longPressure + 0.25 * volumeShock * vol24h) / Math.max(vol24h, 1e-5)),
+    Eta: commodityEnergyClamp01(vol1h / Math.max(vol24h, 1e-5) / 2),
+    BSigma: commodityEnergyClamp01(0.30 * Math.min(Math.abs(volumeShock), 2) / 2 + 0.45 * Math.min(Math.abs(shortPressure) / Math.max(vol1h * 3, 1e-5), 1) + 0.25 * (1 - alignment)),
+    R: commodityEnergyClamp01(0.30 + 0.45 * Math.min(Math.abs(mediumPressure) / Math.max(vol24h * 4, 1e-5), 1) + 0.25 * Math.min(vol1h / Math.max(vol24h, 1e-5), 2) / 2),
+    Tau: commodityEnergyClamp01(0.50 + 0.30 * Math.sign(longPressure) * Math.min(Math.abs(longPressure) / Math.max(vol24h * 8, 1e-5), 1) + 0.20 * alignment),
+    Omega: commodityEnergyClamp01(0.35 + 0.35 * alignment + 0.30 * Math.min(Math.abs(shortPressure + mediumPressure) / Math.max(vol24h * 5, 1e-5), 1)),
+  };
+  const weights = commodityEnergyPropertyWeights(series.symbol);
+  const weightTotal = COMMODITY_ENERGY_PROPERTY_DIMS.reduce((sum, dim) => sum + Number(weights[dim] || 0), 0) || 1;
+  const propertyScore = COMMODITY_ENERGY_PROPERTY_DIMS.reduce((sum, dim) => sum + Number(weights[dim] || 0) / weightTotal * properties[dim], 0);
+  const vol = Math.max(commodityEnergyRollingVol(closes, idx, Math.max(20, Math.round(300 / baseMinutes))), 1e-5);
+  const trend = Number(weights.Pi || 0) * (0.42 * ret60 + 0.32 * ret120 + 0.26 * ret180);
+  const ledger = Number(weights.Sigma || 0) * (0.45 * ret180 + 0.35 * ret300 + 0.20 * ret1440);
+  const macro = Number(weights.DeltaSigma || 0) * (0.55 * ret300 + 0.45 * ret1440);
+  const tau = Number(weights.Tau || 0) * (ret1440 - ret60 * 0.35);
+  const omega = Number(weights.Omega || 0) * (0.50 * ret120 + 0.50 * ret180);
+  const riskDrag = Number(weights.BSigma || 0) * (properties.BSigma - 0.5) * vol * 1.8;
+  const signedSignal = Math.tanh(((trend + ledger + macro + tau + omega) / Math.max(weightTotal, 1) - riskDrag) / Math.max(vol * 3, 1e-5));
+  const propertyDirection = signedSignal > 0 ? 'long' : signedSignal < 0 ? 'short' : 'flat';
+  return {
+    score: Number(propertyScore.toFixed(4)),
+    signed_signal: Number(signedSignal.toFixed(4)),
+    direction: propertyDirection,
+    dimensions: Object.fromEntries(COMMODITY_ENERGY_PROPERTY_DIMS.map((dim) => [dim, Number(properties[dim].toFixed(4))])),
+    lookbacks: {
+      ret_1h: Number(ret60.toFixed(6)),
+      ret_2h: Number(ret120.toFixed(6)),
+      ret_3h: Number(ret180.toFixed(6)),
+      ret_5h: Number(ret300.toFixed(6)),
+      ret_24h: Number(ret1440.toFixed(6)),
+    },
+  };
+}
+
+function commodityEnergyPropertyConfirms(signal: any, targetSide: string, strict = false) {
+  const property = signal.property_vector || {};
+  const dims = property.dimensions || {};
+  const gates = commodityEnergyPropertyGates(signal.symbol);
+  const reasons: string[] = [];
+  const minScore = strict ? Number(gates.min_reverse_score || 0.66) : Number(gates.min_open_add_score || 0.62);
+  const maxBSigma = strict ? Number(gates.max_reverse_bsigma || 0.66) : Number(gates.max_bsigma || 0.70);
+  if (property.direction !== targetSide) reasons.push(`物性方向${property.direction || 'flat'}不确认${targetSide}`);
+  if (Number(property.score || 0) < minScore) reasons.push(`物性分${Number(property.score || 0).toFixed(3)}低于${minScore.toFixed(3)}`);
+  if (Math.abs(Number(property.signed_signal || 0)) < Number(gates.min_signed_abs || 0.3)) reasons.push('物性势能不足');
+  if (Number(dims.C || 0) < Number(gates.min_c || 0.55)) reasons.push('C腔不足');
+  if (Number(dims.Sigma || 0) < Number(gates.min_sigma || 0.60)) reasons.push('Σ账本不足');
+  if (Number(dims.Tau || 0) < Number(gates.min_tau || 0.50)) reasons.push('τ时间项不足');
+  if (Number(dims.BSigma || 0) > maxBSigma) reasons.push('Bσ黑子过高');
+  if (Number(dims.Eta || 0) > Number(gates.max_eta || 0.90)) reasons.push('η噪声过高');
+  return { ok: reasons.length === 0, reason: reasons.join('；') || 'V5.22物性确认' };
+}
+
 function buildCommodityEnergySignal(series: any) {
   const rows = series.rows || [];
   const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
@@ -1171,6 +1329,7 @@ function buildCommodityEnergySignal(series: any) {
     ? signedScore > 0 ? 'BUY_LONG' : 'SELL_SHORT'
     : 'NO_TRADE';
   const capturedAt = latest.ts || energyIso();
+  const propertyVector = commodityEnergyComputeProperties(series, closes, volumes);
   return {
     signal_id: `${series.symbol}-${series.cadence}-${Math.floor(new Date(capturedAt).getTime() / 300000)}-${action}`,
     captured_at: capturedAt,
@@ -1195,6 +1354,8 @@ function buildCommodityEnergySignal(series: any) {
     r_day: Number(rDay.toFixed(6)),
     realized_vol_5m: Number(vol.toFixed(6)),
     volume_shock: Number(volumeShock.toFixed(4)),
+    property_vector: propertyVector,
+    property_filter_version: 'V5.22_online_shadow',
     max_units: Number(series.max_units || 1),
     blind_hit_rate: Number(series.blind_hit_rate || 0),
     blind_profit_factor: Number(series.blind_profit_factor || 0),
@@ -1421,6 +1582,35 @@ async function closeCommodityEnergyPosition(env: Env, state: any, pos: any, exit
   });
 }
 
+function markCommodityEnergySignalSeen(state: any, signalId: string) {
+  if (!signalId) return;
+  const seen = new Set((state.seen_signal_ids || []).map((id: any) => String(id)));
+  seen.add(String(signalId));
+  state.seen_signal_ids = Array.from(seen).slice(-500);
+}
+
+async function insertCommodityEnergySkip(env: Env, state: any, signal: any, reason: string) {
+  await insertEnergyTrade(env, state.user_id, {
+    ts: energyIso(),
+    event: 'SKIP',
+    symbol: signal.symbol,
+    node: signal.name,
+    horizon: signal.cadence,
+    signal_source: `${signal.source_version} ${signal.lineage_id}`,
+    action: signal.action,
+    side: signal.side,
+    price_spread: signal.price,
+    entry_trade_value_usd: 0,
+    exit_trade_value_usd: 0,
+    net_pnl_usd: 0,
+    score: signal.score,
+    confidence: signal.confidence,
+    reason,
+    signal_id: signal.signal_id,
+  });
+  markCommodityEnergySignalSeen(state, String(signal.signal_id || ''));
+}
+
 async function commodityEnergyTick(env: Env, state: any, forceSettle = false) {
   const feed = await buildCommodityEnergySignals();
   const signals = feed.signals || [];
@@ -1451,33 +1641,73 @@ async function commodityEnergyTick(env: Env, state: any, forceSettle = false) {
   if (!forceSettle && state.mode === 'running') {
     const candidates = [...signals].sort((a: any, b: any) => Number(b.score || 0) - Number(a.score || 0));
     for (const signal of candidates) {
-      const reason = commodityEnergyCanOpen(signal, state);
-      if (!reason) {
-        await openCommodityEnergyPosition(env, state, signal);
-        opened += 1;
-      } else {
-        await insertEnergyTrade(env, state.user_id, {
-          ts: energyIso(),
-          event: 'SKIP',
-          symbol: signal.symbol,
-          node: signal.name,
-          horizon: signal.cadence,
-          signal_source: `${signal.source_version} ${signal.lineage_id}`,
-          action: signal.action,
-          side: signal.side,
-          price_spread: signal.price,
-          entry_trade_value_usd: 0,
-          exit_trade_value_usd: 0,
-          net_pnl_usd: 0,
-          score: signal.score,
-          confidence: signal.confidence,
-          reason,
-          signal_id: signal.signal_id,
-        });
-        if (reason !== '该商品持仓已满' && reason !== '达到最大持仓数') {
-          state.seen_signal_ids = [...(state.seen_signal_ids || []), String(signal.signal_id)].slice(-500);
-        }
+      if ((state.seen_signal_ids || []).includes(String(signal.signal_id))) continue;
+      if (signal.action === 'NO_TRADE') {
+        await insertCommodityEnergySkip(env, state, signal, '主血统分数不足');
+        continue;
       }
+      if (signal.side === 'short' && state.config?.allow_short === false) {
+        await insertCommodityEnergySkip(env, state, signal, '做空已关闭');
+        continue;
+      }
+      if (Number(signal.score || 0) < Math.max(Number(state.config?.min_signal_score || 0.66), Number(signal.min_score || 0.66))) {
+        await insertCommodityEnergySkip(env, state, signal, '稳定分不足');
+        continue;
+      }
+      const symbolPositions = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol);
+      const sameSidePositions = symbolPositions.filter((pos: any) => pos.side === signal.side);
+      const oppositePositions = symbolPositions.filter((pos: any) => pos.side !== signal.side);
+      const propertyOpenGate = commodityEnergyPropertyConfirms(signal, signal.side, false);
+      const propertyReverseGate = commodityEnergyPropertyConfirms(signal, signal.side, true);
+
+      if (!symbolPositions.length) {
+        const reason = commodityEnergyCanOpen(signal, state);
+        if (reason) {
+          await insertCommodityEnergySkip(env, state, signal, reason);
+        } else if (!propertyOpenGate.ok) {
+          await insertCommodityEnergySkip(env, state, signal, `V5.22物性过滤阻止开仓：${propertyOpenGate.reason}`);
+        } else {
+          await openCommodityEnergyPosition(env, state, signal);
+          opened += 1;
+        }
+        continue;
+      }
+
+      if (oppositePositions.length) {
+        if (!propertyReverseGate.ok) {
+          await insertCommodityEnergySkip(env, state, signal, `V5.22物性过滤阻止反手：${propertyReverseGate.reason}`);
+          continue;
+        }
+        const exitPrice = Number(signal.price || priceBySymbol.get(signal.symbol) || 0);
+        for (const pos of oppositePositions) {
+          await closeCommodityEnergyPosition(env, state, pos, exitPrice, 'V5.22物性确认反向信号，平仓反手');
+          settled += 1;
+        }
+        state.open_positions = (state.open_positions || []).filter((pos: any) => pos.symbol !== signal.symbol || pos.side === signal.side);
+        const reason = commodityEnergyCanOpen(signal, state);
+        if (reason) {
+          await insertCommodityEnergySkip(env, state, signal, `反手平仓后未开新仓：${reason}`);
+        } else {
+          await openCommodityEnergyPosition(env, state, signal);
+          opened += 1;
+        }
+        continue;
+      }
+
+      const maxSymbolPositions = Math.min(
+        Number(state.config?.max_symbol_positions || 1),
+        Number(signal.max_units || 1),
+      );
+      if (sameSidePositions.length >= maxSymbolPositions) {
+        await insertCommodityEnergySkip(env, state, signal, '同向持仓已存在，V5.22禁止重复开仓');
+        continue;
+      }
+      if (!propertyOpenGate.ok) {
+        await insertCommodityEnergySkip(env, state, signal, `V5.22物性过滤阻止加仓：${propertyOpenGate.reason}`);
+        continue;
+      }
+      await openCommodityEnergyPosition(env, state, signal);
+      opened += 1;
     }
   }
   const unrealized = commodityEnergyEquity(state, signals);
@@ -1517,7 +1747,7 @@ async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
       status: feed.source_status,
       latest_captured_at: feed.signals?.[0]?.captured_at,
       rows: feed.signals?.length || 0,
-      note: 'V5.18 只接 CL=F 3h 与 HO=F 2h 两条通过血统；1m/5m 只做执行检查。',
+      note: 'V5.22 online shadow：V5.18 主血统 + V5.21 中长窗口10维物性过滤；1m/5m 只做执行检查、加仓/反手确认。',
     },
     summary: {
       mode: state.mode,
