@@ -162,6 +162,8 @@ type Feed = {
 
 type SummaryMode = 'all' | 'official' | 'watchlist' | 'parlay';
 
+const BEIJING_TIME_ZONE = 'Asia/Shanghai';
+
 function kickoffTime(match: Pick<MatchItem, 'commence_time'> | Parlay['legs_detail'][number]) {
   const value = 'commence_time' in match ? match.commence_time : match.match_date;
   if (!value) return null;
@@ -693,12 +695,21 @@ function fmtDate(value?: string, locale: Locale = 'zh') {
   if (!value) return '-';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BEIJING_TIME_ZONE,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hourCycle: 'h23',
+  })
+    .formatToParts(d)
+    .reduce<Record<string, string>>((acc, part) => {
+      if (part.type !== 'literal') acc[part.type] = part.value;
+      return acc;
+    }, {});
+  const label = locale === 'zh' ? '北京时间' : 'BJT';
+  return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute} ${label}`;
 }
 
 function predictionHistoryKey(row: PredictionHistoryEntry, index: number) {
