@@ -4390,10 +4390,19 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
     },
     history_policy: {
       user_id: userId,
+      storage_user_id: cryptoTestnetStorageUserId(userId),
+      browser_storage_key: 'hfcd_crypto_testnet_user_id',
+      ledger_source: 'longone online Worker/D1 market_accounts + market_trades',
       storage: 'D1 market_accounts + market_trades',
       scope: 'per_browser_user',
       recent_trade_limit: 180,
       records: 'signals/skips/open/close/add/reduce/reverse/hold with paper PnL',
+    },
+    ledger: {
+      source: 'longone online Worker/D1',
+      user_id: userId,
+      storage_user_id: cryptoTestnetStorageUserId(userId),
+      browser_storage_key: 'hfcd_crypto_testnet_user_id',
     },
     market_health: {
       ok: snapshot.source_status === 'public_realtime_mixed_binance_yahoo',

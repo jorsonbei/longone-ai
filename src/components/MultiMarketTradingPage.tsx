@@ -46,6 +46,13 @@ const COPY: Record<string, Record<string, string>> = {
     testnetAccount: 'Testnet 账户',
     testnetPositions: 'Testnet 持仓',
     testnetOrders: 'Testnet 挂单',
+    ledgerBox: '账本来源 / 用户账本',
+    browserLedgerId: '浏览器账本 ID',
+    backendLedgerId: '后端 D1 账本',
+    ledgerSource: '账本来源',
+    copyLedgerId: '复制账本 ID',
+    exportLedgerId: '导出账本 JSON',
+    ledgerExplain: '当前前向持仓来自 longone D1 paper/testnet mirror；不是 Binance Demo Futures 当前持仓。Demo 实际持仓请看上方 Testnet 持仓表。',
     sensors: '黑暗森林传感器',
     capital: '起始资金',
     fixedTrade: '单笔最高金额',
@@ -117,6 +124,13 @@ const COPY: Record<string, Record<string, string>> = {
     testnetAccount: 'Testnet Account',
     testnetPositions: 'Testnet Positions',
     testnetOrders: 'Testnet Orders',
+    ledgerBox: 'Ledger source / user ledger',
+    browserLedgerId: 'Browser ledger ID',
+    backendLedgerId: 'Backend D1 ledger',
+    ledgerSource: 'Ledger source',
+    copyLedgerId: 'Copy ledger ID',
+    exportLedgerId: 'Export ledger JSON',
+    ledgerExplain: 'Open forward positions come from the longone D1 paper/testnet mirror, not Binance Demo Futures positions. See the Testnet Positions table above for actual Demo positions.',
     sensors: 'DarkForest sensors',
     capital: 'Capital',
     fixedTrade: 'Max trade amount',
@@ -399,6 +413,45 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const testnetPositions = Array.isArray(testnet.positions) ? testnet.positions : [];
   const testnetOrders = Array.isArray(testnet.open_orders) ? testnet.open_orders : [];
   const testnetAccount = testnet.account || {};
+  const historyPolicy = cryptoDashboard?.history_policy || {};
+  const ledgerSource = cryptoDashboard?.ledger?.source || historyPolicy.ledger_source || 'longone online Worker/D1';
+  const backendLedgerId = cryptoDashboard?.ledger?.storage_user_id || historyPolicy.storage_user_id || `crypto_testnet_${cryptoUserId.replace(/[^\w.-]/g, '_').slice(0, 64)}`;
+  const exportCryptoLedgerId = useCallback(() => {
+    const payload = {
+      browser_ledger_id: cryptoUserId,
+      backend_ledger_id: backendLedgerId,
+      storage_key: 'hfcd_crypto_testnet_user_id',
+      source: ledgerSource,
+      dashboard_api: `/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`,
+      exported_at: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `hfcd-crypto-ledger-${cryptoUserId}.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    setMessage(`已导出加密账本 ID：${cryptoUserId}`);
+  }, [backendLedgerId, cryptoUserId, ledgerSource]);
+  const copyCryptoLedgerId = useCallback(async () => {
+    const text = `${cryptoUserId}\n${backendLedgerId}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+      setMessage(`已复制加密账本 ID：${cryptoUserId}`);
+    } catch {
+      setMessage(`复制失败，请手动记录账本 ID：${cryptoUserId}`);
+    }
+  }, [backendLedgerId, cryptoUserId]);
 
   return (
     <div className="min-h-full bg-[#0b1118] px-5 py-6 pb-14 text-slate-100">
@@ -573,6 +626,36 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               <p className="mt-2 text-xl font-black text-white">{value}</p>
             </div>
           ))}
+        </div>
+
+        <div className="mt-5 rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h3 className="text-lg font-black text-white">{copy.ledgerBox}</h3>
+              <p className="mt-2 text-xs leading-5 text-emerald-50/58">{copy.ledgerExplain}</p>
+              <div className="mt-3 grid gap-2 text-xs text-emerald-50/75 md:grid-cols-3">
+                <p><span className="text-emerald-50/42">{copy.browserLedgerId}：</span><span className="font-black text-emerald-100">{cryptoUserId}</span></p>
+                <p><span className="text-emerald-50/42">{copy.backendLedgerId}：</span><span className="font-black text-emerald-100">{backendLedgerId}</span></p>
+                <p><span className="text-emerald-50/42">{copy.ledgerSource}：</span><span className="font-black text-emerald-100">{ledgerSource}</span></p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={copyCryptoLedgerId}
+                className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-4 py-3 text-xs font-black text-emerald-100"
+              >
+                {copy.copyLedgerId}
+              </button>
+              <button
+                type="button"
+                onClick={exportCryptoLedgerId}
+                className="rounded-2xl border border-cyan-200/15 bg-cyan-300/10 px-4 py-3 text-xs font-black text-cyan-100"
+              >
+                {copy.exportLedgerId}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 rounded-[24px] border border-cyan-200/10 bg-cyan-300/[0.05] p-4">
