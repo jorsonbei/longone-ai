@@ -31,7 +31,7 @@ const COPY: Record<string, Record<string, string>> = {
     testnetApiSecret: 'Secret Key',
     testnetSaveKeys: '保存到本机浏览器',
     testnetClearKeys: '清除本机密钥',
-    testnetKeyHint: '密钥只保存在当前浏览器 localStorage，用于 demo-fapi.binance.com 签名；不会保存到 longone 后端或 D1。',
+    testnetKeyHint: '密钥只保存在你当前电脑的当前浏览器 localStorage；刷新页面仍在，但不会上传或保存到 longone 后端、D1 或 Git。只用于本浏览器签名 demo-fapi.binance.com 请求。',
     testnetReady: '已填写 Demo API，可启用 Binance Testnet 下单。订单会出现在 demo.binance.com 的 Futures Order，不是 Spot Order。',
     testnetMissing: '未填写 Demo API，当前只能 paper 模拟。',
     both: '做多 + 做空',
@@ -102,7 +102,7 @@ const COPY: Record<string, Record<string, string>> = {
     testnetApiSecret: 'Secret Key',
     testnetSaveKeys: 'Save in this browser',
     testnetClearKeys: 'Clear local keys',
-    testnetKeyHint: 'Keys stay in this browser localStorage and are used only to sign demo-fapi.binance.com requests. They are not stored on the longone backend or D1.',
+    testnetKeyHint: 'Keys stay only in localStorage on this computer and browser. They survive refreshes but are not uploaded or stored on the longone backend, D1, or Git. They are used only by this browser to sign demo-fapi.binance.com requests.',
     testnetReady: 'Demo API keys are present. Binance Testnet orders can be enabled. Orders appear under demo.binance.com Futures Order, not Spot Order.',
     testnetMissing: 'No Demo API keys. Paper ledger only.',
     both: 'Long + Short',
@@ -255,22 +255,6 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     });
   }, []);
 
-  const saveBinanceKeys = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('hfcd_binance_demo_api_key', binanceKeys.apiKey.trim());
-    window.localStorage.setItem('hfcd_binance_demo_api_secret', binanceKeys.apiSecret.trim());
-    setMessage('Binance Demo API 已保存到本机浏览器。');
-  }, [binanceKeys.apiKey, binanceKeys.apiSecret]);
-
-  const clearBinanceKeys = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem('hfcd_binance_demo_api_key');
-    window.localStorage.removeItem('hfcd_binance_demo_api_secret');
-    setBinanceKeys({ apiKey: '', apiSecret: '' });
-    setCryptoConfig((prev) => ({ ...prev, order_execution: 'paper', testnet_close_all_on_stop: false }));
-    setMessage('已清除本机 Binance Demo API。');
-  }, []);
-
   const exchangeHeaders = useMemo(() => {
     const headers: Record<string, string> = {};
     if (hasUserTestnetKeys) {
@@ -289,10 +273,10 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     return headers;
   }, [binanceKeys.apiKey, binanceKeys.apiSecret, canUseExchangeExecution, hasUserTestnetKeys]);
 
-  const loadCryptoDashboard = useCallback(async () => {
+  const loadCryptoDashboard = useCallback(async (headersOverride?: Record<string, string>) => {
     const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, {
       cache: 'no-store',
-      headers: exchangeHeaders,
+      headers: headersOverride ?? exchangeHeaders,
     });
     const data = await res.json();
     setCryptoDashboard(data);
@@ -316,6 +300,39 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       }));
     }
   }, [cryptoUserId, exchangeHeaders]);
+
+  const saveBinanceKeys = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    setLoading(true);
+    try {
+      window.localStorage.setItem('hfcd_binance_demo_api_key', binanceKeys.apiKey.trim());
+      window.localStorage.setItem('hfcd_binance_demo_api_secret', binanceKeys.apiSecret.trim());
+      setMessage('Binance Demo API 已保存到本机浏览器，正在刷新 Testnet 账户状态。');
+      await loadCryptoDashboard();
+      setMessage('Binance Demo API 已保存，本机 Testnet 账户状态已刷新。');
+    } catch (error) {
+      setMessage(error instanceof Error ? `Demo API 已保存，但刷新账户失败：${error.message}` : 'Demo API 已保存，但刷新账户失败。');
+    } finally {
+      setLoading(false);
+    }
+  }, [binanceKeys.apiKey, binanceKeys.apiSecret, loadCryptoDashboard]);
+
+  const clearBinanceKeys = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    setLoading(true);
+    try {
+      window.localStorage.removeItem('hfcd_binance_demo_api_key');
+      window.localStorage.removeItem('hfcd_binance_demo_api_secret');
+      setBinanceKeys({ apiKey: '', apiSecret: '' });
+      setCryptoConfig((prev) => ({ ...prev, order_execution: 'paper', testnet_close_all_on_stop: false }));
+      await loadCryptoDashboard({});
+      setMessage('已清除本机 Binance Demo API，并切回本地模拟账本。');
+    } catch (error) {
+      setMessage(error instanceof Error ? `已清除本机密钥，但刷新账户失败：${error.message}` : '已清除本机密钥，但刷新账户失败。');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadCryptoDashboard]);
 
   const parseActionResponse = useCallback(async (res: Response) => {
     const text = await res.text();

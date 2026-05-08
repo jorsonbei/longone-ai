@@ -130,6 +130,11 @@ const COPY: Record<string, Record<string, string>> = {
     q: 'Q核',
     source: '行情源',
     reason: '原因',
+    loadingState: '行情加载中',
+    connectedState: '已连接真实/准实时行情',
+    failedState: '行情失败',
+    noQuote: '暂无可用行情',
+    updatedAt: '更新时间',
   },
   en: {
     eyebrow: 'HFCD Gold Trading',
@@ -169,6 +174,11 @@ const COPY: Record<string, Record<string, string>> = {
     q: 'Q core',
     source: 'Source',
     reason: 'Reason',
+    loadingState: 'Loading market data',
+    connectedState: 'Connected to live/delayed market data',
+    failedState: 'Market data failed',
+    noQuote: 'No quote available',
+    updatedAt: 'Updated',
   },
 };
 
@@ -198,8 +208,16 @@ function money(value?: number) {
   return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+function moneyOrDash(value?: number) {
+  return value === undefined || value === null || !Number.isFinite(Number(value)) ? '-' : money(value);
+}
+
 function numberText(value?: number, digits = 2) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function numberOrDash(value?: number, digits = 2) {
+  return value === undefined || value === null || !Number.isFinite(Number(value)) ? '-' : numberText(value, digits);
 }
 
 function pct(value?: number) {
@@ -214,6 +232,8 @@ function translate(value?: string) {
 export default function GoldTradingPage({ locale }: Props) {
   const copy = COPY[locale] || COPY.zh;
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [dashboardState, setDashboardState] = useState<'loading' | 'connected' | 'failed'>('loading');
+  const [dashboardError, setDashboardError] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [config, setConfig] = useState({
@@ -235,9 +255,19 @@ export default function GoldTradingPage({ locale }: Props) {
   }, []);
 
   const loadDashboard = useCallback(async () => {
-    const res = await fetch(`/api/gold-trading/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
-    const data = await res.json() as Dashboard;
-    setDashboard(data);
+    setDashboardState((prev) => prev === 'connected' ? prev : 'loading');
+    try {
+      const res = await fetch(`/api/gold-trading/dashboard?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+      const data = await res.json() as Dashboard & { error?: string };
+      if (!res.ok || data.ok === false) throw new Error(data.error || `dashboard failed (${res.status})`);
+      setDashboard(data);
+      setDashboardError('');
+      setDashboardState('connected');
+    } catch (error) {
+      setDashboardError(error instanceof Error ? error.message : 'dashboard failed');
+      setDashboardState('failed');
+      throw error;
+    }
   }, [userId]);
 
   const postAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
@@ -277,6 +307,20 @@ export default function GoldTradingPage({ locale }: Props) {
   const summary = dashboard?.summary;
   const quote = dashboard?.quote;
   const signal = dashboard?.signals?.[0];
+  const hasQuote = Boolean(quote && Number.isFinite(Number(quote.price)) && Number(quote.price) > 0);
+  const liveQuoteReady = Boolean(hasQuote && quote?.is_real_market_data);
+  const marketStatusClass = dashboardState === 'loading'
+    ? 'border-amber-300/30 bg-amber-300/10 text-amber-100'
+    : liveQuoteReady
+      ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100'
+      : 'border-red-300/30 bg-red-400/10 text-red-100';
+  const marketStatusText = dashboardState === 'loading'
+    ? copy.loadingState
+    : dashboardState === 'failed'
+      ? `${copy.failedState}${dashboardError ? ` · ${dashboardError}` : ''}`
+      : liveQuoteReady
+        ? `${copy.connectedState} · ${dashboard?.data_policy?.realtime_status || '-'} · ${quote?.symbol || '-'} · ${quote?.source || '-'}`
+        : `${copy.failedState} · ${dashboard?.data_policy?.realtime_status || copy.noQuote} · ${quote?.symbol || '-'}`;
 
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top_left,rgba(245,197,74,0.16),transparent_34%),linear-gradient(180deg,#111827,#07130f)] px-6 py-8 text-slate-100">
@@ -295,24 +339,25 @@ export default function GoldTradingPage({ locale }: Props) {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
             <div className="text-sm font-black text-slate-400">{copy.realData}</div>
-            <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-black ${quote?.is_real_market_data ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100' : 'border-red-300/30 bg-red-400/10 text-red-100'}`}>
-              {dashboard?.data_policy?.realtime_status || '-'} · {quote?.symbol || '-'} · {quote?.source || '-'}
+            <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-black ${marketStatusClass}`}>
+              {marketStatusText}
+              {dashboard?.updated_at ? <span className="mt-1 block text-xs opacity-75">{copy.updatedAt}: {dashboard.updated_at}</span> : null}
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-4">
-              <Metric label="Last" value={money(quote?.price)} />
-              <Metric label="Bid" value={money(quote?.bid_price)} />
-              <Metric label="Ask" value={money(quote?.ask_price)} />
-              <Metric label="Spread" value={`${numberText(quote?.spread_bps, 1)} bps`} />
+              <Metric label="Last" value={moneyOrDash(quote?.price)} />
+              <Metric label="Bid" value={moneyOrDash(quote?.bid_price)} />
+              <Metric label="Ask" value={moneyOrDash(quote?.ask_price)} />
+              <Metric label="Spread" value={quote?.spread_bps === undefined ? '-' : `${numberText(quote.spread_bps, 1)} bps`} />
             </div>
           </div>
           <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
             <div className="text-sm font-black text-slate-400">{copy.baseline}</div>
             <p className="mt-3 text-sm font-semibold text-slate-300">{dashboard?.baseline?.lineage || '-'}</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-4">
-              <Metric label="Net" value={money(dashboard?.baseline?.net_pnl_usd)} />
-              <Metric label="PF" value={numberText(dashboard?.baseline?.profit_factor, 3)} />
-              <Metric label="DD" value={money(dashboard?.baseline?.max_drawdown_usd)} />
-              <Metric label="Trades" value={String(dashboard?.baseline?.trades || 0)} />
+              <Metric label="Net" value={moneyOrDash(dashboard?.baseline?.net_pnl_usd)} />
+              <Metric label="PF" value={numberOrDash(dashboard?.baseline?.profit_factor, 3)} />
+              <Metric label="DD" value={moneyOrDash(dashboard?.baseline?.max_drawdown_usd)} />
+              <Metric label="Trades" value={dashboard?.baseline?.trades === undefined ? '-' : String(dashboard.baseline.trades)} />
             </div>
           </div>
         </div>
@@ -343,10 +388,10 @@ export default function GoldTradingPage({ locale }: Props) {
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <MetricCard label={copy.status} value={summary?.mode || 'loading'} />
-          <MetricCard label={copy.equity} value={money(summary?.equity_usd)} />
-          <MetricCard label={copy.pnl} value={money(summary?.realized_pnl_usd)} positive={Number(summary?.realized_pnl_usd || 0) >= 0} />
-          <MetricCard label={copy.winOpen} value={`${pct(summary?.win_rate)} / ${summary?.open_positions || 0}/${summary?.max_open_positions || 0}`} />
+          <MetricCard label={copy.status} value={summary?.mode || (dashboardState === 'loading' ? copy.loadingState : copy.failedState)} />
+          <MetricCard label={copy.equity} value={moneyOrDash(summary?.equity_usd)} />
+          <MetricCard label={copy.pnl} value={moneyOrDash(summary?.realized_pnl_usd)} positive={summary?.realized_pnl_usd === undefined ? undefined : Number(summary.realized_pnl_usd) >= 0} />
+          <MetricCard label={copy.winOpen} value={summary ? `${pct(summary.win_rate)} / ${summary.open_positions || 0}/${summary.max_open_positions || 0}` : '-'} />
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
@@ -355,9 +400,9 @@ export default function GoldTradingPage({ locale }: Props) {
             <div className="mt-4 rounded-2xl bg-white/[0.05] p-4">
               <div className="text-lg font-black">{translate(signal?.action)} · {signal?.symbol || '-'}</div>
               <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                <Metric label={copy.price} value={money(signal?.price)} />
-                <Metric label={copy.score} value={numberText(signal?.score, 3)} />
-                <Metric label={copy.q} value={numberText(signal?.q_core, 3)} />
+                <Metric label={copy.price} value={moneyOrDash(signal?.price)} />
+                <Metric label={copy.score} value={numberOrDash(signal?.score, 3)} />
+                <Metric label={copy.q} value={numberOrDash(signal?.q_core, 3)} />
                 <Metric label={copy.source} value={signal?.source || '-'} />
               </div>
               <p className="mt-3 text-sm font-semibold text-slate-400">{signal?.reject_reason || '达标时 AI 会按真实行情 paper 开仓。'}</p>

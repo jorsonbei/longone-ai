@@ -33,6 +33,8 @@ VERSION = "HFCD_Commodity_V5_19_RealtimeMultiHorizonPositionController"
 SUMMARY_PATH = OUT_DIR / "hfcd_commodity_v5_19_summary.json"
 PREDICTIONS_PATH = OUT_DIR / "hfcd_commodity_v5_19_predictions.csv"
 CONTROLLER_PATH = OUT_DIR / "hfcd_commodity_v5_19_controller_actions.csv"
+BLIND_PATH = OUT_DIR / "hfcd_commodity_v5_19_blind_backtest.csv"
+BLIND_SUMMARY_PATH = OUT_DIR / "hfcd_commodity_v5_19_blind_summary.csv"
 REPORT_PATH = OUT_DIR / "HFCD_Commodity_V5_19_RealtimeMultiHorizonPositionController.md"
 FIGURE_PATH = OUT_DIR / "HFCD_Commodity_V5_19_RealtimeMultiHorizonPositionController.png"
 
@@ -59,6 +61,11 @@ PROFILES = {
     "NG=F": SymbolProfile("NG=F", "Natural Gas Futures", 1, 0.61, 18.0, 11.0),
 }
 
+LINEAGE_BASELINES = {
+    "CL=F": {"lineage": "V5.4 CL 3h strong baseline", "horizon": "3h", "hit_rate": 0.64, "profit_factor": 4.41},
+    "HO=F": {"lineage": "V5.9/V5.6 HO 2h hit-rate lineage", "horizon": "2h", "hit_rate": 0.7692, "profit_factor": 1.28},
+}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
@@ -69,7 +76,11 @@ def label_for_minutes(minutes: int) -> str:
         return f"{minutes}m"
     whole = minutes // 60
     rem = minutes % 60
-    return f"{whole}h" if rem == 0 else f"{whole}.{rem // 30}h"
+    if rem == 0:
+        return f"{whole}h"
+    if rem == 30:
+        return f"{whole}.5h"
+    return f"{whole}h{rem}m"
 
 
 def yahoo_chart(symbol: str, interval: str, range_: str) -> tuple[pd.DataFrame, str, bool]:
@@ -145,9 +156,16 @@ def momentum_stack(frame: pd.DataFrame, base_minutes: int) -> dict[str, float]:
     return values
 
 
-def predict_symbol(symbol: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def prediction_rows_from_frame(
+    symbol: str,
+    frame: pd.DataFrame,
+    source: str,
+    real: bool,
+    base_minutes: int,
+    generated_at: datetime | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     profile = PROFILES[symbol]
-    frame, source, real, base_minutes = load_series(symbol)
+    generated_at = generated_at or utc_now()
     close = float(frame["close"].iloc[-1])
     returns = frame["close"].pct_change().dropna()
     vol_1h = float(returns.tail(max(12, int(60 / base_minutes))).std() or 0.0001)
@@ -176,7 +194,7 @@ def predict_symbol(symbol: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             action = "BUY_LONG" if direction == "long" else "SELL_SHORT"
         rows.append(
             {
-                "generated_at": utc_now().isoformat(),
+                "generated_at": generated_at.isoformat(),
                 "symbol": symbol,
                 "name": profile.name,
                 "source": source,
@@ -202,6 +220,145 @@ def predict_symbol(symbol: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         )
     meta = {"symbol": symbol, "source": source, "is_real_market_data": real, "rows": len(frame), "base_interval_minutes": base_minutes, "latest_price": close}
     return rows, meta
+
+
+def predict_symbol(symbol: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    frame, source, real, base_minutes = load_series(symbol)
+    return prediction_rows_from_frame(symbol, frame, source, real, base_minutes)
+
+
+def profit_factor(pnls: pd.Series) -> float:
+    wins = float(pnls[pnls > 0].sum())
+    losses = float(-pnls[pnls < 0].sum())
+    if losses <= 1e-9:
+        return 999.0 if wins > 0 else 0.0
+    return wins / losses
+
+
+def max_drawdown_usd(pnls: pd.Series) -> float:
+    if pnls.empty:
+        return 0.0
+    equity = pnls.cumsum()
+    running_max = equity.cummax().clip(lower=0)
+    drawdown = equity - running_max
+    return float(drawdown.min())
+
+
+def blind_backtest_symbol(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    profile = PROFILES[symbol]
+    frame, source, real, base_minutes = load_series(symbol)
+    max_horizon_bars = max(1, int(round(max(HORIZONS_MIN) / max(base_minutes, 1))))
+    warmup_bars = max(80, int(round(max(LOOKBACK_MIN) / max(base_minutes, 1))) + 5)
+    step_bars = max(1, int(round(5 / max(base_minutes, 1))))
+    rows: list[dict[str, Any]] = []
+    if len(frame) <= warmup_bars + max_horizon_bars + 5:
+        return rows, [], {"symbol": symbol, "source": source, "is_real_market_data": real, "rows": len(frame), "status": "insufficient_history"}
+
+    for i in range(warmup_bars, len(frame) - max_horizon_bars - 1, step_bars):
+        now_frame = frame.iloc[: i + 1].copy()
+        generated_at = pd.to_datetime(frame["timestamp"].iloc[i]).to_pydatetime()
+        try:
+            predictions, _ = prediction_rows_from_frame(symbol, now_frame, source, real, base_minutes, generated_at)
+        except Exception:
+            continue
+        for pred in predictions:
+            action = str(pred["action"])
+            if action == "NO_TRADE":
+                continue
+            horizon_minutes = int(pred["horizon_minutes"])
+            horizon_bars = max(1, int(round(horizon_minutes / max(base_minutes, 1))))
+            future_index = i + horizon_bars
+            if future_index >= len(frame):
+                continue
+            entry_price = float(frame["close"].iloc[i])
+            exit_price = float(frame["close"].iloc[future_index])
+            raw_return = exit_price / entry_price - 1.0
+            signed_return = raw_return if action == "BUY_LONG" else -raw_return
+            net_return = signed_return - (profile.cost_bps / 10000.0)
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "generated_at": generated_at.isoformat(),
+                    "source": source,
+                    "is_real_market_data": real,
+                    "base_interval_minutes": base_minutes,
+                    "horizon": pred["horizon"],
+                    "horizon_minutes": horizon_minutes,
+                    "action": action,
+                    "direction": pred["direction"],
+                    "confidence": pred["confidence"],
+                    "expected_bps": pred["expected_bps"],
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "raw_return": round(raw_return, 6),
+                    "signed_return": round(signed_return, 6),
+                    "net_return": round(net_return, 6),
+                    "pnl_usd": round(net_return * 1000.0, 4),
+                    "direction_hit": bool(signed_return > 0),
+                }
+            )
+
+    if not rows:
+        return rows, [], {"symbol": symbol, "source": source, "is_real_market_data": real, "rows": len(frame), "status": "no_trades"}
+
+    df = pd.DataFrame(rows)
+    day_span = max(1e-6, (pd.to_datetime(frame["timestamp"].iloc[-1]) - pd.to_datetime(frame["timestamp"].iloc[warmup_bars])).total_seconds() / 86400.0)
+    summaries: list[dict[str, Any]] = []
+    for (sym, horizon), group in df.groupby(["symbol", "horizon"], sort=False):
+        pnls = group["pnl_usd"].astype(float)
+        summaries.append(
+            {
+                "symbol": sym,
+                "horizon": horizon,
+                "trades": int(len(group)),
+                "direction_hit_rate": float(group["direction_hit"].mean()),
+                "net_pnl_usd": float(pnls.sum()),
+                "profit_factor": profit_factor(pnls),
+                "max_drawdown_usd": max_drawdown_usd(pnls),
+                "actions_per_day": float(len(group) / day_span),
+                "source": source,
+                "is_real_market_data": real,
+            }
+        )
+    meta = {"symbol": symbol, "source": source, "is_real_market_data": real, "rows": len(frame), "status": "ok", "blind_rows": len(rows)}
+    return rows, summaries, meta
+
+
+def run_blind_backtest() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    all_rows: list[dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
+    coverage: list[dict[str, Any]] = []
+    for symbol in SYMBOLS:
+        rows, symbol_summary, meta = blind_backtest_symbol(symbol)
+        all_rows.extend(rows)
+        summaries.extend(symbol_summary)
+        coverage.append(meta)
+    return all_rows, summaries, coverage
+
+
+def blind_recommendation(blind_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    best_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in blind_summaries:
+        current = best_by_symbol.get(str(row["symbol"]))
+        if current is None or (float(row["profit_factor"]), float(row["net_pnl_usd"])) > (float(current["profit_factor"]), float(current["net_pnl_usd"])):
+            best_by_symbol[str(row["symbol"])] = row
+    promotions = []
+    for symbol, row in best_by_symbol.items():
+        baseline = LINEAGE_BASELINES.get(symbol)
+        if not baseline:
+            continue
+        passes_sample = int(row["trades"]) >= 25
+        passes_hit = float(row["direction_hit_rate"]) >= float(baseline["hit_rate"])
+        passes_pf = float(row["profit_factor"]) >= float(baseline["profit_factor"])
+        if passes_sample and passes_hit and passes_pf:
+            promotions.append({"symbol": symbol, "candidate": row, "baseline": baseline})
+    return {
+        "best_by_symbol": best_by_symbol,
+        "lineage_baselines": LINEAGE_BASELINES,
+        "promotion_candidates": promotions,
+        "decision": "keep_v5_18_default" if not promotions else "review_promotion_candidates",
+        "note": "V5.19 must beat each frozen lineage on sample size, hit rate, and PF before replacing V5.18.",
+    }
 
 
 def controller_actions(predictions: list[dict[str, Any]], positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -261,7 +418,7 @@ def controller_actions(predictions: list[dict[str, Any]], positions: list[dict[s
     return actions
 
 
-def write_report(summary: dict[str, Any], actions: list[dict[str, Any]]) -> None:
+def write_report(summary: dict[str, Any], actions: list[dict[str, Any]], blind_summaries: list[dict[str, Any]]) -> None:
     lines = [
         f"# {VERSION}",
         "",
@@ -283,6 +440,31 @@ def write_report(summary: dict[str, Any], actions: list[dict[str, Any]]) -> None
             )
     else:
         lines.append("No controller actions were generated.")
+    lines.extend(
+        [
+            "",
+            "## Local Blind Backtest",
+            "",
+            "This local blind backtest is research-only. V5.18 remains the default unless V5.19 beats the frozen lineage on sample size, hit rate, and PF.",
+            "",
+        ]
+    )
+    if blind_summaries:
+        best = {}
+        for row in blind_summaries:
+            symbol = str(row["symbol"])
+            current = best.get(symbol)
+            if current is None or (float(row["profit_factor"]), float(row["net_pnl_usd"])) > (float(current["profit_factor"]), float(current["net_pnl_usd"])):
+                best[symbol] = row
+        lines.append("| symbol | best_horizon | trades | hit_rate | PF | net_pnl | actions/day |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|")
+        for symbol, row in best.items():
+            lines.append(
+                f"| {symbol} | {row['horizon']} | {int(row['trades'])} | {float(row['direction_hit_rate']):.2%} | "
+                f"{float(row['profit_factor']):.2f} | ${float(row['net_pnl_usd']):.2f} | {float(row['actions_per_day']):.2f} |"
+            )
+    else:
+        lines.append("No blind trades were generated.")
     lines.extend(
         [
             "",
@@ -322,8 +504,12 @@ def main() -> None:
         coverage.append(meta)
     positions = load_v518_positions()
     actions = controller_actions(all_predictions, positions)
+    blind_rows, blind_summaries, blind_coverage = run_blind_backtest()
+    recommendation = blind_recommendation(blind_summaries)
     pd.DataFrame(all_predictions).to_csv(PREDICTIONS_PATH, index=False)
     pd.DataFrame(actions).to_csv(CONTROLLER_PATH, index=False)
+    pd.DataFrame(blind_rows).to_csv(BLIND_PATH, index=False)
+    pd.DataFrame(blind_summaries).to_csv(BLIND_SUMMARY_PATH, index=False)
     summary = {
         "version": VERSION,
         "generated_at": utc_now().isoformat(),
@@ -334,16 +520,25 @@ def main() -> None:
         "controller_action_count": len(actions),
         "non_flat_actions": sum(1 for row in actions if row["controller_action"] not in {"NO_TRADE", "HOLD"}),
         "coverage": coverage,
+        "blind_backtest": {
+            "enabled": True,
+            "rows": len(blind_rows),
+            "summary_rows": len(blind_summaries),
+            "coverage": blind_coverage,
+            "recommendation": recommendation,
+        },
         "outputs": {
             "summary_json": str(SUMMARY_PATH),
             "predictions_csv": str(PREDICTIONS_PATH),
             "controller_actions_csv": str(CONTROLLER_PATH),
+            "blind_backtest_csv": str(BLIND_PATH),
+            "blind_summary_csv": str(BLIND_SUMMARY_PATH),
             "report_md": str(REPORT_PATH),
             "figure_png": str(FIGURE_PATH),
         },
     }
     SUMMARY_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_report(summary, actions)
+    write_report(summary, actions, blind_summaries)
     write_figure(all_predictions)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
