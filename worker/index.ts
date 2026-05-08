@@ -1852,7 +1852,7 @@ async function commodityEnergyReset(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
-const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V3_5_ShortSensorUpgrade';
+const CRYPTO_TESTNET_VERSION = 'HFCD_Trading_V3_6_PropertyGatedExecution';
 const CRYPTO_TESTNET_SYMBOLS: any[] = [
   {
     symbol: 'BTCUSDT',
@@ -3271,6 +3271,31 @@ function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
   };
 }
 
+function normalizeCryptoTestnetConfig(config: any = {}) {
+  const next = { ...config };
+  next.fixed_trade_usd = Math.max(Number(next.fixed_trade_usd || 1_000), 1);
+  next.adaptive_sizing = next.adaptive_sizing !== false;
+  next.max_position_pct = Math.max(0.001, Math.min(Number(next.max_position_pct || 0.04), 0.2));
+  // Main forward ledger safety rule: one logical position per symbol.
+  // Same-side exposure changes must happen through ADD/REDUCE on that position.
+  next.max_symbol_positions = 1;
+  next.max_open_positions = Math.max(1, Math.min(Number(next.max_open_positions || 4), 4));
+  next.stop_loss_pct = Math.max(0.001, Math.min(Number(next.stop_loss_pct || 0.018), 0.2));
+  next.take_profit_pct = Math.max(0.001, Math.min(Number(next.take_profit_pct || 0.036), 0.4));
+  next.min_signal_score = Math.max(0.1, Math.min(Number(next.min_signal_score || 0.66), 5));
+  next.max_holding_minutes = Math.max(15, Math.min(Number(next.max_holding_minutes || 8 * 60), 24 * 60));
+  next.side_policy = ['long_only', 'short_only', 'both'].includes(String(next.side_policy)) ? String(next.side_policy) : 'both';
+  next.allow_short = next.allow_short !== false;
+  next.allow_scale_in = next.allow_scale_in !== false;
+  next.allow_reduce = next.allow_reduce !== false;
+  next.allow_reverse = next.allow_reverse !== false;
+  next.order_execution = String(next.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper';
+  next.testnet_close_all_on_stop = next.testnet_close_all_on_stop !== false;
+  const strategy = String(next.strategy || '');
+  next.strategy = strategy.startsWith('v3_6_') ? strategy : 'v3_6_property_gated_bidirectional_execution';
+  return next;
+}
+
 function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {}) {
   const defaults = defaultCryptoTestnetAccount(userId, body);
   const normalized = {
@@ -3281,6 +3306,7 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
       ...(state?.config || {}),
     },
   };
+  normalized.version = CRYPTO_TESTNET_VERSION;
   normalized.display_user_id = normalized.display_user_id || userId;
   normalized.user_id = normalized.user_id || cryptoTestnetStorageUserId(userId);
   if (!Array.isArray(normalized.seen_audit_signal_ids)) normalized.seen_audit_signal_ids = [];
@@ -3295,13 +3321,14 @@ function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {
   if (normalized.config.allow_scale_in === undefined) normalized.config.allow_scale_in = true;
   if (normalized.config.allow_reduce === undefined) normalized.config.allow_reduce = true;
   if (normalized.config.allow_reverse === undefined) normalized.config.allow_reverse = true;
+  normalized.config = normalizeCryptoTestnetConfig(normalized.config);
   return normalized;
 }
 
 function mergeCryptoTestnetConfig(state: any, body: any = {}) {
   const current = state.config || {};
   const has = (key: string) => body && body[key] !== undefined && body[key] !== null && body[key] !== '';
-  return {
+  return normalizeCryptoTestnetConfig({
     ...current,
     fixed_trade_usd: Number(has('fixed_trade_usd') ? body.fixed_trade_usd : has('max_order_usd') ? body.max_order_usd : current.fixed_trade_usd || 1_000),
     adaptive_sizing: has('adaptive_sizing') ? body.adaptive_sizing !== false : current.adaptive_sizing !== false,
@@ -3313,14 +3340,14 @@ function mergeCryptoTestnetConfig(state: any, body: any = {}) {
     min_signal_score: Number(has('min_signal_score') ? body.min_signal_score : current.min_signal_score || 0.66),
     max_holding_minutes: Number(has('max_holding_minutes') ? body.max_holding_minutes : current.max_holding_minutes || 8 * 60),
     side_policy: String(has('side_policy') ? body.side_policy : current.side_policy || 'both'),
-    allow_short: body.allow_short !== false,
+    allow_short: has('allow_short') ? body.allow_short !== false : current.allow_short !== false,
     allow_scale_in: has('allow_scale_in') ? body.allow_scale_in !== false : current.allow_scale_in !== false,
     allow_reduce: has('allow_reduce') ? body.allow_reduce !== false : current.allow_reduce !== false,
     allow_reverse: has('allow_reverse') ? body.allow_reverse !== false : current.allow_reverse !== false,
     order_execution: String(has('order_execution') ? body.order_execution : current.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper',
     testnet_close_all_on_stop: has('testnet_close_all_on_stop') ? body.testnet_close_all_on_stop !== false : current.testnet_close_all_on_stop !== false,
     strategy: String(has('strategy') ? body.strategy : current.strategy || 'v3_1_shortvol_bidirectional_forward_ledger'),
-  };
+  });
 }
 
 async function loadCryptoTestnetAccount(env: Env, userId: string, body: any = {}) {
@@ -3720,6 +3747,74 @@ function cryptoSizingThreshold(signal: any, cfg: any) {
   );
 }
 
+function cryptoShortRouteIsPromoted(signalOrSymbol: any) {
+  const signal = typeof signalOrSymbol === 'string' ? null : signalOrSymbol;
+  const meta = signal ? cryptoRouteMeta(signal.symbol) : cryptoRouteMeta(signalOrSymbol);
+  const validated = String(signal?.validated_side_policy || meta.validated_side_policy || meta.side_policy || '');
+  const status = String(signal?.short_policy_status || meta.short_policy_status || '');
+  return validated === 'both' && status.includes('blind_promoted');
+}
+
+function cryptoPropertyGate(signal: any, state: any, intent: 'open' | 'add' | 'reverse', existing?: any) {
+  if (!signal || !['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) {
+    return { ok: false, reason: '没有可执行的做多/做空信号', property_score: 0 };
+  }
+  if (signal.action === 'SELL_SHORT' && !cryptoShortRouteIsPromoted(signal)) {
+    return {
+      ok: false,
+      reason: '做空路线仍是 forward shadow，未通过独立盲测，不允许进入主账本',
+      property_score: 0,
+    };
+  }
+  const cfg = state.config || {};
+  const threshold = cryptoSizingThreshold(signal, cfg);
+  const score = Number(signal.score || 0);
+  const edge = cryptoClamp((score - threshold) / Math.max(0.18, threshold), 0, 1.25);
+  const confidence = cryptoClamp(Number(signal.confidence || 0.5), 0, 1);
+  const spreadQuality = cryptoClamp(1 - Math.max(Number(signal.spread_bps || 0), 0) / (signal.asset_class === 'crypto_perp' ? 24 : 12), 0, 1);
+  const depthUsd = signal.side === 'short' ? Number(signal.bid_depth_usd || 0) : Number(signal.ask_depth_usd || 0);
+  const liquidityQuality = depthUsd > 0
+    ? cryptoClamp(depthUsd / Math.max(Number(cfg.fixed_trade_usd || 1_000) * 10, 1), 0, 1)
+    : signal.asset_class === 'crypto_perp' ? 0.48 : 0.68;
+  const directionalOk = signal.action === 'SELL_SHORT'
+    ? Number(signal.signed_score || 0) < 0
+    : Number(signal.signed_score || 0) > 0;
+  const directionQuality = directionalOk ? 1 : 0.25;
+  const existingPenalty = existing && Number(existing.unrealized_pnl_usd || 0) < 0 && intent === 'add' ? 0.12 : 0;
+  const propertyScore = cryptoClamp(
+    edge * 0.34 + confidence * 0.22 + spreadQuality * 0.16 + liquidityQuality * 0.16 + directionQuality * 0.12 - existingPenalty,
+    0,
+    1.2,
+  );
+  const required = intent === 'reverse' ? 0.72 : intent === 'add' ? 0.66 : 0.50;
+  if (propertyScore < required) {
+    return {
+      ok: false,
+      reason: `物性确认不足：${intent} 需要 ${required.toFixed(2)}，当前 ${propertyScore.toFixed(2)}`,
+      property_score: Number(propertyScore.toFixed(4)),
+    };
+  }
+  if (intent === 'add' && existing && Number(signal.score || 0) < Number(existing.score || 0) + 0.10) {
+    return {
+      ok: false,
+      reason: '同向加仓需要显著强于已有仓位的信号',
+      property_score: Number(propertyScore.toFixed(4)),
+    };
+  }
+  return {
+    ok: true,
+    reason: `物性确认通过：${intent}=${propertyScore.toFixed(2)}`,
+    property_score: Number(propertyScore.toFixed(4)),
+  };
+}
+
+function cryptoPositionPolicyExitReason(pos: any) {
+  if (String(pos.side || '') === 'short' && !cryptoShortRouteIsPromoted(String(pos.symbol || ''))) {
+    return '做空路线未盲测晋级，V3.6 策略迁移退出主账本持仓';
+  }
+  return '';
+}
+
 function cryptoAdaptiveSizing(signal: any, state: any) {
   const cfg = state.config || {};
   const cap = Math.max(Number(cfg.fixed_trade_usd || 1_000), 1);
@@ -3794,6 +3889,8 @@ function canOpenCryptoTestnetPosition(signal: any, state: any) {
   if (signal.action === 'SELL_SHORT' && (cfg.allow_short === false || cfg.side_policy === 'long_only')) return '加密做空未启用';
   if (signal.action === 'BUY_LONG' && cfg.side_policy === 'short_only') return '加密做多未启用';
   if (Number(signal.score || 0) < Number(cfg.min_signal_score || 0.66)) return '加密稳定分数不足';
+  const propertyGate = cryptoPropertyGate(signal, state, 'open');
+  if (!propertyGate.ok) return propertyGate.reason;
   if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
   const sameSymbol = (state.open_positions || []).filter((pos: any) => pos.symbol === signal.symbol).length;
   if (sameSymbol >= Number(cfg.max_symbol_positions || 1)) return '单币种持仓数已满';
@@ -4153,6 +4250,21 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
     const signal = signals.find((row: any) => row.symbol === pos.symbol);
     const price = Number(signal?.price || pos.last_price || pos.entry_price);
     const pnl = cryptoTestnetPositionPnl(pos, price) - Number(pos.estimated_fee_usd || 0);
+    const policyExitReason = cryptoPositionPolicyExitReason(pos);
+    if (policyExitReason) {
+      try {
+        await closeCryptoTestnetPosition(env, state, pos, signal, policyExitReason, credentials);
+        closed += 1;
+      } catch (error) {
+        remaining.push({
+          ...pos,
+          last_price: price,
+          unrealized_pnl_usd: Number(pnl.toFixed(2)),
+          last_error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      continue;
+    }
     const due = forceClose || new Date(pos.target_exit_at).getTime() <= Date.now();
     if (due || pnl >= Number(pos.take_profit_usd || 0) || pnl <= -Number(pos.stop_loss_usd || 0)) {
       const reason = due ? '到期/停止结算' : pnl > 0 ? '止盈结算' : '止损结算';
@@ -4183,7 +4295,8 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
         if (existing.side === targetSide) {
           const threshold = cryptoSizingThreshold(signal, state.config || {});
           const strongerSignal = Number(signal.score || 0) >= Math.max(threshold + 0.05, Number(existing.score || 0) + 0.08);
-          if (state.config?.allow_scale_in !== false && strongerSignal) {
+          const addGate = cryptoPropertyGate(signal, state, 'add', existing);
+          if (state.config?.allow_scale_in !== false && strongerSignal && addGate.ok) {
             try {
               const add = await addCryptoTestnetPosition(env, state, existing, signal, credentials);
               if (add) {
@@ -4230,7 +4343,9 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
             score: signal.score,
             confidence: signal.confidence,
             source: signal.source,
-            reason: strongerSignal ? '同向信号增强但剩余仓位预算不足，继续持有' : '同向信号存在，继续持有，不重复开仓',
+            reason: strongerSignal && !addGate.ok
+              ? `同向信号增强但未加仓：${addGate.reason}`
+              : strongerSignal ? '同向信号增强但剩余仓位预算不足，继续持有' : '同向信号存在，继续持有，不重复开仓',
           });
           if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
             state.seen_signal_ids.push(String(signal.signal_id));
@@ -4239,6 +4354,42 @@ async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = fals
         }
 
         if (state.config?.allow_reverse !== false && ['BUY_LONG', 'SELL_SHORT'].includes(String(signal.action || ''))) {
+          const reverseGate = cryptoPropertyGate(signal, state, 'reverse', existing);
+          if (!reverseGate.ok) {
+            if (state.config?.allow_reduce !== false && Number(existing.unrealized_pnl_usd || 0) < 0 && !String(existing.last_reduced_signal_id || '').includes(String(signal.signal_id))) {
+              const reduced = await reduceCryptoTestnetPosition(env, state, existing, signal, 0.35, `反向信号未通过物性确认，仅减仓保护：${reverseGate.reason}`, credentials);
+              if (reduced) {
+                existing.last_reduced_signal_id = signal.signal_id;
+                if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+                  state.seen_signal_ids.push(String(signal.signal_id));
+                }
+                adjusted += 1;
+                continue;
+              }
+            }
+            await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, {
+              ts: energyIso(),
+              event: 'SKIP',
+              signal_id: signal.signal_id,
+              symbol: signal.symbol,
+              asset_class: signal.asset_class,
+              route: signal.route,
+              side: existing.side,
+              action: signal.action,
+              price: signal.price,
+              trade_value_usd: Number(existing.notional_usd || 0),
+              net_pnl_usd: 0,
+              paper_pnl_usd: Number(existing.unrealized_pnl_usd || 0),
+              score: signal.score,
+              confidence: signal.confidence,
+              source: signal.source,
+              reason: `反向信号未通过物性确认，不反手：${reverseGate.reason}`,
+            });
+            if (!(state.seen_signal_ids || []).includes(String(signal.signal_id))) {
+              state.seen_signal_ids.push(String(signal.signal_id));
+            }
+            continue;
+          }
           try {
             await closeCryptoTestnetPosition(env, state, existing, signal, '反向信号确认，平仓准备反手', credentials);
             state.open_positions = (state.open_positions || []).filter((pos: any) => pos.position_id !== existing.position_id);
