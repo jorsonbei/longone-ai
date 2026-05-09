@@ -10,11 +10,11 @@ const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
     title: '加密货币 / ETF / 股票 AI 线上模拟交易',
-    subtitle: '加密货币、ETF、股票分区运行线上模拟账本。BTC/SOL 可走 Binance Demo Testnet；SPY/QQQ/IWM/MSFT/AAPL/TSLA 只写 longone 线上模拟账本。',
+    subtitle: '加密货币、ETF、股票分区运行线上模拟账本。BTC/SOL/DOGE 可走 Binance Demo Testnet；SPY/QQQ/IWM 和股票扩展池只写 longone 线上模拟账本。',
     cryptoPanel: '加密货币 / ETF 线上模拟账本',
-    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、点差、波动和剩余持仓预算自适应计算；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
+    cryptoHint: 'BTCUSDT/SOLUSDT/DOGEUSDT 使用 Binance U本位合约公开实时数据；DOGEUSDT 接入 V3.32 1h 前向模拟路线并记录 aggTrade/L2/Bσ 覆盖；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、点差、波动和剩余持仓预算自适应计算。',
     stockPanel: '股票 AI 线上模拟交易',
-    stockHint: '当前股票分区接入 MSFT 1 小时做多、AAPL 1 小时做多、TSLA 15 分钟做空；读取股票、SPY、QQQ、XLK、VIX 公开行情，只写 longone 线上模拟账本，不向券商下单。',
+    stockHint: '当前股票分区接入 V1.7 扩展股票池：MSFT/AAPL/CRM/AMD/MU 做多，TSLA/AMZN 做空；读取股票、SPY、QQQ、XLK、SOXX、VIX 公开行情，只写 longone 线上模拟账本，不向券商下单。',
     stockStart: '启动股票线上模拟',
     stockTick: '运行股票一轮',
     stockStop: '停止股票并清仓',
@@ -96,11 +96,11 @@ const COPY: Record<string, Record<string, string>> = {
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
     title: 'AI Online Paper Trading for Crypto, ETFs, and Stocks',
-    subtitle: 'Crypto, ETF, and stock routes run in separated online paper ledgers. BTC/SOL can use Binance Demo Testnet; SPY/QQQ/IWM/MSFT/AAPL/TSLA stay on the longone paper ledger.',
+    subtitle: 'Crypto, ETF, and stock routes run in separated online paper ledgers. BTC/SOL/DOGE can use Binance Demo Testnet; SPY/QQQ/IWM and the expanded stock pool stay on the longone paper ledger.',
     cryptoPanel: 'Crypto / ETF Online Paper Ledger',
-    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, spread, volatility, and remaining risk budget.',
+    cryptoHint: 'BTCUSDT/SOLUSDT/DOGEUSDT use Binance USD-M futures public realtime data. DOGEUSDT runs the V3.32 1h online paper route and records aggTrade/L2/B-sigma coverage. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, spread, volatility, and remaining risk budget.',
     stockPanel: 'Stock AI Online Paper Trading',
-    stockHint: 'The stock section currently runs MSFT 1h long, AAPL 1h long, and TSLA 15m short with stock, SPY, QQQ, XLK, and VIX public data. It writes only to the longone online paper ledger.',
+    stockHint: 'The stock section now runs the V1.7 expanded pool: MSFT/AAPL/CRM/AMD/MU long and TSLA/AMZN short with stock, SPY, QQQ, XLK, SOXX, and VIX public data. It writes only to the longone online paper ledger.',
     stockStart: 'Start Stock Paper Trading',
     stockTick: 'Run One Stock Tick',
     stockStop: 'Stop Stock and Liquidate',
@@ -225,7 +225,7 @@ const reasonText: Record<string, string> = {
   '同标的信号弱化且持仓浮亏，减仓保护': '同标的信号弱化且持仓浮亏，减仓保护',
   '用户风险上限收缩，超额持仓自动平仓': '用户风险上限收缩，超额持仓自动平仓',
   '股票事件/开收盘/VIX 风险过高，跳过本轮信号': '股票事件/开收盘/VIX 风险过高，跳过本轮信号',
-  'Stock V1.4 股票线上模拟交易按真实行情达标开仓，不发送券商订单': 'Stock V1.4 股票线上模拟交易按真实行情达标开仓，不发送券商订单',
+  'Stock V1.7 股票扩展池线上模拟交易按真实行情达标开仓，不发送券商订单': 'Stock V1.7 股票扩展池线上模拟交易按真实行情达标开仓，不发送券商订单',
   '线上模拟路线实时信号未达门槛': '线上模拟路线实时信号未达门槛',
   '信号未达线上模拟交易标准': '信号未达线上模拟交易标准',
   'ETF 通过路线只写线上模拟账本，不发送交易所订单': 'ETF 通过路线只写线上模拟账本，不发送交易所订单',
@@ -629,7 +629,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       storage_key: 'hfcd_stock_paper_user_id',
       source: stockLedgerSource,
       dashboard_api: `/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(stockUserId)}&asset_scope=stock`,
-      route: 'MSFT 1小时做多线上模拟交易',
+      route: 'Stock V1.7 扩展股票池线上模拟交易',
       exported_at: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -671,7 +671,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       <section className="mt-5 rounded-[28px] border border-emerald-200/15 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.16),transparent_30rem),rgba(255,255,255,0.03)] p-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200/70">HFCD V3.1 SHORTVOL FORWARD</p>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200/70">HFCD V3.32 DOGE FORWARD + SHORTVOL</p>
             <h2 className="mt-1 text-2xl font-black text-white">{copy.cryptoPanel}</h2>
             <p className="mt-2 max-w-5xl text-sm leading-6 text-emerald-50/65">{copy.cryptoHint}</p>
           </div>
@@ -958,7 +958,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             <div className="mt-3 overflow-auto">
               <table className="min-w-[720px] w-full text-left text-xs">
                 <thead className="text-emerald-50/45">
-                  <tr>{['标的', '路线', '执行', '资金费率', 'OI/成交量', '深度/成交额', '失衡', '点差'].map((head) => <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
+                  <tr>{['标的', '路线', '执行', '资金费率', 'OI/成交量', 'aggTrade', 'L2/Bσ', '失衡', '点差'].map((head) => <th key={head} className="border-b border-emerald-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
                 </thead>
                 <tbody>
                   {cryptoSensors.map((row: any) => (
@@ -968,12 +968,13 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                       <td className="px-3 py-3">{row.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}</td>
                       <td className="px-3 py-3">{pct(row.funding_rate)}</td>
                       <td className="px-3 py-3">{row.open_interest ? numberText(row.open_interest, 0) : numberText(row.volume_recent, 0)}</td>
-                      <td className="px-3 py-3">{row.bid_depth_usd ? `${money(row.bid_depth_usd)} / ${money(row.ask_depth_usd)}` : money(row.volume_notional_proxy)}</td>
+                      <td className="px-3 py-3">{row.agg_trade_usd ? `${money(row.agg_trade_usd)} · ${numberText(row.agg_imbalance, 3)}` : money(row.volume_notional_proxy)}</td>
+                      <td className="px-3 py-3">{row.bid_depth_usd ? `${money(row.bid_depth_usd)} / ${money(row.ask_depth_usd)}` : '-'} · Bσ {row.b_sigma_coverage ? '有' : '缺'}</td>
                       <td className="px-3 py-3">{numberText(row.depth_imbalance, 4)}</td>
                       <td className="px-3 py-3">{numberText(row.spread_bps, 2)} bps</td>
                     </tr>
                   ))}
-                  {!cryptoSensors.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={8}>暂无传感器数据。</td></tr> : null}
+                  {!cryptoSensors.length ? <tr><td className="px-3 py-6 text-emerald-50/50" colSpan={9}>暂无传感器数据。</td></tr> : null}
                 </tbody>
               </table>
             </div>
@@ -989,7 +990,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       <section className="mt-5 rounded-[28px] border border-sky-200/15 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_32rem),rgba(255,255,255,0.03)] p-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-200/70">Stock V1.4 · MSFT/AAPL/TSLA</p>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-200/70">Stock V1.7 · Expanded Pool</p>
             <h2 className="mt-1 text-2xl font-black text-white">{copy.stockPanel}</h2>
             <p className="mt-2 max-w-5xl text-sm leading-6 text-sky-50/65">{copy.stockHint}</p>
           </div>

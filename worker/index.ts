@@ -51,6 +51,7 @@ type Env = {
   DATABENTO_API_KEY?: string;
   BINANCE_TESTNET_API_KEY?: string;
   BINANCE_TESTNET_API_SECRET?: string;
+  COINALYZE_API_KEY?: string;
   NODE_ENV?: string;
 };
 const instructionCache = new Map<string, string>();
@@ -2450,7 +2451,7 @@ async function commodityEnergyReset(request: Request, env: Env, url: URL) {
 const MARKET_TRADING_VERSION = 'HFCD_Trading_V1_MultiMarket_PaperEngine';
 const MARKET_SYMBOLS = [...MULTI_MARKET_TRADING_CONFIG.symbols];
 const MARKET_FEE_RATE = 0.0006;
-const CRYPTO_TESTNET_VERSION = 'HFCD_Stock_V1_4_BigTechLongShortOnlinePaper';
+const CRYPTO_TESTNET_VERSION = 'HFCD_Crypto_V3_32_DOGE1h_StockV1_7_OnlinePaperForward';
 const CRYPTO_TESTNET_SYMBOLS: any[] = [
   {
     symbol: 'BTCUSDT',
@@ -2485,6 +2486,39 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
     min_signal_score: 0.66,
     long_min_signal_score: 0.66,
     blind_test: { test_net_pnl_usd: 14.68, profit_factor: 1.33, policy: '1h long_only' },
+  },
+  {
+    symbol: 'DOGEUSDT',
+    name: 'Dogecoin USDT Perpetual',
+    asset_class: 'crypto_perp',
+    cadence: '1h',
+    route: 'doge_v3_32_microstructure_1h_long_online_paper',
+    route_status: 'main',
+    side_policy: 'long_only',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'blocked_no_short_blind_pass',
+    strategy_family: 'v3_30_doge_microstructure_forward',
+    market_data_source: 'binance_futures_public',
+    exchange_tradeable: true,
+    quantity_precision: 0,
+    min_signal_score: 0.66,
+    long_min_signal_score: 0.66,
+    estimated_spread_bps: 8.0,
+    default_holding_minutes: 120,
+    blind_test: {
+      version: 'HFCD_Trading_V3_30_CryptoCandidateMicrostructureBlind',
+      policy: 'DOGEUSDT 1h long_only + aggTrade/L2/forceOrder microstructure',
+      train_trades: 11,
+      train_net_pnl_usd: 13.9494,
+      train_profit_factor: 1.424396,
+      validation_trades: 15,
+      validation_net_pnl_usd: 103.6154,
+      validation_profit_factor: 2.657783,
+      test_trades: 10,
+      test_net_pnl_usd: 23.0464,
+      test_profit_factor: 1.921882,
+      test_win_rate: 0.5,
+    },
   },
   {
     symbol: 'SPY',
@@ -2644,6 +2678,138 @@ const CRYPTO_TESTNET_SYMBOLS: any[] = [
       test_net_pnl_usd: 15.6213,
       test_profit_factor: 4.994495,
       test_win_rate: 0.666667,
+    },
+  },
+  {
+    symbol: 'AMZN',
+    name: 'Amazon',
+    asset_class: 'single_stock',
+    cadence: '1h',
+    route: 'amzn_stock_v1_7_1h_short_online_paper',
+    route_status: 'main',
+    side_policy: 'short_only',
+    validated_side_policy: 'short_only',
+    short_policy_status: 'stock_v1_7_online_paper_candidate',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.62,
+    short_min_signal_score: 0.62,
+    estimated_spread_bps: 2.5,
+    default_holding_minutes: 120,
+    max_event_risk: 0.76,
+    sector_symbol: 'QQQ',
+    blind_test: {
+      version: 'HFCD_Stock_V1_7_UniverseExpansionBlind',
+      policy: 'AMZN 1h short_only',
+      train_trades: 6,
+      train_net_pnl_usd: 29.0191,
+      train_profit_factor: 2.73125,
+      validation_trades: 3,
+      validation_net_pnl_usd: 22.2315,
+      validation_profit_factor: 7.556253,
+      test_trades: 3,
+      test_net_pnl_usd: 10.7421,
+      test_profit_factor: 999,
+      test_win_rate: 1,
+    },
+  },
+  {
+    symbol: 'CRM',
+    name: 'Salesforce',
+    asset_class: 'single_stock',
+    cadence: '1h',
+    route: 'crm_stock_v1_7_1h_long_online_paper',
+    route_status: 'main',
+    side_policy: 'long_only',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'blocked_no_short_blind_pass',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.60,
+    long_min_signal_score: 0.60,
+    estimated_spread_bps: 3.0,
+    default_holding_minutes: 120,
+    max_event_risk: 0.76,
+    sector_symbol: 'XLK',
+    blind_test: {
+      version: 'HFCD_Stock_V1_7_UniverseExpansionBlind',
+      policy: 'CRM 1h long_only',
+      train_trades: 7,
+      train_net_pnl_usd: 40.7597,
+      train_profit_factor: 2.193774,
+      validation_trades: 3,
+      validation_net_pnl_usd: 11.3038,
+      validation_profit_factor: 1.638559,
+      test_trades: 3,
+      test_net_pnl_usd: 18.8478,
+      test_profit_factor: 2.356606,
+      test_win_rate: 0.666667,
+    },
+  },
+  {
+    symbol: 'AMD',
+    name: 'Advanced Micro Devices',
+    asset_class: 'single_stock',
+    cadence: '2h',
+    route: 'amd_stock_v1_7_2h_long_online_paper',
+    route_status: 'main',
+    side_policy: 'long_only',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'blocked_no_short_blind_pass',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.64,
+    long_min_signal_score: 0.64,
+    estimated_spread_bps: 3.5,
+    default_holding_minutes: 120,
+    max_event_risk: 0.76,
+    sector_symbol: 'SOXX',
+    blind_test: {
+      version: 'HFCD_Stock_V1_7_UniverseExpansionBlind',
+      policy: 'AMD 2h long_only',
+      train_trades: 7,
+      train_net_pnl_usd: 62.7904,
+      train_profit_factor: 1.940791,
+      validation_trades: 3,
+      validation_net_pnl_usd: 27.7361,
+      validation_profit_factor: 5.627284,
+      test_trades: 3,
+      test_net_pnl_usd: 129.9303,
+      test_profit_factor: 999,
+      test_win_rate: 1,
+    },
+  },
+  {
+    symbol: 'MU',
+    name: 'Micron',
+    asset_class: 'single_stock',
+    cadence: '2h',
+    route: 'mu_stock_v1_7_2h_long_online_paper',
+    route_status: 'main',
+    side_policy: 'long_only',
+    validated_side_policy: 'long_only',
+    short_policy_status: 'blocked_no_short_blind_pass',
+    market_data_source: 'yahoo_chart',
+    exchange_tradeable: false,
+    min_signal_score: 0.60,
+    long_min_signal_score: 0.60,
+    estimated_spread_bps: 3.5,
+    default_holding_minutes: 120,
+    max_event_risk: 0.76,
+    sector_symbol: 'SOXX',
+    blind_test: {
+      version: 'HFCD_Stock_V1_7_UniverseExpansionBlind',
+      policy: 'MU 2h long_only',
+      train_trades: 6,
+      train_net_pnl_usd: 163.466,
+      train_profit_factor: 6.459722,
+      validation_trades: 3,
+      validation_net_pnl_usd: 57.7968,
+      validation_profit_factor: 6.971443,
+      test_trades: 4,
+      test_net_pnl_usd: 152.2049,
+      test_profit_factor: 12.881053,
+      test_win_rate: 0.75,
     },
   },
 ];
@@ -4060,12 +4226,13 @@ function cryptoScopedRequestBody(url: URL, body: any = {}, currentConfig: any = 
     return {
       ...scoped,
       order_execution: 'paper',
-      side_policy: 'both',
+      side_policy: bodyHasValue(scoped, 'side_policy') ? String(scoped.side_policy) : currentConfig?.side_policy || 'both',
       allow_short: true,
-      max_open_positions: scoped.max_open_positions || currentConfig?.max_open_positions || 3,
-      max_symbol_positions: scoped.max_symbol_positions || currentConfig?.max_symbol_positions || 1,
-      min_signal_score: currentConfig?.min_signal_score || scoped.min_signal_score || 0.60,
-      max_holding_minutes: currentConfig?.max_holding_minutes || scoped.max_holding_minutes || 120,
+      max_open_positions: bodyHasValue(scoped, 'max_open_positions') ? scoped.max_open_positions : currentConfig?.max_open_positions || 3,
+      max_symbol_positions: bodyHasValue(scoped, 'max_symbol_positions') ? scoped.max_symbol_positions : currentConfig?.max_symbol_positions || 1,
+      min_signal_score: bodyHasValue(scoped, 'min_signal_score') ? scoped.min_signal_score : currentConfig?.min_signal_score || 0.60,
+      max_holding_minutes: bodyHasValue(scoped, 'max_holding_minutes') ? scoped.max_holding_minutes : currentConfig?.max_holding_minutes || 120,
+      testnet_close_all_on_stop: false,
     };
   }
   return scoped;
@@ -4167,9 +4334,9 @@ function cryptoRoutesForScope(assetScope = 'all') {
 
 function cryptoRouteSetForScope(assetScope = 'all') {
   const scope = String(assetScope || 'all');
-  if (scope === 'stock') return 'stock_v1_4_bigtech_long_short';
-  if (scope === 'non_stock') return 'crypto_etf_routes';
-  return 'crypto_etf_routes_plus_stock_v1_4_bigtech';
+  if (scope === 'stock') return 'stock_v1_7_universe_expansion';
+  if (scope === 'non_stock') return 'crypto_etf_routes_v3_32_doge';
+  return 'crypto_etf_routes_v3_32_doge_plus_stock_v1_7_universe';
 }
 
 function cryptoRouteIsExchangeTradeable(symbol: string) {
@@ -4185,6 +4352,7 @@ function cryptoRouteCadenceMinutes(cadence?: string) {
 
 function cryptoRoutePriceDigits(symbol: string) {
   if (symbol === 'BTCUSDT') return 2;
+  if (symbol === 'DOGEUSDT') return 5;
   if (symbol.endsWith('USDT')) return 3;
   return 4;
 }
@@ -4195,6 +4363,8 @@ function fallbackCryptoSeries(symbol: string) {
     ? 82_000
     : symbol === 'SOLUSDT'
       ? 145
+      : symbol === 'DOGEUSDT'
+        ? 0.11
       : symbol === 'SPY'
         ? 720
         : symbol === 'QQQ'
@@ -4205,17 +4375,26 @@ function fallbackCryptoSeries(symbol: string) {
               ? 520
               : symbol === 'AAPL'
                 ? 200
-                : symbol === 'TSLA'
-                  ? 180
-                  : symbol === 'NVDA'
-                    ? 120
-                    : 2_400;
+              : symbol === 'TSLA'
+                ? 180
+                : symbol === 'NVDA'
+                  ? 120
+                  : symbol === 'AMZN'
+                    ? 190
+                    : symbol === 'CRM'
+                      ? 250
+                      : symbol === 'AMD'
+                        ? 160
+                        : symbol === 'MU'
+                          ? 130
+                          : 2_400;
   const now = Date.now();
   const cadenceMs = cryptoRouteCadenceMinutes(meta.cadence) * 60000;
   const rows = Array.from({ length: 160 }, (_, index) => {
     const t = now - (159 - index) * cadenceMs;
     const wave = Math.sin(t / 7200000 + symbol.length) * 0.012 + Math.sin(t / 86400000) * 0.025;
-    return { ts: new Date(t).toISOString(), close: Number((base * (1 + wave)).toFixed(cryptoRoutePriceDigits(symbol))), volume: 0 };
+    const close = Number((base * (1 + wave)).toFixed(cryptoRoutePriceDigits(symbol)));
+    return { ts: new Date(t).toISOString(), open: close, high: close, low: close, close, volume: 0 };
   });
   return {
     ...meta,
@@ -4240,6 +4419,112 @@ async function fetchBinanceJson(url: string) {
   });
   if (!response.ok) throw new Error(`Binance ${response.status}`);
   return response.json();
+}
+
+function cryptoSensorClamp(value: number, min = -1, max = 1) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(min, Math.min(max, value));
+}
+
+async function fetchCryptoAggTradeSensors(symbol: string) {
+  try {
+    const trades = await fetchBinanceJson(`https://fapi.binance.com/fapi/v1/aggTrades?symbol=${symbol}&limit=1000`);
+    let buyUsd = 0;
+    let sellUsd = 0;
+    for (const trade of Array.isArray(trades) ? trades : []) {
+      const usd = Number(trade.p || 0) * Number(trade.q || 0);
+      if (!Number.isFinite(usd) || usd <= 0) continue;
+      if (trade.m) sellUsd += usd;
+      else buyUsd += usd;
+    }
+    const total = buyUsd + sellUsd;
+    return {
+      agg_trade_coverage: total > 0 ? 1 : 0,
+      agg_trade_count: Array.isArray(trades) ? trades.length : 0,
+      agg_buy_usd: Number(buyUsd.toFixed(2)),
+      agg_sell_usd: Number(sellUsd.toFixed(2)),
+      agg_trade_usd: Number(total.toFixed(2)),
+      agg_imbalance: Number((total > 0 ? (buyUsd - sellUsd) / total : 0).toFixed(6)),
+      agg_source_status: total > 0 ? 'binance_futures_aggTrades_recent' : 'empty',
+    };
+  } catch (error) {
+    return {
+      agg_trade_coverage: 0,
+      agg_trade_count: 0,
+      agg_buy_usd: 0,
+      agg_sell_usd: 0,
+      agg_trade_usd: 0,
+      agg_imbalance: 0,
+      agg_source_status: error instanceof Error ? `unavailable:${error.message}` : 'unavailable',
+    };
+  }
+}
+
+function coinalyzeSymbol(symbol: string) {
+  return `${symbol}_PERP.A`;
+}
+
+async function fetchCoinalyzeBsigmas(env: Env | undefined, symbol: string) {
+  const key = String(env?.COINALYZE_API_KEY || '').trim();
+  if (!key) {
+    return {
+      b_sigma_coverage: 0,
+      b_sigma_available: false,
+      b_sigma_source_status: 'coinalyze_key_not_configured',
+      b_sigma_long_score: 0,
+      b_sigma_short_score: 0,
+      b_sigma_total_score: 0,
+      liquidation_long_usd_24h: 0,
+      liquidation_short_usd_24h: 0,
+    };
+  }
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - 24 * 3600;
+  const qs = new URLSearchParams({
+    symbols: coinalyzeSymbol(symbol),
+    interval: '5min',
+    from: String(from),
+    to: String(to),
+    convert_to_usd: 'true',
+  });
+  try {
+    const response = await fetch(`https://api.coinalyze.net/v1/liquidation-history?${qs.toString()}`, {
+      headers: { accept: 'application/json', api_key: key, 'user-agent': 'HFCD-ThingNature-OS/1.0' },
+    });
+    if (!response.ok) throw new Error(`Coinalyze ${response.status}`);
+    const data: any = await response.json();
+    const history = Array.isArray(data) ? (data[0]?.history || []) : [];
+    let longUsd = 0;
+    let shortUsd = 0;
+    for (const row of history) {
+      longUsd += Math.max(0, Number(row.l || row.long || row.long_liq_usd || 0));
+      shortUsd += Math.max(0, Number(row.s || row.short || row.short_liq_usd || 0));
+    }
+    const total = longUsd + shortUsd;
+    const signed = total > 0 ? (shortUsd - longUsd) / total : 0;
+    const totalScore = cryptoSensorClamp(Math.log1p(total) / Math.log1p(1_000_000), 0, 1);
+    return {
+      b_sigma_coverage: total > 0 ? 1 : 0,
+      b_sigma_available: total > 0,
+      b_sigma_source_status: total > 0 ? 'coinalyze_liquidation_history_24h' : 'coinalyze_empty_24h',
+      b_sigma_long_score: Number((Math.max(0, signed) * totalScore).toFixed(6)),
+      b_sigma_short_score: Number((Math.max(0, -signed) * totalScore).toFixed(6)),
+      b_sigma_total_score: Number(totalScore.toFixed(6)),
+      liquidation_long_usd_24h: Number(longUsd.toFixed(2)),
+      liquidation_short_usd_24h: Number(shortUsd.toFixed(2)),
+    };
+  } catch (error) {
+    return {
+      b_sigma_coverage: 0,
+      b_sigma_available: false,
+      b_sigma_source_status: error instanceof Error ? `coinalyze_unavailable:${error.message}` : 'coinalyze_unavailable',
+      b_sigma_long_score: 0,
+      b_sigma_short_score: 0,
+      b_sigma_total_score: 0,
+      liquidation_long_usd_24h: 0,
+      liquidation_short_usd_24h: 0,
+    };
+  }
 }
 
 async function fetchShortvolYahooSeries(meta: any) {
@@ -4298,19 +4583,24 @@ async function fetchShortvolYahooSeries(meta: any) {
   }
 }
 
-async function fetchCryptoTestnetSeries(symbol: string) {
+async function fetchCryptoTestnetSeries(symbol: string, env?: Env) {
   const meta = cryptoRouteMeta(symbol);
   if (meta.market_data_source === 'yahoo_chart') return fetchShortvolYahooSeries(meta);
   try {
     const interval = meta.cadence || '1h';
-    const [klines, premium, openInterest, depth] = await Promise.all([
+    const [klines, premium, openInterest, depth, aggSensors, bSigmaSensors] = await Promise.all([
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=160`),
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`),
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`),
       fetchBinanceJson(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=20`),
+      fetchCryptoAggTradeSensors(symbol),
+      fetchCoinalyzeBsigmas(env, symbol),
     ]);
     const rows = (Array.isArray(klines) ? klines : []).map((row: any[]) => ({
       ts: new Date(Number(row[0])).toISOString(),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
       close: Number(row[4]),
       volume: Number(row[5] || 0),
     })).filter((row: any) => Number.isFinite(row.close) && row.close > 0);
@@ -4319,6 +4609,10 @@ async function fetchCryptoTestnetSeries(symbol: string) {
     const askDepth = (depth?.asks || []).reduce((sum: number, row: any[]) => sum + Number(row[0]) * Number(row[1]), 0);
     const bestBid = Number(depth?.bids?.[0]?.[0] || rows[rows.length - 1].close);
     const bestAsk = Number(depth?.asks?.[0]?.[0] || rows[rows.length - 1].close);
+    const depthTotal = bidDepth + askDepth;
+    const depthImbalance = depthTotal > 0 ? (bidDepth - askDepth) / depthTotal : 0;
+    const longCavityScore = cryptoSensorClamp(0.5 + depthImbalance / 2, 0, 1);
+    const shortCavityScore = cryptoSensorClamp(0.5 - depthImbalance / 2, 0, 1);
     return {
       ...meta,
       source: `binance_futures_public:${symbol}:${interval}`,
@@ -4332,12 +4626,17 @@ async function fetchCryptoTestnetSeries(symbol: string) {
         open_interest: Number(openInterest?.openInterest || 0),
         bid_depth_usd: Number(bidDepth.toFixed(2)),
         ask_depth_usd: Number(askDepth.toFixed(2)),
-        depth_imbalance: Number(((bidDepth - askDepth) / Math.max(bidDepth + askDepth, 1)).toFixed(6)),
+        depth_imbalance: Number(depthImbalance.toFixed(6)),
+        l2_coverage: depthTotal > 0 ? 1 : 0,
+        l2_side_cavity_thin_score_long: Number(longCavityScore.toFixed(6)),
+        l2_side_cavity_thin_score_short: Number(shortCavityScore.toFixed(6)),
         best_bid: bestBid,
         best_ask: bestAsk,
         spread_bps: Number((((bestAsk - bestBid) / Math.max((bestAsk + bestBid) / 2, 1)) * 10000).toFixed(4)),
         exchange_tradeable: true,
         execution_venue: 'binance_futures_testnet_or_paper',
+        ...aggSensors,
+        ...bSigmaSensors,
       },
     };
   } catch {
@@ -4359,6 +4658,7 @@ async function fetchStockForwardSensorContext() {
     { symbol: 'SPY', name: 'SPY', cadence: '1h', estimated_spread_bps: 1.5, market_data_source: 'yahoo_chart' },
     { symbol: 'QQQ', name: 'QQQ', cadence: '1h', estimated_spread_bps: 1.8, market_data_source: 'yahoo_chart' },
     { symbol: 'XLK', name: 'Technology Sector ETF', cadence: '1h', estimated_spread_bps: 2.0, market_data_source: 'yahoo_chart' },
+    { symbol: 'SOXX', name: 'Semiconductor Sector ETF', cadence: '1h', estimated_spread_bps: 2.4, market_data_source: 'yahoo_chart' },
     { symbol: '^VIX', name: 'VIX', cadence: '1h', estimated_spread_bps: 0.0, market_data_source: 'yahoo_chart' },
   ];
   const rows = await Promise.all(sensorMetas.map((meta) => fetchShortvolYahooSeries(meta).catch(() => null)));
@@ -4369,6 +4669,8 @@ async function fetchStockForwardSensorContext() {
     qqq_ret_1: seriesReturn(bySymbol.QQQ, 1),
     xlk_ret_1: seriesReturn(bySymbol.XLK, 1),
     xlk_ret_4: seriesReturn(bySymbol.XLK, 4),
+    soxx_ret_1: seriesReturn(bySymbol.SOXX, 1),
+    soxx_ret_4: seriesReturn(bySymbol.SOXX, 4),
     vix_ret_1: seriesReturn(bySymbol['^VIX'], 1),
     vix_ret_4: seriesReturn(bySymbol['^VIX'], 4),
     sensors: bySymbol,
@@ -4387,8 +4689,199 @@ function stockEventRiskFromTimestamp(ts: string, context: any) {
   return Math.min(1, openRisk + closeRisk + marketShock + vixShock);
 }
 
-function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66, stockContext: any = null) {
+function meanLast(values: number[], bars: number) {
+  const arr = values.slice(Math.max(0, values.length - bars)).filter((value) => Number.isFinite(value));
+  return arr.length ? arr.reduce((sum, value) => sum + value, 0) / arr.length : 0;
+}
+
+function stdLast(values: number[], bars: number) {
+  const arr = values.slice(Math.max(0, values.length - bars)).filter((value) => Number.isFinite(value));
+  if (arr.length < 2) return 0;
+  const m = arr.reduce((sum, value) => sum + value, 0) / arr.length;
+  return Math.sqrt(arr.reduce((sum, value) => sum + (value - m) ** 2, 0) / (arr.length - 1));
+}
+
+function atrPctLast(rows: any[], bars: number) {
+  const trs: number[] = [];
+  for (let i = Math.max(1, rows.length - bars); i < rows.length; i += 1) {
+    const row = rows[i];
+    const prev = rows[i - 1];
+    const high = Number(row.high || row.close || 0);
+    const low = Number(row.low || row.close || 0);
+    const prevClose = Number(prev.close || row.close || 0);
+    const tr = Math.max(Math.abs(high - low), Math.abs(high - prevClose), Math.abs(low - prevClose));
+    if (Number.isFinite(tr)) trs.push(tr);
+  }
+  const last = Number(rows[rows.length - 1]?.close || 0);
+  const atr = trs.length ? trs.reduce((sum, value) => sum + value, 0) / trs.length : 0;
+  return last > 0 ? atr / last : 0;
+}
+
+function buildDogeV332Signal(series: any, minSignalScore = 0.66, marketContext: any = {}) {
   const meta = cryptoRouteMeta(series.symbol);
+  const rows = series.rows || [];
+  const btcRows = marketContext?.BTCUSDT?.rows || [];
+  const latestTs = rows[rows.length - 1]?.ts || energyIso();
+  const price = Number((series.sensors?.mark_price || rows[rows.length - 1]?.close || 0).toFixed(cryptoRoutePriceDigits(series.symbol)));
+  const bestBid = Number(series.sensors?.best_bid || price);
+  const bestAsk = Number(series.sensors?.best_ask || price);
+  const base = {
+    signal_id: `DOGE-V3-32-${Math.floor(new Date(latestTs).getTime() / 3600000)}`,
+    captured_at: latestTs,
+    symbol: series.symbol,
+    name: series.name,
+    asset_class: meta.asset_class || 'crypto_perp',
+    route: series.route,
+    cadence: series.cadence,
+    route_status: meta.route_status || 'main',
+    route_side_policy: meta.side_policy || 'long_only',
+    validated_side_policy: meta.validated_side_policy || meta.side_policy || 'long_only',
+    short_policy_status: meta.short_policy_status || '',
+    signal_validation_status: 'v3_30_train_validation_test_passed_forward_shadow_and_online_paper',
+    execution_venue: series.sensors?.execution_venue || 'binance_futures_testnet_or_paper',
+    exchange_tradeable: Boolean(meta.exchange_tradeable),
+    blind_test: meta.blind_test || null,
+    price,
+    bid_price: bestBid,
+    ask_price: bestAsk,
+    spread_bps: Number(series.sensors?.spread_bps || 0),
+    funding_rate: Number(series.sensors?.funding_rate || 0),
+    open_interest: Number(series.sensors?.open_interest || 0),
+    bid_depth_usd: Number(series.sensors?.bid_depth_usd || 0),
+    ask_depth_usd: Number(series.sensors?.ask_depth_usd || 0),
+    depth_imbalance: Number(series.sensors?.depth_imbalance || 0),
+    agg_trade_coverage: Number(series.sensors?.agg_trade_coverage || 0),
+    agg_trade_usd: Number(series.sensors?.agg_trade_usd || 0),
+    agg_imbalance: Number(series.sensors?.agg_imbalance || 0),
+    l2_coverage: Number(series.sensors?.l2_coverage || 0),
+    l2_side_cavity_thin_score_long: Number(series.sensors?.l2_side_cavity_thin_score_long || 0),
+    b_sigma_coverage: Number(series.sensors?.b_sigma_coverage || 0),
+    b_sigma_available: Boolean(series.sensors?.b_sigma_available),
+    b_sigma_source_status: series.sensors?.b_sigma_source_status || 'unknown',
+    b_sigma_long_score: Number(series.sensors?.b_sigma_long_score || 0),
+    b_sigma_short_score: Number(series.sensors?.b_sigma_short_score || 0),
+    b_sigma_total_score: Number(series.sensors?.b_sigma_total_score || 0),
+    liquidation_long_usd_24h: Number(series.sensors?.liquidation_long_usd_24h || 0),
+    liquidation_short_usd_24h: Number(series.sensors?.liquidation_short_usd_24h || 0),
+    head_version: CRYPTO_TESTNET_VERSION,
+    head_status: 'v3_32_doge_online_paper_forward',
+    holding_minutes: Number(meta.default_holding_minutes || 120),
+    stop_loss_pct: 0.018,
+    take_profit_pct: 0.036,
+    source: series.source,
+    source_quality: series.source_quality,
+    is_real_market_data: Boolean(series.is_real_market_data),
+  };
+  if (rows.length < 40 || btcRows.length < 8 || !price) {
+    return {
+      ...base,
+      raw_action: 'NO_TRADE',
+      action: 'NO_TRADE',
+      side: '-',
+      score: 0,
+      signed_score: 0,
+      confidence: 0,
+      realized_vol: 0,
+      expected_return: 0,
+      expected_future_price: price,
+      forecast_edge_gate: forecastEdgeGate({ side: 'flat', current_value: price || 1, expected_future_value: price || 1 }),
+      forecast_edge_mode: 'promoted_gate',
+      forecast_edge_pct: 0,
+      position_multiplier: 0,
+      status: 'rejected',
+      reject_reason: 'DOGEUSDT V3.32 行情行数不足，跳过。',
+    };
+  }
+  const closes = rows.map((row: any) => Number(row.close || 0));
+  const vols = rows.map((row: any) => Number(row.volume || 0));
+  const btcCloses = btcRows.map((row: any) => Number(row.close || 0));
+  const pv = rows.map((row: any) => Number(row.close || 0) * Number(row.volume || 0));
+  const macroVwap = meanLast(pv, 4) / Math.max(meanLast(vols, 4), 1e-9);
+  const macroDelta = macroVwap > 0 ? price / macroVwap - 1 : 0;
+  const momentum = closes.length > 2 && closes[closes.length - 3] > 0 ? price / closes[closes.length - 3] - 1 : 0;
+  const btcMacro = meanLast(btcCloses.slice(-4), 4);
+  const btcDelta = btcMacro > 0 ? btcCloses[btcCloses.length - 1] / btcMacro - 1 : 0;
+  const rets = closes.slice(-12).map((value: number, index: number, arr: number[]) => index === 0 || arr[index - 1] <= 0 ? 0 : value / arr[index - 1] - 1).slice(1);
+  const realizedVol = Math.max(stdLast(rets, 12), 0.0015);
+  const atrPct = Math.max(atrPctLast(rows, 4), 0.001);
+  const volumeRatio = meanLast(vols, 2) / Math.max(meanLast(vols, 12), 1);
+  const expectedMovePct = hfcdClamp(
+    atrPct * 3.6 * 0.35 + Math.abs(macroDelta) * 0.25 + Math.abs(momentum) * 0.35 + Math.max(0, volumeRatio - 1) * 0.0006,
+    0,
+    0.05,
+  );
+  const expectedReturn = expectedMovePct;
+  const expectedFuturePrice = price * (1 + expectedReturn);
+  const forecastEdge = forecastEdgeGate({
+    asset: series.symbol,
+    mode: 'price',
+    current_value: price,
+    expected_future_value: expectedFuturePrice,
+    side: 'long',
+    fee_rate: CRYPTO_TESTNET_FEE_RATE,
+    spread_bps: Number(series.sensors?.spread_bps || meta.estimated_spread_bps || 0),
+    slippage_bps: Number(meta.estimated_spread_bps || 8),
+    realized_vol: realizedVol,
+    vol_multiplier: 0.35,
+    risk_buffer_pct: Math.abs(Number(series.sensors?.funding_rate || 0)) * 2.5,
+    min_edge_pct: 0.0006,
+    max_multiplier: 1.65,
+  });
+  const microReject = Number(series.sensors?.agg_trade_coverage || 0) <= 0
+    ? 'aggTrade 覆盖缺失'
+    : Number(series.sensors?.agg_imbalance || 0) <= 0
+      ? 'aggTrade 主动买压未对齐'
+      : Number(series.sensors?.l2_coverage || 0) <= 0
+        ? 'L2 depth 覆盖缺失'
+        : Number(series.sensors?.l2_side_cavity_thin_score_long || 0) < 0.44
+          ? 'L2 前方腔体不够薄'
+          : '';
+  const passesLineage = macroDelta > 0.0035 && momentum > 0 && btcDelta >= -0.001;
+  const rawAction = passesLineage ? 'BUY_LONG' : 'NO_TRADE';
+  const action = rawAction === 'BUY_LONG' && !microReject && forecastEdge.ok ? 'BUY_LONG' : 'NO_TRADE';
+  const score = action === 'BUY_LONG'
+    ? cryptoClamp(0.58 + Number(forecastEdge.forecast_edge_pct || 0) * 45 + macroDelta * 20 + Math.abs(momentum) * 10, 0, 0.99)
+    : cryptoClamp(0.30 + Math.abs(macroDelta) * 10 + Math.abs(momentum) * 4, 0, 0.65);
+  return {
+    ...base,
+    raw_action: rawAction,
+    action,
+    side: action === 'BUY_LONG' ? 'long' : '-',
+    score: Number(score.toFixed(4)),
+    signed_score: Number((macroDelta + momentum * 0.5).toFixed(4)),
+    confidence: Number(cryptoClamp(0.48 + score * 0.35, 0, 0.92).toFixed(4)),
+    realized_vol: Number(realizedVol.toFixed(6)),
+    expected_return: Number(expectedReturn.toFixed(6)),
+    expected_future_price: Number(expectedFuturePrice.toFixed(cryptoRoutePriceDigits(series.symbol))),
+    forecast_edge_gate: forecastEdge,
+    forecast_edge_mode: 'promoted_gate',
+    forecast_edge_pct: forecastEdge.forecast_edge_pct,
+    position_multiplier: forecastEdge.position_multiplier,
+    stock_event_risk: 0,
+    sector_ret_1: 0,
+    market_ret_1: 0,
+    vix_ret_1: 0,
+    r1: seriesReturn(series, 1),
+    r3: seriesReturn(series, 3),
+    r12: seriesReturn(series, 12),
+    r48: seriesReturn(series, 48),
+    macro_delta: Number(macroDelta.toFixed(6)),
+    btc_macro_delta: Number(btcDelta.toFixed(6)),
+    momentum_2h: Number(momentum.toFixed(6)),
+    volume_recent: Number(series.sensors?.agg_trade_usd || 0),
+    volume_notional_proxy: Number(series.sensors?.agg_trade_usd || 0),
+    status: action === 'NO_TRADE' ? 'rejected' : 'accepted',
+    reject_reason: action === 'NO_TRADE'
+      ? (microReject || (!passesLineage ? 'DOGEUSDT V3.32 主血统条件未触发' : forecastEdge.reason || '预测边际不足'))
+      : (Number(series.sensors?.b_sigma_coverage || 0) > 0 ? '' : 'Bσ 实时覆盖缺失；本轮仍按 forward paper 记录，后续需配置 Coinalyze secret 提升风控。'),
+  };
+}
+
+function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66, stockContext: any = null, marketContext: any = {}) {
+  const meta = cryptoRouteMeta(series.symbol);
+  if (meta.strategy_family === 'v3_30_doge_microstructure_forward') {
+    return buildDogeV332Signal(series, minSignalScore, marketContext);
+  }
   const rows = series.rows || [];
   const closes = rows.map((row: any) => Number(row.close)).filter((value: number) => Number.isFinite(value) && value > 0);
   const volumes = rows.map((row: any) => Number(row.volume || 0));
@@ -4415,7 +4908,15 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66, stockConte
   const isStockForwardRoute = meta.asset_class === 'single_stock';
   const stockSectorSymbol = String(meta.sector_symbol || 'XLK');
   const sectorRet = isStockForwardRoute
-    ? Number(stockSectorSymbol === 'QQQ' ? stockContext?.qqq_ret_1 || 0 : stockContext?.xlk_ret_1 || 0)
+    ? Number(
+      stockSectorSymbol === 'QQQ'
+        ? stockContext?.qqq_ret_1 || 0
+        : stockSectorSymbol === 'SOXX'
+          ? stockContext?.soxx_ret_1 || 0
+          : stockSectorSymbol === 'SPY'
+            ? stockContext?.spy_ret_1 || 0
+            : stockContext?.xlk_ret_1 || 0,
+    )
     : 0;
   const marketRet = isStockForwardRoute ? Number(stockContext?.spy_ret_1 || 0) : 0;
   const vixRet = isStockForwardRoute ? Number(stockContext?.vix_ret_1 || 0) : 0;
@@ -4518,6 +5019,16 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66, stockConte
     bid_depth_usd: Number(series.sensors?.bid_depth_usd || 0),
     ask_depth_usd: Number(series.sensors?.ask_depth_usd || 0),
     depth_imbalance: depthImbalance,
+    agg_trade_coverage: Number(series.sensors?.agg_trade_coverage || 0),
+    agg_trade_usd: Number(series.sensors?.agg_trade_usd || 0),
+    agg_imbalance: Number(series.sensors?.agg_imbalance || 0),
+    l2_coverage: Number(series.sensors?.l2_coverage || 0),
+    b_sigma_coverage: Number(series.sensors?.b_sigma_coverage || 0),
+    b_sigma_available: Boolean(series.sensors?.b_sigma_available),
+    b_sigma_source_status: series.sensors?.b_sigma_source_status || '',
+    b_sigma_long_score: Number(series.sensors?.b_sigma_long_score || 0),
+    b_sigma_short_score: Number(series.sensors?.b_sigma_short_score || 0),
+    b_sigma_total_score: Number(series.sensors?.b_sigma_total_score || 0),
     volume_recent: Number(series.sensors?.volume_recent || volumeRecent || 0),
     volume_notional_proxy: Number(series.sensors?.volume_notional_proxy || 0),
     head_version: CRYPTO_TESTNET_VERSION,
@@ -4534,19 +5045,20 @@ function buildCryptoTestnetSignal(series: any, minSignalScore = 0.66, stockConte
   };
 }
 
-async function buildCryptoTestnetSnapshot(minSignalScore = 0.66, assetScope = 'all') {
+async function buildCryptoTestnetSnapshot(minSignalScore = 0.66, assetScope = 'all', env?: Env) {
   const routes = cryptoRoutesForScope(assetScope);
   const needsStockSensors = routes.some((row) => row.asset_class === 'single_stock');
   const [seriesList, stockContext] = await Promise.all([
-    Promise.all(routes.map((row) => fetchCryptoTestnetSeries(row.symbol))),
+    Promise.all(routes.map((row) => fetchCryptoTestnetSeries(row.symbol, env))),
     needsStockSensors ? fetchStockForwardSensorContext() : Promise.resolve(null),
   ]);
-  const signals = seriesList.map((series) => buildCryptoTestnetSignal(series, minSignalScore, stockContext));
+  const marketContext = Object.fromEntries(seriesList.map((series: any) => [series.symbol, series]));
+  const signals = seriesList.map((series) => buildCryptoTestnetSignal(series, minSignalScore, stockContext, marketContext));
   return {
     generated_at: energyIso(),
     source_status: signals.every((signal) => signal.is_real_market_data) ? 'public_realtime_mixed_binance_yahoo' : 'mixed_or_fallback',
     order_mode: 'online_paper_ledger_with_binance_demo_for_crypto_only',
-    main_side_policy: 'route_level_long_short_permission_with_stock_v1_4_bigtech',
+    main_side_policy: 'route_level_long_short_permission_with_stock_v1_7_universe',
     route_set: cryptoRouteSetForScope(assetScope),
     stock_sensor_status: stockContext?.source_status || 'not_required',
     selected_routes: routes.map((row) => ({
@@ -4573,15 +5085,25 @@ async function buildCryptoTestnetSnapshot(minSignalScore = 0.66, assetScope = 'a
       bid_depth_usd: signal.bid_depth_usd,
       ask_depth_usd: signal.ask_depth_usd,
       depth_imbalance: signal.depth_imbalance,
+      agg_trade_coverage: signal.agg_trade_coverage,
+      agg_trade_usd: signal.agg_trade_usd,
+      agg_imbalance: signal.agg_imbalance,
+      l2_coverage: signal.l2_coverage,
+      b_sigma_coverage: signal.b_sigma_coverage,
+      b_sigma_available: signal.b_sigma_available,
+      b_sigma_source_status: signal.b_sigma_source_status,
+      b_sigma_long_score: signal.b_sigma_long_score,
+      b_sigma_short_score: signal.b_sigma_short_score,
+      b_sigma_total_score: signal.b_sigma_total_score,
       spread_bps: signal.spread_bps,
       forecast_edge_pct: signal.forecast_edge_pct,
       forecast_edge_gate: signal.forecast_edge_gate,
-      stock_event_risk: signal.stock_event_risk,
-      sector_ret_1: signal.sector_ret_1,
-      market_ret_1: signal.market_ret_1,
-      vix_ret_1: signal.vix_ret_1,
-      volume_recent: signal.volume_recent,
-      volume_notional_proxy: signal.volume_notional_proxy,
+      stock_event_risk: (signal as any).stock_event_risk || 0,
+      sector_ret_1: (signal as any).sector_ret_1 || 0,
+      market_ret_1: (signal as any).market_ret_1 || 0,
+      vix_ret_1: (signal as any).vix_ret_1 || 0,
+      volume_recent: (signal as any).volume_recent || 0,
+      volume_notional_proxy: (signal as any).volume_notional_proxy || 0,
       source: signal.source,
       is_real_market_data: signal.is_real_market_data,
     })),
@@ -5121,7 +5643,7 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     reason: signal.exchange_tradeable
       ? (side === 'short' ? 'V3.1 短波动路线做空前向验证开仓' : 'V3.1 短波动路线按实时行情达标做多开仓')
       : signal.asset_class === 'single_stock'
-        ? 'Stock V1.4 股票线上模拟交易按真实行情达标开仓，不发送券商订单'
+        ? 'Stock V1.7 股票扩展池线上模拟交易按真实行情达标开仓，不发送券商订单'
         : 'ETF 通过路线只写线上模拟账本，不发送交易所订单',
   };
   await insertCryptoTestnetTrade(env, state.display_user_id || state.user_id, trade);
@@ -5344,7 +5866,7 @@ async function enforceCryptoPositionLimits(env: Env, state: any, signals: any[],
 }
 
 async function cryptoTestnetTickInternal(env: Env, state: any, forceClose = false, credentials?: BinanceTestnetCredentials | null) {
-  const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66), state.config?.asset_scope || 'all');
+  const snapshot = await buildCryptoTestnetSnapshot(Number(state.config?.min_signal_score || 0.66), state.config?.asset_scope || 'all', env);
   state.last_market_snapshot = {
     generated_at: snapshot.generated_at,
     source_status: snapshot.source_status,
@@ -5687,12 +6209,11 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       asset_scope: requestedScope,
       ...(requestedScope === 'stock' ? {
         order_execution: 'paper',
-        side_policy: 'both',
-        allow_short: true,
-        max_open_positions: 3,
-        max_symbol_positions: 1,
+        side_policy: state.config?.side_policy || 'both',
+        allow_short: state.config?.allow_short !== false,
         min_signal_score: state.config?.min_signal_score || 0.60,
         max_holding_minutes: state.config?.max_holding_minutes || 120,
+        testnet_close_all_on_stop: false,
       } : {}),
     });
   }
@@ -5723,11 +6244,11 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       real_exchange_orders: state.config?.order_execution === 'binance_testnet' && privateControl,
       private_exchange_control: privateControl,
       production_mainnet_orders: false,
-      realtime_source: dashboardAssetScope === 'stock' ? 'Yahoo Finance public chart for MSFT/TSLA/AAPL/SPY/QQQ/XLK/VIX' : 'Binance USD-M Futures public endpoints + Yahoo Finance public chart',
+      realtime_source: dashboardAssetScope === 'stock' ? 'Yahoo Finance public chart for MSFT/TSLA/AAPL/AMZN/CRM/AMD/MU/SPY/QQQ/XLK/SOXX/VIX' : 'Binance USD-M Futures public endpoints + Yahoo Finance public chart',
       note: dashboardAssetScope === 'stock'
-        ? '当前执行模式为股票线上模拟交易：MSFT 1h 做多、AAPL 1h 做多、TSLA 15m 做空，只写 longone D1 模拟账本，不向券商下单。'
+        ? '当前执行模式为股票线上模拟交易：MSFT/AAPL/CRM/AMD/MU 做多，TSLA/AMZN 做空，只写 longone D1 模拟账本，不向券商下单。'
         : state.config?.order_execution === 'binance_testnet'
-        ? '当前执行模式为 Binance Futures Demo/Testnet；仅 BTCUSDT/SOLUSDT 会向 demo-fapi.binance.com 发测试网订单，SPY/QQQ/IWM/MSFT/AAPL/TSLA 只写线上模拟账本。'
+        ? '当前执行模式为 Binance Futures Demo/Testnet；BTCUSDT/SOLUSDT/DOGEUSDT 可向 demo-fapi.binance.com 发测试网订单，SPY/QQQ/IWM/MSFT/AAPL/TSLA/AMZN/CRM/AMD/MU 只写线上模拟账本。'
         : '当前执行模式为 longone D1 线上模拟交易，只写模拟账本，不向交易所或券商发真实订单。',
     },
     history_policy: {
@@ -5744,7 +6265,7 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       pending_reverse_rule: '强反向先平旧仓并排队；下一 tick 第二次确认仍同向且通过物性/预测边际门，才允许开反向仓。',
       pending_reverse_orders: (state.pending_reverse_orders || []).slice(0, 20),
       forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted_blocking_gate' : 'shadow_audit_only',
-      stock_route: dashboardAssetScope === 'stock' ? 'MSFT 1h 做多 + AAPL 1h 做多 + TSLA 15m 做空线上模拟交易' : '股票路线在独立股票分区运行',
+      stock_route: dashboardAssetScope === 'stock' ? 'Stock V1.7 扩展股票池：MSFT/AAPL/CRM/AMD/MU 做多 + TSLA/AMZN 做空线上模拟交易' : '股票路线在独立股票分区运行',
     },
     ledger: {
       source: 'longone online Worker/D1',
@@ -5757,7 +6278,7 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       scheduler_last_tick_at: state.scheduler?.last_cron_tick_at || '',
       scheduler_last_market_latest_at: state.scheduler?.last_cron_market_latest_at || '',
       scheduler_last_stock_action: state.scheduler?.last_cron_stock_action || state.scheduler?.last_cron_msft_action || '',
-      stock_online_paper_route: 'MSFT 1h long + AAPL 1h long + TSLA 15m short',
+      stock_online_paper_route: 'Stock V1.7: MSFT/AAPL/CRM/AMD/MU long + TSLA/AMZN short',
       position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
       position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
       pending_reverse_orders: (state.pending_reverse_orders || []).slice(0, 20),
@@ -5988,7 +6509,9 @@ async function runCryptoTestnetScheduledTick(env: Env) {
         continue;
       }
       state.last_tick_at = energyIso();
-      const msftSignal = (tick.snapshot?.signals || []).find((signal: any) => signal.symbol === 'MSFT');
+      const stockSignals = (tick.snapshot?.signals || [])
+        .filter((signal: any) => signal.asset_class === 'single_stock')
+        .slice(0, 8);
       state.scheduler = {
         ...(state.scheduler || {}),
         enabled: true,
@@ -5999,8 +6522,9 @@ async function runCryptoTestnetScheduledTick(env: Env) {
         last_cron_closed: tick.closed,
         last_cron_adjusted: tick.adjusted,
         last_cron_market_latest_at: tick.snapshot?.generated_at || '',
-        last_cron_msft_action: msftSignal?.action || '',
-        last_cron_msft_reason: msftSignal?.reject_reason || '',
+        last_cron_stock_symbols: stockSignals.map((signal: any) => signal.symbol).join(','),
+        last_cron_stock_action: stockSignals.map((signal: any) => `${signal.symbol}:${signal.action}`).join(','),
+        last_cron_stock_reason: stockSignals.map((signal: any) => `${signal.symbol}:${signal.reject_reason || '-'}`).join('|'),
       };
       await saveCryptoTestnetAccount(env, state);
       ticked += 1;
@@ -6012,7 +6536,7 @@ async function runCryptoTestnetScheduledTick(env: Env) {
         opened: tick.opened,
         closed: tick.closed,
         adjusted: tick.adjusted,
-        msft_action: msftSignal?.action || '',
+        stock_action: state.scheduler.last_cron_stock_action || '',
       });
     } catch (error) {
       outcomes.push({
