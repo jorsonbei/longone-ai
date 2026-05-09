@@ -5476,6 +5476,18 @@ async function runCryptoTestnetScheduledTick(env: Env) {
         order_execution: 'paper',
       });
       const tick = await cryptoTestnetTickInternal(env, state, false, null);
+      const latestState = await loadCryptoTestnetAccount(env, displayUserId, {
+        asset_scope: state.config?.asset_scope || 'all',
+      });
+      if (latestState.mode !== 'running') {
+        outcomes.push({
+          user_id_suffix: displayUserId.slice(-10),
+          asset_scope: state.config?.asset_scope || 'all',
+          mode: latestState.mode || 'unknown',
+          action: 'skip_stopped_during_scheduled_tick',
+        });
+        continue;
+      }
       state.last_tick_at = energyIso();
       const msftSignal = (tick.snapshot?.signals || []).find((signal: any) => signal.symbol === 'MSFT');
       state.scheduler = {
