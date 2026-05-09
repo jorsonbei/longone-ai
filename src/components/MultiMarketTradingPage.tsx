@@ -10,11 +10,11 @@ const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
     title: '加密货币 / ETF / 股票 AI 线上模拟交易',
-    subtitle: '加密货币、ETF、股票分区运行线上模拟账本。BTC/SOL 可走 Binance Demo Testnet；SPY/QQQ/IWM/MSFT 只写 longone 线上模拟账本。',
+    subtitle: '加密货币、ETF、股票分区运行线上模拟账本。BTC/SOL 可走 Binance Demo Testnet；SPY/QQQ/IWM/MSFT/AAPL/TSLA 只写 longone 线上模拟账本。',
     cryptoPanel: '加密货币 / ETF 线上模拟账本',
     cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、点差、波动和剩余持仓预算自适应计算；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
     stockPanel: '股票 AI 线上模拟交易',
-    stockHint: '当前股票分区只接入 MSFT 1 小时做多路线，读取 MSFT、SPY、QQQ、XLK、VIX 公开行情；只写 longone 线上模拟账本，不向券商下单。',
+    stockHint: '当前股票分区接入 MSFT 1 小时做多、AAPL 1 小时做多、TSLA 15 分钟做空；读取股票、SPY、QQQ、XLK、VIX 公开行情，只写 longone 线上模拟账本，不向券商下单。',
     stockStart: '启动股票线上模拟',
     stockTick: '运行股票一轮',
     stockStop: '停止股票并清仓',
@@ -96,11 +96,11 @@ const COPY: Record<string, Record<string, string>> = {
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
     title: 'AI Online Paper Trading for Crypto, ETFs, and Stocks',
-    subtitle: 'Crypto, ETF, and stock routes run in separated online paper ledgers. BTC/SOL can use Binance Demo Testnet; SPY/QQQ/IWM/MSFT stay on the longone paper ledger.',
+    subtitle: 'Crypto, ETF, and stock routes run in separated online paper ledgers. BTC/SOL can use Binance Demo Testnet; SPY/QQQ/IWM/MSFT/AAPL/TSLA stay on the longone paper ledger.',
     cryptoPanel: 'Crypto / ETF Online Paper Ledger',
     cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, spread, volatility, and remaining risk budget.',
     stockPanel: 'Stock AI Online Paper Trading',
-    stockHint: 'The stock section currently runs MSFT 1h long-only with MSFT, SPY, QQQ, XLK, and VIX public data. It writes only to the longone online paper ledger.',
+    stockHint: 'The stock section currently runs MSFT 1h long, AAPL 1h long, and TSLA 15m short with stock, SPY, QQQ, XLK, and VIX public data. It writes only to the longone online paper ledger.',
     stockStart: 'Start Stock Paper Trading',
     stockTick: 'Run One Stock Tick',
     stockStop: 'Stop Stock and Liquidate',
@@ -224,9 +224,8 @@ const reasonText: Record<string, string> = {
   '反向信号确认，平仓准备反手': '反向信号确认，平仓准备反手',
   '同标的信号弱化且持仓浮亏，减仓保护': '同标的信号弱化且持仓浮亏，减仓保护',
   '用户风险上限收缩，超额持仓自动平仓': '用户风险上限收缩，超额持仓自动平仓',
-  'MSFT 股票线上模拟路线当前只允许做多，做空未接入主账本': 'MSFT 股票线上模拟路线当前只允许做多，做空未接入主账本',
   '股票事件/开收盘/VIX 风险过高，跳过本轮信号': '股票事件/开收盘/VIX 风险过高，跳过本轮信号',
-  'Stock V1.3 股票线上模拟交易按真实行情达标做多开仓，不发送券商订单': 'Stock V1.3 股票线上模拟交易按真实行情达标做多开仓，不发送券商订单',
+  'Stock V1.4 股票线上模拟交易按真实行情达标开仓，不发送券商订单': 'Stock V1.4 股票线上模拟交易按真实行情达标开仓，不发送券商订单',
   '线上模拟路线实时信号未达门槛': '线上模拟路线实时信号未达门槛',
   '信号未达线上模拟交易标准': '信号未达线上模拟交易标准',
   'ETF 通过路线只写线上模拟账本，不发送交易所订单': 'ETF 通过路线只写线上模拟账本，不发送交易所订单',
@@ -256,9 +255,13 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const [stockDashboard, setStockDashboard] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [stockLoading, setStockLoading] = useState(false);
+  const [cryptoAction, setCryptoAction] = useState('');
+  const [stockAction, setStockAction] = useState('');
   const [message, setMessage] = useState('');
   const userEditedCryptoConfig = useRef(false);
   const userEditedStockConfig = useRef(false);
+  const [cryptoConfigDirty, setCryptoConfigDirty] = useState(false);
+  const [stockConfigDirty, setStockConfigDirty] = useState(false);
   const [cryptoConfig, setCryptoConfig] = useState({
     capital_usd: 100_000,
     fixed_trade_usd: 1_000,
@@ -279,17 +282,17 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     fixed_trade_usd: 1_000,
     adaptive_sizing: true,
     max_position_pct: 0.04,
-    max_open_positions: 1,
+    max_open_positions: 3,
     max_symbol_positions: 1,
     stop_loss_pct: 0.018,
     take_profit_pct: 0.036,
-    min_signal_score: 0.62,
+    min_signal_score: 0.60,
     max_holding_minutes: 120,
-    side_policy: 'long_only',
+    side_policy: 'both',
     order_execution: 'paper',
     asset_scope: 'stock',
-    allow_short: false,
-    allow_reverse: false,
+    allow_short: true,
+    allow_reverse: true,
     testnet_close_all_on_stop: false,
   });
   const [binanceKeys, setBinanceKeys] = useState({ apiKey: '', apiSecret: '' });
@@ -363,6 +366,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         order_execution: String(remoteConfig.order_execution || prev.order_execution),
         testnet_close_all_on_stop: remoteConfig.testnet_close_all_on_stop !== false,
       }));
+      setCryptoConfigDirty(false);
     }
   }, [cryptoUserId, exchangeHeaders]);
 
@@ -380,19 +384,20 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         fixed_trade_usd: Number(remoteConfig.fixed_trade_usd || prev.fixed_trade_usd),
         adaptive_sizing: remoteConfig.adaptive_sizing !== false,
         max_position_pct: Number(remoteConfig.max_position_pct || prev.max_position_pct),
-        max_open_positions: 1,
-        max_symbol_positions: 1,
+        max_open_positions: Number(remoteConfig.max_open_positions || prev.max_open_positions),
+        max_symbol_positions: Number(remoteConfig.max_symbol_positions || prev.max_symbol_positions),
         stop_loss_pct: Number(remoteConfig.stop_loss_pct || prev.stop_loss_pct),
         take_profit_pct: Number(remoteConfig.take_profit_pct || prev.take_profit_pct),
         min_signal_score: Number(remoteConfig.min_signal_score || prev.min_signal_score),
         max_holding_minutes: Number(remoteConfig.max_holding_minutes || prev.max_holding_minutes),
-        side_policy: 'long_only',
+        side_policy: String(remoteConfig.side_policy || 'both'),
         order_execution: 'paper',
         asset_scope: 'stock',
-        allow_short: false,
-        allow_reverse: false,
+        allow_short: remoteConfig.allow_short !== false,
+        allow_reverse: remoteConfig.allow_reverse !== false,
         testnet_close_all_on_stop: false,
       }));
+      setStockConfigDirty(false);
     }
   }, [stockUserId]);
 
@@ -442,36 +447,63 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     }
   }, []);
 
-  const postCryptoAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
-    setLoading(true);
+  const postCryptoAction = useCallback(async (
+    path: string,
+    body: Record<string, unknown> = {},
+    options: { actionKey?: string; label?: string; clearDirty?: boolean; silent?: boolean } = {},
+  ) => {
+    const label = options.label || '线上模拟交易操作';
+    if (!options.silent) {
+      setLoading(true);
+      setCryptoAction(options.actionKey || label);
+      setMessage(`${label}中...`);
+    }
     try {
-      if (body.order_execution === 'binance_testnet' && !canRequestExchangeExecution) {
+      const hasOrderExecution = Object.prototype.hasOwnProperty.call(body, 'order_execution');
+      if (hasOrderExecution && body.order_execution === 'binance_testnet' && !canRequestExchangeExecution) {
         throw new Error(copy.testnetLockedHint);
       }
-      const safeBody = {
+      const safeBody: Record<string, unknown> = {
         ...body,
         asset_scope: body.asset_scope || 'non_stock',
-        order_execution: canRequestExchangeExecution ? body.order_execution : 'paper',
-        testnet_close_all_on_stop: canRequestExchangeExecution ? body.testnet_close_all_on_stop : false,
       };
+      if (hasOrderExecution || path.endsWith('/start') || path.endsWith('/config')) {
+        safeBody.order_execution = canRequestExchangeExecution ? (body.order_execution || 'paper') : 'paper';
+        safeBody.testnet_close_all_on_stop = canRequestExchangeExecution ? body.testnet_close_all_on_stop !== false : false;
+      }
       const res = await fetch(path, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...exchangeHeaders },
         body: JSON.stringify({ user_id: cryptoUserId, ...safeBody }),
       });
       await parseActionResponse(res);
-      setMessage('线上模拟交易操作已完成。');
-      userEditedCryptoConfig.current = false;
+      if (!options.silent) setMessage(options.clearDirty ? `${label}已生效，运行中的下一轮会使用新参数。` : `${label}已完成。`);
+      if (options.clearDirty || path.endsWith('/start')) {
+        userEditedCryptoConfig.current = false;
+        setCryptoConfigDirty(false);
+      }
       await loadCryptoDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '线上模拟交易操作失败。');
+      if (!options.silent) setMessage(error instanceof Error ? error.message : `${label}失败。`);
     } finally {
-      setLoading(false);
+      if (!options.silent) {
+        setLoading(false);
+        setCryptoAction('');
+      }
     }
   }, [canRequestExchangeExecution, copy.testnetLockedHint, cryptoUserId, exchangeHeaders, loadCryptoDashboard, parseActionResponse]);
 
-  const postStockAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
-    setStockLoading(true);
+  const postStockAction = useCallback(async (
+    path: string,
+    body: Record<string, unknown> = {},
+    options: { actionKey?: string; label?: string; clearDirty?: boolean; silent?: boolean } = {},
+  ) => {
+    const label = options.label || '股票线上模拟交易操作';
+    if (!options.silent) {
+      setStockLoading(true);
+      setStockAction(options.actionKey || label);
+      setMessage(`${label}中...`);
+    }
     try {
       const res = await fetch(path, {
         method: 'POST',
@@ -480,25 +512,29 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           user_id: stockUserId,
           ...body,
           asset_scope: 'stock',
-          side_policy: 'long_only',
+          side_policy: String((body as any)?.side_policy || stockConfig.side_policy || 'both'),
           order_execution: 'paper',
-          allow_short: false,
-          allow_reverse: false,
-          max_open_positions: 1,
-          max_symbol_positions: 1,
+          allow_short: (body as any)?.allow_short !== undefined ? (body as any).allow_short !== false : stockConfig.allow_short !== false,
+          allow_reverse: (body as any)?.allow_reverse !== undefined ? (body as any).allow_reverse !== false : stockConfig.allow_reverse !== false,
           testnet_close_all_on_stop: false,
         }),
       });
       await parseActionResponse(res);
-      setMessage('股票线上模拟交易操作已完成。');
-      userEditedStockConfig.current = false;
+      if (!options.silent) setMessage(options.clearDirty ? `${label}已生效，股票运行中的下一轮会使用新参数。` : `${label}已完成。`);
+      if (options.clearDirty || path.endsWith('/start')) {
+        userEditedStockConfig.current = false;
+        setStockConfigDirty(false);
+      }
       await loadStockDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '股票线上模拟交易操作失败。');
+      if (!options.silent) setMessage(error instanceof Error ? error.message : `${label}失败。`);
     } finally {
-      setStockLoading(false);
+      if (!options.silent) {
+        setStockLoading(false);
+        setStockAction('');
+      }
     }
-  }, [loadStockDashboard, parseActionResponse, stockUserId]);
+  }, [loadStockDashboard, parseActionResponse, stockConfig.allow_reverse, stockConfig.allow_short, stockConfig.side_policy, stockUserId]);
 
   useEffect(() => {
     loadCryptoDashboard().catch(() => setMessage('读取线上模拟交易账本失败。'));
@@ -508,24 +544,24 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   useEffect(() => {
     const timer = window.setInterval(async () => {
       if (cryptoDashboard?.summary?.mode === 'running') {
-        await postCryptoAction('/api/crypto-testnet/tick', { ...cryptoConfig, asset_scope: 'non_stock' });
+        await postCryptoAction('/api/crypto-testnet/tick', { asset_scope: 'non_stock' }, { silent: true });
       } else {
         await loadCryptoDashboard().catch(() => undefined);
       }
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [cryptoConfig, cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
+  }, [cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
       if (stockDashboard?.summary?.mode === 'running') {
-        await postStockAction('/api/crypto-testnet/tick', stockConfig);
+        await postStockAction('/api/crypto-testnet/tick', { asset_scope: 'stock' }, { silent: true });
       } else {
         await loadStockDashboard().catch(() => undefined);
       }
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [loadStockDashboard, postStockAction, stockConfig, stockDashboard?.summary?.mode]);
+  }, [loadStockDashboard, postStockAction, stockDashboard?.summary?.mode]);
 
   const cryptoSummary = cryptoDashboard?.summary;
   const cryptoSignals = cryptoDashboard?.signals || [];
@@ -539,7 +575,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const stockPositions = stockDashboard?.positions || [];
   const stockSensors = stockDashboard?.sensors || [];
   const stockRoutes = stockDashboard?.market_health?.selected_routes || [];
-  const stockSignal = stockSignals.find((row: any) => row.symbol === 'MSFT') || stockSignals[0] || null;
+  const stockSignal = stockSignals.find((row: any) => row.action !== 'NO_TRADE') || stockSignals[0] || null;
   const stockScheduler = stockDashboard?.ledger || {};
   const stockLedgerSource = stockDashboard?.ledger?.source || 'longone online Worker/D1';
   const stockBackendLedgerId = stockDashboard?.ledger?.storage_user_id || `crypto_testnet_${stockUserId.replace(/[^\w.-]/g, '_').slice(0, 64)}`;
@@ -665,6 +701,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 value={(cryptoConfig as any)[key]}
                 onChange={(event) => {
                   userEditedCryptoConfig.current = true;
+                  setCryptoConfigDirty(true);
                   setCryptoConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }));
                 }}
               />
@@ -697,6 +734,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               checked={cryptoConfig.adaptive_sizing}
               onChange={(event) => {
                 userEditedCryptoConfig.current = true;
+                setCryptoConfigDirty(true);
                 setCryptoConfig((prev) => ({ ...prev, adaptive_sizing: event.target.checked }));
               }}
               className="h-4 w-4 accent-emerald-300"
@@ -710,6 +748,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               value={cryptoConfig.side_policy}
               onChange={(event) => {
                 userEditedCryptoConfig.current = true;
+                setCryptoConfigDirty(true);
                 setCryptoConfig((prev) => ({ ...prev, side_policy: event.target.value }));
               }}
             >
@@ -725,6 +764,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
               value={cryptoConfig.order_execution}
               onChange={(event) => {
                 userEditedCryptoConfig.current = true;
+                setCryptoConfigDirty(true);
                 setCryptoConfig((prev) => ({ ...prev, order_execution: event.target.value }));
               }}
             >
@@ -740,6 +780,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 checked={cryptoConfig.testnet_close_all_on_stop}
                 onChange={(event) => {
                   userEditedCryptoConfig.current = true;
+                  setCryptoConfigDirty(true);
                   setCryptoConfig((prev) => ({ ...prev, testnet_close_all_on_stop: event.target.checked }));
                 }}
                 className="h-4 w-4 accent-emerald-300"
@@ -748,17 +789,25 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           </label>
           ) : null}
           <div className="flex flex-wrap gap-3">
-            <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', { ...cryptoConfig, asset_scope: 'non_stock' })} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick', { ...cryptoConfig, asset_scope: 'non_stock' })} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
+            <button
+              disabled={loading || !cryptoConfigDirty}
+              onClick={() => postCryptoAction('/api/crypto-testnet/config', { ...cryptoConfig, asset_scope: 'non_stock' }, { actionKey: 'crypto-config', label: '应用加密参数', clearDirty: true })}
+              className="rounded-2xl border border-lime-200/25 bg-lime-300/14 px-5 py-3 text-sm font-black text-lime-100 disabled:opacity-45"
+            >
+              {cryptoAction === 'crypto-config' ? '应用中...' : cryptoConfigDirty ? '确认应用参数' : '参数已应用'}
+            </button>
+            <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', { ...cryptoConfig, asset_scope: 'non_stock' }, { actionKey: 'crypto-start', label: copy.cryptoStart, clearDirty: true })} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{cryptoAction === 'crypto-start' ? '启动中...' : copy.cryptoStart}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick', { asset_scope: 'non_stock' }, { actionKey: 'crypto-tick', label: copy.cryptoTick })} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100 disabled:opacity-45">{cryptoAction === 'crypto-tick' ? '运行中...' : copy.cryptoTick}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true, asset_scope: 'non_stock' }, { actionKey: 'crypto-stop', label: copy.cryptoStop })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100 disabled:opacity-45">{cryptoAction === 'crypto-stop' ? '停止中...' : copy.cryptoStop}</button>
             {canRequestExchangeExecution ? (
               <>
-                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile')} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100">{copy.reconcile}</button>
-                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all')} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100">{copy.closeAll}</button>
+                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/reconcile', { asset_scope: 'non_stock' }, { actionKey: 'crypto-reconcile', label: copy.reconcile })} className="rounded-2xl border border-cyan-200/20 bg-cyan-300/10 px-5 py-3 text-sm font-black text-cyan-100 disabled:opacity-45">{cryptoAction === 'crypto-reconcile' ? '对账中...' : copy.reconcile}</button>
+                <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/close-all', { asset_scope: 'non_stock' }, { actionKey: 'crypto-close-all', label: copy.closeAll })} className="rounded-2xl border border-amber-300/30 bg-amber-300/12 px-5 py-3 text-sm font-black text-amber-100 disabled:opacity-45">{cryptoAction === 'crypto-close-all' ? '平仓中...' : copy.closeAll}</button>
               </>
             ) : null}
           </div>
         </div>
+        {cryptoConfigDirty ? <p className="mt-2 text-xs font-bold text-amber-100/80">参数已修改但尚未应用；点击“确认应用参数”后，运行中的下一轮扫描立即使用新单笔金额和持仓上限。</p> : null}
 
         <div className="mt-5 grid gap-4 md:grid-cols-5">
           {[
@@ -940,7 +989,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       <section className="mt-5 rounded-[28px] border border-sky-200/15 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_32rem),rgba(255,255,255,0.03)] p-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-200/70">Stock V1.3 · MSFT 1h</p>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-200/70">Stock V1.4 · MSFT/AAPL/TSLA</p>
             <h2 className="mt-1 text-2xl font-black text-white">{copy.stockPanel}</h2>
             <p className="mt-2 max-w-5xl text-sm leading-6 text-sky-50/65">{copy.stockHint}</p>
           </div>
@@ -972,7 +1021,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           {stockRoutes.map((route: any) => (
             <div key={`stock-route-${route.symbol}`} className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
               <p className="text-sm font-black text-white">{route.symbol}</p>
-              <p className="mt-1 text-xs leading-5 text-sky-50/60">{route.cadence} · 只做多 · 股票线上模拟</p>
+              <p className="mt-1 text-xs leading-5 text-sky-50/60">{route.cadence} · {translate(route.side_policy === 'short_only' ? 'SELL_SHORT' : route.side_policy === 'both' ? 'BUY_LONG' : 'BUY_LONG')}{route.side_policy === 'both' ? ' / 做空' : ''} · 股票线上模拟</p>
               <p className="mt-1 text-xs text-sky-200/80">盲测 PF {numberText(route.blind_test?.test_profit_factor || route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
             </div>
           ))}
@@ -998,6 +1047,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
             ['capital_usd', copy.capital],
             ['fixed_trade_usd', '单笔最高金额'],
             ['max_position_pct', copy.maxPositionPct],
+            ['max_open_positions', copy.maxPositions],
+            ['max_symbol_positions', copy.maxSymbolPositions],
             ['min_signal_score', '最低稳定分'],
             ['max_holding_minutes', '最长持有分钟'],
           ].map(([key, label]) => (
@@ -1010,6 +1061,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
                 value={(stockConfig as any)[key]}
                 onChange={(event) => {
                   userEditedStockConfig.current = true;
+                  setStockConfigDirty(true);
                   setStockConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }));
                 }}
               />
@@ -1018,11 +1070,15 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         </div>
 
         <div className="mt-4 flex flex-wrap gap-3">
-          <button disabled={stockLoading || stockSummary?.mode === 'running'} onClick={() => postStockAction('/api/crypto-testnet/start', stockConfig)} className="rounded-2xl bg-sky-300 px-5 py-3 text-sm font-black text-sky-950 disabled:opacity-45">{copy.stockStart}</button>
-          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/tick', stockConfig)} className="rounded-2xl border border-sky-200/15 bg-sky-300/12 px-5 py-3 text-sm font-black text-sky-100">{copy.stockTick}</button>
-          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/stop', { ...stockConfig, liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.stockStop}</button>
-          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/reset', stockConfig)} className="rounded-2xl border border-sky-200/15 bg-black/25 px-5 py-3 text-sm font-black text-sky-100">{copy.stockResetLedger}</button>
+          <button disabled={stockLoading || !stockConfigDirty} onClick={() => postStockAction('/api/crypto-testnet/config', stockConfig, { actionKey: 'stock-config', label: '应用股票参数', clearDirty: true })} className="rounded-2xl border border-lime-200/25 bg-lime-300/14 px-5 py-3 text-sm font-black text-lime-100 disabled:opacity-45">
+            {stockAction === 'stock-config' ? '应用中...' : stockConfigDirty ? '确认应用参数' : '参数已应用'}
+          </button>
+          <button disabled={stockLoading || stockSummary?.mode === 'running'} onClick={() => postStockAction('/api/crypto-testnet/start', stockConfig, { actionKey: 'stock-start', label: copy.stockStart, clearDirty: true })} className="rounded-2xl bg-sky-300 px-5 py-3 text-sm font-black text-sky-950 disabled:opacity-45">{stockAction === 'stock-start' ? '启动中...' : copy.stockStart}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/tick', { asset_scope: 'stock' }, { actionKey: 'stock-tick', label: copy.stockTick })} className="rounded-2xl border border-sky-200/15 bg-sky-300/12 px-5 py-3 text-sm font-black text-sky-100 disabled:opacity-45">{stockAction === 'stock-tick' ? '运行中...' : copy.stockTick}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/stop', { asset_scope: 'stock', liquidate: true }, { actionKey: 'stock-stop', label: copy.stockStop })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100 disabled:opacity-45">{stockAction === 'stock-stop' ? '停止中...' : copy.stockStop}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/reset', stockConfig, { actionKey: 'stock-reset', label: copy.stockResetLedger, clearDirty: true })} className="rounded-2xl border border-sky-200/15 bg-black/25 px-5 py-3 text-sm font-black text-sky-100 disabled:opacity-45">{stockAction === 'stock-reset' ? '重置中...' : copy.stockResetLedger}</button>
         </div>
+        {stockConfigDirty ? <p className="mt-2 text-xs font-bold text-amber-100/80">股票参数已修改但尚未应用；确认后运行中的下一轮扫描立即使用新限制。</p> : null}
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <div className="rounded-[24px] border border-sky-200/10 bg-black/20 p-4">
