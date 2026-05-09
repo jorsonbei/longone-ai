@@ -22,6 +22,9 @@ const COPY: Record<string, Record<string, string>> = {
     stockPositions: '股票当前持仓',
     stockHistory: '股票模拟记录',
     stockScheduler: '股票自动记录',
+    stockCopyLedgerId: '复制股票账本 ID',
+    stockExportLedgerId: '导出股票账本 JSON',
+    stockResetLedger: '重置股票账本',
     maxSymbolPositions: '单币最大持仓',
     adaptiveSizing: '自适应仓位',
     maxPositionPct: '单次权益上限',
@@ -105,6 +108,9 @@ const COPY: Record<string, Record<string, string>> = {
     stockPositions: 'Stock Open Positions',
     stockHistory: 'Stock Paper Records',
     stockScheduler: 'Stock auto recorder',
+    stockCopyLedgerId: 'Copy Stock Ledger ID',
+    stockExportLedgerId: 'Export Stock Ledger JSON',
+    stockResetLedger: 'Reset Stock Ledger',
     maxSymbolPositions: 'Max per symbol',
     adaptiveSizing: 'Adaptive sizing',
     maxPositionPct: 'Equity cap / trade',
@@ -535,6 +541,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   const stockRoutes = stockDashboard?.market_health?.selected_routes || [];
   const stockSignal = stockSignals.find((row: any) => row.symbol === 'MSFT') || stockSignals[0] || null;
   const stockScheduler = stockDashboard?.ledger || {};
+  const stockLedgerSource = stockDashboard?.ledger?.source || 'longone online Worker/D1';
+  const stockBackendLedgerId = stockDashboard?.ledger?.storage_user_id || `crypto_testnet_${stockUserId.replace(/[^\w.-]/g, '_').slice(0, 64)}`;
   const testnet = cryptoDashboard?.testnet || {};
   const testnetPositions = Array.isArray(testnet.positions) ? testnet.positions : [];
   const testnetOrders = Array.isArray(testnet.open_orders) ? testnet.open_orders : [];
@@ -578,6 +586,43 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       setMessage(`复制失败，请手动记录账本 ID：${cryptoUserId}`);
     }
   }, [backendLedgerId, cryptoUserId]);
+  const exportStockLedgerId = useCallback(() => {
+    const payload = {
+      browser_ledger_id: stockUserId,
+      backend_ledger_id: stockBackendLedgerId,
+      storage_key: 'hfcd_stock_paper_user_id',
+      source: stockLedgerSource,
+      dashboard_api: `/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(stockUserId)}&asset_scope=stock`,
+      route: 'MSFT 1小时做多线上模拟交易',
+      exported_at: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `hfcd-stock-ledger-${stockUserId}.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    setMessage(`已导出股票账本 ID：${stockUserId}`);
+  }, [stockBackendLedgerId, stockLedgerSource, stockUserId]);
+  const copyStockLedgerId = useCallback(async () => {
+    const text = `${stockUserId}\n${stockBackendLedgerId}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+      setMessage(`已复制股票账本 ID：${stockUserId}`);
+    } catch {
+      setMessage(`复制失败，请手动记录股票账本 ID：${stockUserId}`);
+    }
+  }, [stockBackendLedgerId, stockUserId]);
 
   return (
     <div className="min-h-full bg-[#0b1118] px-5 py-6 pb-14 text-slate-100">
@@ -905,6 +950,24 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           </div>
         </div>
 
+        <div className="mt-5 rounded-[22px] border border-sky-200/10 bg-sky-300/[0.06] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-black text-sky-100">{copy.ledgerBox}</p>
+              <p className="mt-1 text-xs text-sky-50/60">
+                {copy.browserLedgerId}：<span className="font-mono text-sky-100">{stockUserId}</span>
+              </p>
+              <p className="mt-1 text-xs text-sky-50/60">
+                {copy.backendLedgerId}：<span className="font-mono text-sky-100">{stockBackendLedgerId}</span> · {copy.ledgerSource}：{stockLedgerSource}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={copyStockLedgerId} className="rounded-2xl border border-sky-200/15 bg-black/20 px-4 py-2 text-xs font-black text-sky-100">{copy.stockCopyLedgerId}</button>
+              <button type="button" onClick={exportStockLedgerId} className="rounded-2xl border border-sky-200/15 bg-black/20 px-4 py-2 text-xs font-black text-sky-100">{copy.stockExportLedgerId}</button>
+            </div>
+          </div>
+        </div>
+
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {stockRoutes.map((route: any) => (
             <div key={`stock-route-${route.symbol}`} className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
@@ -958,6 +1021,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           <button disabled={stockLoading || stockSummary?.mode === 'running'} onClick={() => postStockAction('/api/crypto-testnet/start', stockConfig)} className="rounded-2xl bg-sky-300 px-5 py-3 text-sm font-black text-sky-950 disabled:opacity-45">{copy.stockStart}</button>
           <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/tick', stockConfig)} className="rounded-2xl border border-sky-200/15 bg-sky-300/12 px-5 py-3 text-sm font-black text-sky-100">{copy.stockTick}</button>
           <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/stop', { ...stockConfig, liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.stockStop}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/reset', stockConfig)} className="rounded-2xl border border-sky-200/15 bg-black/25 px-5 py-3 text-sm font-black text-sky-100">{copy.stockResetLedger}</button>
         </div>
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">

@@ -2613,6 +2613,12 @@ async function recentMarketTrades(env: Env, userId: string, limit = 100) {
   }).filter(Boolean);
 }
 
+async function clearMarketTrades(env: Env, userId: string) {
+  const db = await ensureMarketTradingDb(env);
+  if (!db) return;
+  await db.prepare('DELETE FROM market_trades WHERE user_id = ?').bind(userId).run();
+}
+
 function marketStd(values: number[]) {
   if (values.length < 2) return 0;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -5399,6 +5405,39 @@ async function cryptoTestnetCloseAll(request: Request, env: Env, url: URL) {
   return json({ ok: true, action: 'testnet_close_all', user_id: userId, result, tick, account: state }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
+async function cryptoTestnetReset(request: Request, env: Env, url: URL) {
+  const body = await request.json().catch(() => ({}));
+  const userId = cryptoTestnetUserId(request, url, body);
+  const state: any = defaultCryptoTestnetAccount(userId, {
+    ...body,
+    order_execution: 'paper',
+  });
+  state.mode = 'stopped';
+  state.started_at = '';
+  state.stopped_at = energyIso();
+  state.last_tick_at = '';
+  state.last_market_snapshot = null;
+  state.scheduler = {};
+  await clearMarketTrades(env, cryptoTestnetStorageUserId(userId));
+  await saveCryptoTestnetAccount(env, state);
+  return json(
+    {
+      ok: true,
+      action: 'reset',
+      user_id: userId,
+      ledger: {
+        source: env.ENERGY_TRADING_DB ? 'longone_worker_d1' : 'worker_default_no_d1',
+        user_id: userId,
+        storage_user_id: cryptoTestnetStorageUserId(userId),
+        user_id_suffix: userId.slice(-10),
+        asset_scope: state.config?.asset_scope || 'all',
+      },
+      account: state,
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+}
+
 async function runCryptoTestnetScheduledTick(env: Env) {
   const startedAt = energyIso();
   const db = await ensureMarketTradingDb(env);
@@ -6055,6 +6094,10 @@ async function handleApi(request: Request, env: Env) {
 
     if (url.pathname === '/api/crypto-testnet/close-all') {
       return cryptoTestnetCloseAll(request, env, url);
+    }
+
+    if (url.pathname === '/api/crypto-testnet/reset') {
+      return cryptoTestnetReset(request, env, url);
     }
 
     if (url.pathname === '/api/energy/adapt-csv') {
