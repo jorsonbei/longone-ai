@@ -1038,7 +1038,10 @@ async function energyTradingStop(request: Request, env: Env, url: URL) {
 const COMMODITY_ENERGY_VERSION = 'HFCD_Commodity_V7_8_V75MinimalStateRepairShadowLedger';
 const COMMODITY_ENERGY_FEE_RATE = 0.00055;
 const COMMODITY_ENERGY_PROPERTY_DIMS = ['Q', 'DeltaSigma', 'C', 'Pi', 'Sigma', 'Eta', 'BSigma', 'R', 'Tau', 'Omega'];
-const FORECAST_EDGE_GATE_PROMOTED = false;
+const FORECAST_EDGE_GATE_PROMOTED = true;
+const HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION = 'HFCD_UniversalForecastEdgePositionController_V1';
+const HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE =
+  '无仓才开仓；同向已有仓位只在预测空间和信号强度继续增强时加仓；同向变弱则持有或减仓；弱反向只减仓/平仓；强反向先平旧仓再反手；所有动作必须通过预测边际门。';
 const COMMODITY_ENERGY_TENSOR_GUARD_VERSION = 'V7.8_V75MinimalStateRepairShadow';
 const COMMODITY_ENERGY_TENSOR_PARAMS = {
   add_min: 0.34,
@@ -1596,7 +1599,7 @@ function defaultCommodityEnergyAccount(userId: string, body: any = {}) {
     tensor_shadow_events: [] as any[],
     execution_repair_events: [] as any[],
     pending_reverse_orders: [] as any[],
-    state_controller_version: 'V7.8_minimal_state_repair',
+    state_controller_version: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
     seen_signal_ids: [] as string[],
     seen_audit_signal_ids: [] as string[],
     config: {
@@ -1609,6 +1612,9 @@ function defaultCommodityEnergyAccount(userId: string, body: any = {}) {
       fee_rate: COMMODITY_ENERGY_FEE_RATE,
       allow_short: body.allow_short !== false,
       sizing_mode: String(body.sizing_mode || 'score_scaled'),
+      position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+      position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+      forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted' : 'shadow',
     },
   };
 }
@@ -1620,10 +1626,23 @@ async function loadCommodityEnergyAccount(env: Env, userId: string) {
   if (!row?.state_json) return defaultCommodityEnergyAccount(userId);
   try {
     const parsed = JSON.parse(String(row.state_json));
+    const defaults = defaultCommodityEnergyAccount(userId);
+    const normalized = {
+      ...defaults,
+      ...parsed,
+      config: {
+        ...defaults.config,
+        ...(parsed?.config || {}),
+        position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+        position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+        forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted' : 'shadow',
+      },
+      state_controller_version: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+    };
     if (parsed?.version !== COMMODITY_ENERGY_VERSION) {
-      return { ...defaultCommodityEnergyAccount(userId), ...parsed, version: COMMODITY_ENERGY_VERSION };
+      return { ...normalized, version: COMMODITY_ENERGY_VERSION };
     }
-    return parsed;
+    return normalized;
   } catch {
     return defaultCommodityEnergyAccount(userId);
   }
@@ -1672,7 +1691,9 @@ function commodityEnergyCanOpen(signal: any, state: any) {
   if (state.mode !== 'running') return 'AI未运行';
   if (signal.forward_enabled === false || signal.online_trade_allowed === false || signal.status === 'observation_only') return '观察路线不参与 V7.8 主账本交易';
   if (signal.action === 'NO_TRADE') return '主血统分数不足';
-  if (FORECAST_EDGE_GATE_PROMOTED && signal.forecast_edge_gate && signal.forecast_edge_gate.ok === false) return signal.forecast_edge_gate.reason || '预测空间不足';
+  if (FORECAST_EDGE_GATE_PROMOTED && (!signal.forecast_edge_gate || signal.forecast_edge_gate.ok !== true)) {
+    return signal.forecast_edge_gate?.reason || '缺少预测边际，不能证明未来空间覆盖成本和噪声';
+  }
   if (signal.side === 'short' && cfg.allow_short === false) return '做空已关闭';
   if (Number(signal.score || 0) < Math.max(Number(cfg.min_signal_score || 0.66), Number(signal.min_score || 0.66))) return '稳定分不足';
   if ((state.open_positions || []).length >= Number(cfg.max_open_positions || 4)) return '达到最大持仓数';
@@ -2229,6 +2250,9 @@ async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
       scheduler_last_tick_at: state.scheduler?.last_cron_tick_at || '',
       scheduler_last_market_latest_at: state.scheduler?.last_cron_market_latest_at || '',
       browser_storage_key: 'hfcd_energy_user_id',
+      position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+      position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+      forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted_blocking_gate' : 'shadow_audit_only',
       note: 'This is the longone online Worker/D1 ledger for the browser user id, not the local outputs/ heartbeat file ledger.',
     },
     source_status: feed.source_status,
@@ -2247,6 +2271,7 @@ async function commodityEnergyDashboard(request: Request, env: Env, url: URL) {
       version: 'V7.8_minimal_state_repair',
       mode: 'shadow_execution_control',
       rule: '无仓才开仓；同向只在确认时加仓；反向信号先平旧仓，再等下一 tick 重新确认反手，否则跳过。',
+      universal_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
       pending_reverse_orders: (state.pending_reverse_orders || []).slice(0, 20),
       events: (state.execution_repair_events || []).slice(0, 80),
     },
@@ -2293,6 +2318,9 @@ async function commodityEnergyStart(request: Request, env: Env, url: URL) {
     min_signal_score: Number(body.min_signal_score || cfg.min_signal_score || 0.66),
     allow_short: body.allow_short !== false,
     sizing_mode: String(body.sizing_mode || cfg.sizing_mode || 'score_scaled'),
+    position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+    position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+    forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted' : 'shadow',
   };
   if (body.capital_usd && isFresh) {
     state.initial_cash_usd = Number(body.capital_usd);
@@ -3810,6 +3838,9 @@ function defaultCryptoTestnetAccount(userId: string, body: any = {}) {
       allow_scale_in: body.allow_scale_in !== false,
       allow_reduce: body.allow_reduce !== false,
       allow_reverse: body.allow_reverse !== false,
+      position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+      position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+      forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted' : 'shadow',
       order_execution: String(body.order_execution || 'paper'),
       testnet_close_all_on_stop: body.testnet_close_all_on_stop !== false,
       asset_scope: String(body.asset_scope || 'all'),
@@ -3836,12 +3867,37 @@ function normalizeCryptoTestnetConfig(config: any = {}) {
   next.allow_scale_in = next.allow_scale_in !== false;
   next.allow_reduce = next.allow_reduce !== false;
   next.allow_reverse = next.allow_reverse !== false;
+  next.position_controller = HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION;
+  next.position_controller_rule = HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE;
+  next.forecast_edge_gate = FORECAST_EDGE_GATE_PROMOTED ? 'promoted' : 'shadow';
   next.order_execution = String(next.order_execution || 'paper') === 'binance_testnet' ? 'binance_testnet' : 'paper';
   next.testnet_close_all_on_stop = next.testnet_close_all_on_stop !== false;
   next.asset_scope = ['all', 'non_stock', 'stock'].includes(String(next.asset_scope || 'all')) ? String(next.asset_scope || 'all') : 'all';
   const strategy = String(next.strategy || '');
   next.strategy = strategy.startsWith('v3_6_') ? strategy : 'v3_6_property_gated_bidirectional_execution';
   return next;
+}
+
+function cryptoScopedRequestBody(url: URL, body: any = {}, currentConfig: any = {}) {
+  const requestedScope = String(body.asset_scope || url.searchParams.get('asset_scope') || '');
+  if (!requestedScope) return body;
+  const scoped: any = {
+    ...body,
+    asset_scope: requestedScope,
+  };
+  if (requestedScope === 'stock') {
+    return {
+      ...scoped,
+      order_execution: 'paper',
+      side_policy: 'long_only',
+      allow_short: false,
+      max_open_positions: 1,
+      max_symbol_positions: 1,
+      min_signal_score: currentConfig?.min_signal_score || scoped.min_signal_score || 0.62,
+      max_holding_minutes: currentConfig?.max_holding_minutes || scoped.max_holding_minutes || 120,
+    };
+  }
+  return scoped;
 }
 
 function normalizeCryptoTestnetAccount(state: any, userId: string, body: any = {}) {
@@ -4453,10 +4509,10 @@ function cryptoPropertyGate(signal: any, state: any, intent: 'open' | 'add' | 'r
     };
   }
   const forecastEdge = signal.forecast_edge_gate || null;
-  if (FORECAST_EDGE_GATE_PROMOTED && forecastEdge && forecastEdge.ok === false) {
+  if (FORECAST_EDGE_GATE_PROMOTED && (!forecastEdge || forecastEdge.ok !== true)) {
     return {
       ok: false,
-      reason: forecastEdge.reason || '预测空间不足，未覆盖成本和风险缓冲',
+      reason: forecastEdge?.reason || '缺少预测边际，不能证明未来空间覆盖成本和噪声',
       property_score: 0,
     };
   }
@@ -4498,6 +4554,33 @@ function cryptoPropertyGate(signal: any, state: any, intent: 'open' | 'add' | 'r
       property_score: Number(propertyScore.toFixed(4)),
     };
   }
+  if (intent === 'add' && existing && FORECAST_EDGE_GATE_PROMOTED) {
+    const nextEdgeFactor = Number(forecastEdge?.position_multiplier || signal.position_multiplier || 0);
+    const existingEdgeFactor = Number(existing.forecast_edge_factor || 0);
+    if (nextEdgeFactor <= existingEdgeFactor + 0.05) {
+      return {
+        ok: false,
+        reason: '同向加仓需要预测边际继续扩大',
+        property_score: Number(propertyScore.toFixed(4)),
+      };
+    }
+  }
+  if (intent === 'reverse' && existing) {
+    const scoreLead = Number(signal.score || 0) - Number(existing.score || 0);
+    const nextEdgeFactor = Number(forecastEdge?.position_multiplier || signal.position_multiplier || 0);
+    const existingEdgeFactor = Number(existing.forecast_edge_factor || 0);
+    const edgeLead = FORECAST_EDGE_GATE_PROMOTED ? nextEdgeFactor - existingEdgeFactor : 0;
+    const reverseIsStronger = FORECAST_EDGE_GATE_PROMOTED
+      ? scoreLead >= 0.10 || edgeLead >= 0.18
+      : scoreLead >= 0.10;
+    if (!reverseIsStronger) {
+      return {
+        ok: false,
+        reason: '反向信号没有显著强于已有仓位，不允许反手',
+        property_score: Number(propertyScore.toFixed(4)),
+      };
+    }
+  }
   return {
     ok: true,
     reason: `物性确认通过：${intent}=${propertyScore.toFixed(2)}`,
@@ -4532,6 +4615,7 @@ function cryptoAdaptiveSizing(signal: any, state: any) {
       sizing_reason: '按用户单笔最高金额执行；仍受全局/单币/权益上限约束。',
       score_edge: 0,
       confidence_factor: 1,
+      forecast_edge_factor: FORECAST_EDGE_GATE_PROMOTED ? cryptoClamp(Number(signal.forecast_edge_gate?.position_multiplier || signal.position_multiplier || 0), 0, 1.65) : 1,
       liquidity_factor: 1,
       risk_factor: 1,
       remaining_global_usd: Number(remainingGlobal.toFixed(2)),
@@ -4647,6 +4731,11 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     sizing_reason: sizing.sizing_reason,
     score_edge: sizing.score_edge,
     confidence_factor: sizing.confidence_factor,
+    forecast_edge_factor: sizing.forecast_edge_factor,
+    forecast_edge_pct: Number(signal.forecast_edge_gate?.forecast_edge_pct || 0),
+    forecast_edge_gate: signal.forecast_edge_gate || null,
+    position_controller_version: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+    position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
     liquidity_factor: sizing.liquidity_factor,
     spread_factor: sizing.spread_factor,
     risk_factor: sizing.risk_factor,
@@ -4686,6 +4775,9 @@ async function openCryptoTestnetPosition(env: Env, state: any, signal: any, cred
     sizing_reason: sizing.sizing_reason,
     score_edge: sizing.score_edge,
     confidence_factor: sizing.confidence_factor,
+    forecast_edge_factor: sizing.forecast_edge_factor,
+    forecast_edge_pct: Number(signal.forecast_edge_gate?.forecast_edge_pct || 0),
+    position_controller_version: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
     liquidity_factor: sizing.liquidity_factor,
     risk_factor: sizing.risk_factor,
     source: signal.source,
@@ -4785,6 +4877,11 @@ async function addCryptoTestnetPosition(env: Env, state: any, pos: any, signal: 
   pos.take_profit_usd = Number((totalNotional * Number(cfg.take_profit_pct || 0.036)).toFixed(2));
   pos.score = Math.max(Number(pos.score || 0), Number(signal.score || 0));
   pos.confidence = Math.max(Number(pos.confidence || 0), Number(signal.confidence || 0));
+  pos.forecast_edge_factor = Math.max(Number(pos.forecast_edge_factor || 0), Number(sizing.forecast_edge_factor || 0));
+  pos.forecast_edge_pct = Math.max(Number(pos.forecast_edge_pct || 0), Number(signal.forecast_edge_gate?.forecast_edge_pct || 0));
+  pos.forecast_edge_gate = signal.forecast_edge_gate || pos.forecast_edge_gate || null;
+  pos.position_controller_version = HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION;
+  pos.position_controller_rule = HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE;
   pos.last_signal_id = signal.signal_id;
   pos.last_scaled_at = energyIso();
   pos.scale_in_count = Number(pos.scale_in_count || 0) + 1;
@@ -4809,6 +4906,9 @@ async function addCryptoTestnetPosition(env: Env, state: any, pos: any, signal: 
     sizing_reason: sizing.sizing_reason,
     score_edge: sizing.score_edge,
     confidence_factor: sizing.confidence_factor,
+    forecast_edge_factor: sizing.forecast_edge_factor,
+    forecast_edge_pct: Number(signal.forecast_edge_gate?.forecast_edge_pct || 0),
+    position_controller_version: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
     liquidity_factor: sizing.liquidity_factor,
     risk_factor: sizing.risk_factor,
     source: signal.source,
@@ -5270,6 +5370,9 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       scope: state.config?.asset_scope === 'stock' ? 'per_browser_user_stock_only' : state.config?.asset_scope === 'non_stock' ? 'per_browser_user_crypto_etf_only' : 'per_browser_user',
       recent_trade_limit: 180,
       records: 'signals/skips/open/close/add/reduce/reverse/hold with paper PnL',
+      position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+      position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+      forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted_blocking_gate' : 'shadow_audit_only',
       stock_route: dashboardAssetScope === 'stock' ? 'MSFT 1h 做多线上模拟交易' : '股票路线在独立股票分区运行',
     },
     ledger: {
@@ -5284,6 +5387,9 @@ async function cryptoTestnetDashboard(request: Request, env: Env, url: URL) {
       scheduler_last_market_latest_at: state.scheduler?.last_cron_market_latest_at || '',
       scheduler_last_msft_action: state.scheduler?.last_cron_msft_action || '',
       stock_online_paper_route: 'MSFT 1h long_only',
+      position_controller: HFCD_UNIVERSAL_POSITION_CONTROLLER_VERSION,
+      position_controller_rule: HFCD_UNIVERSAL_POSITION_CONTROLLER_RULE,
+      forecast_edge_gate: FORECAST_EDGE_GATE_PROMOTED ? 'promoted_blocking_gate' : 'shadow_audit_only',
     },
     market_health: {
       ok: snapshot.source_status === 'public_realtime_mixed_binance_yahoo',
@@ -5320,18 +5426,19 @@ async function cryptoTestnetStart(request: Request, env: Env, url: URL) {
   const userId = cryptoTestnetUserId(request, url, body);
   const existing = await loadCryptoTestnetAccount(env, userId, body);
   const isFresh = !existing.started_at && !(existing.open_positions || []).length && !(existing.closed_trades || []).length;
-  const state = body?.reset_account || isFresh ? defaultCryptoTestnetAccount(userId, body) : existing;
+  const scopedBody = cryptoScopedRequestBody(url, body, existing.config || {});
+  const state = body?.reset_account || isFresh ? defaultCryptoTestnetAccount(userId, scopedBody) : existing;
   state.display_user_id = userId;
-  state.config = mergeCryptoTestnetConfig(state, body);
+  state.config = mergeCryptoTestnetConfig(state, scopedBody);
   if (state.config.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
     binanceTestnetAssertConfigured(env, binanceTestnetCredentialsForRequest(request, env));
   }
-  if (body.capital_usd && isFresh) {
-    state.initial_cash_usd = Number(body.capital_usd);
+  if (scopedBody.capital_usd && isFresh) {
+    state.initial_cash_usd = Number(scopedBody.capital_usd);
     state.realized_pnl_usd = 0;
-    state.equity_usd = Number(body.capital_usd);
-    state.peak_equity_usd = Number(body.capital_usd);
+    state.equity_usd = Number(scopedBody.capital_usd);
+    state.peak_equity_usd = Number(scopedBody.capital_usd);
   }
   state.mode = 'running';
   state.started_at = state.started_at || energyIso();
@@ -5346,7 +5453,8 @@ async function cryptoTestnetTick(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
   const state = await loadCryptoTestnetAccount(env, userId, body);
-  state.config = mergeCryptoTestnetConfig(state, body);
+  const scopedBody = cryptoScopedRequestBody(url, body, state.config || {});
+  state.config = mergeCryptoTestnetConfig(state, scopedBody);
   if (state.config?.order_execution === 'binance_testnet') {
     if (!hasPrivateTradingControl(request, env)) return privateTradingControlLockedJson();
   }
@@ -5408,8 +5516,9 @@ async function cryptoTestnetCloseAll(request: Request, env: Env, url: URL) {
 async function cryptoTestnetReset(request: Request, env: Env, url: URL) {
   const body = await request.json().catch(() => ({}));
   const userId = cryptoTestnetUserId(request, url, body);
+  const scopedBody = cryptoScopedRequestBody(url, body, {});
   const state: any = defaultCryptoTestnetAccount(userId, {
-    ...body,
+    ...scopedBody,
     order_execution: 'paper',
   });
   state.mode = 'stopped';
