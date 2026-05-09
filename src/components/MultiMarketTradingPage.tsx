@@ -9,14 +9,19 @@ type Props = {
 const COPY: Record<string, Record<string, string>> = {
   zh: {
     eyebrow: 'HFCD 多市场交易',
-    title: '加密货币 / 股指 ETF AI 前向账本',
-    subtitle: '接入 V3.0 盲测通过路线：BTCUSDT 1h、SOLUSDT 1h、SPY 1h、QQQ 15m、IWM 1h。BTC/SOL 可走 Binance Demo Testnet；ETF 只写本地 paper 账本。',
-    model: '模型说明',
-    modelText: '该模块复用 HFCD 的频率路由、黑暗森林传感器和 V3.0 盲测通过路线；多头为盲测通过主线，做空已开放为前向验证路线，只在趋势、成交/深度、资金费率或 ETF 动量共振达标时写入账本。',
-    goldEntry: '进入黄金专属交易',
-    goldEntryHint: '使用 GC=F 优先、GLD 备用的黄金专属实时模拟交易，不会真实下单。',
-    cryptoPanel: 'V3.1 短波动前向账本',
-    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、盘口深度、点差、波动和剩余持仓预算自适应计算；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
+    title: '加密货币 / ETF / 股票 AI 线上模拟交易',
+    subtitle: '加密货币、ETF、股票分区运行线上模拟账本。BTC/SOL 可走 Binance Demo Testnet；SPY/QQQ/IWM/MSFT 只写 longone 线上模拟账本。',
+    cryptoPanel: '加密货币 / ETF 线上模拟账本',
+    cryptoHint: 'BTCUSDT/SOLUSDT 使用 Binance U本位合约公开实时数据；SPY/QQQ/IWM 使用 Yahoo 公共行情。单笔金额是上限，实际仓位会按信号强度、点差、波动和剩余持仓预算自适应计算；Binance Demo API 只会影响 BTC/SOL 测试网下单。',
+    stockPanel: '股票 AI 线上模拟交易',
+    stockHint: '当前股票分区只接入 MSFT 1 小时做多路线，读取 MSFT、SPY、QQQ、XLK、VIX 公开行情；只写 longone 线上模拟账本，不向券商下单。',
+    stockStart: '启动股票线上模拟',
+    stockTick: '运行股票一轮',
+    stockStop: '停止股票并清仓',
+    stockSignals: '股票前向信号',
+    stockPositions: '股票当前持仓',
+    stockHistory: '股票模拟记录',
+    stockScheduler: '股票自动记录',
     maxSymbolPositions: '单币最大持仓',
     adaptiveSizing: '自适应仓位',
     maxPositionPct: '单次权益上限',
@@ -37,12 +42,12 @@ const COPY: Record<string, Record<string, string>> = {
     both: '做多 + 做空',
     longOnly: '只做多',
     shortOnly: '只做空',
-    cryptoStart: '启动前向账本',
-    cryptoTick: '运行一轮',
+    cryptoStart: '启动线上模拟交易',
+    cryptoTick: '运行一轮线上模拟',
     cryptoStop: '停止并清仓',
     reconcile: '仓位对账',
     closeAll: 'Testnet 全部平仓',
-    cryptoHealth: '加密安全状态',
+    cryptoHealth: '模拟安全状态',
     testnetAccount: 'Testnet 账户',
     testnetPositions: 'Testnet 持仓',
     testnetOrders: 'Testnet 挂单',
@@ -87,14 +92,19 @@ const COPY: Record<string, Record<string, string>> = {
   },
   en: {
     eyebrow: 'HFCD Multi-Market Trading',
-    title: 'AI Forward Ledger for Crypto and Equity ETFs',
-    subtitle: 'Runs V3.0 blind-test passed routes: BTCUSDT 1h, SOLUSDT 1h, SPY 1h, QQQ 15m, IWM 1h. BTC/SOL can use Binance Demo Testnet; ETFs stay paper-only.',
-    model: 'Model',
-    modelText: 'This module applies HFCD frequency routing, DarkForest sensors, and the V3.0 blind-test passed routes. Long entries are the blind-test-promoted baseline; shorts are enabled as forward-validation routes and write only when route gates pass.',
-    goldEntry: 'Open dedicated gold trading',
-    goldEntryHint: 'GC=F-first gold paper trading with GLD fallback. No real orders are sent.',
-    cryptoPanel: 'V3.1 Short-Vol Forward Ledger',
-    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, depth, spread, volatility, and remaining risk budget.',
+    title: 'AI Online Paper Trading for Crypto, ETFs, and Stocks',
+    subtitle: 'Crypto, ETF, and stock routes run in separated online paper ledgers. BTC/SOL can use Binance Demo Testnet; SPY/QQQ/IWM/MSFT stay on the longone paper ledger.',
+    cryptoPanel: 'Crypto / ETF Online Paper Ledger',
+    cryptoHint: 'BTCUSDT/SOLUSDT use Binance USD-M futures public realtime data. SPY/QQQ/IWM use Yahoo public charts. Trade amount is a cap; actual sizing adapts to score, spread, volatility, and remaining risk budget.',
+    stockPanel: 'Stock AI Online Paper Trading',
+    stockHint: 'The stock section currently runs MSFT 1h long-only with MSFT, SPY, QQQ, XLK, and VIX public data. It writes only to the longone online paper ledger.',
+    stockStart: 'Start Stock Paper Trading',
+    stockTick: 'Run One Stock Tick',
+    stockStop: 'Stop Stock and Liquidate',
+    stockSignals: 'Stock Forward Signal',
+    stockPositions: 'Stock Open Positions',
+    stockHistory: 'Stock Paper Records',
+    stockScheduler: 'Stock auto recorder',
     maxSymbolPositions: 'Max per symbol',
     adaptiveSizing: 'Adaptive sizing',
     maxPositionPct: 'Equity cap / trade',
@@ -115,12 +125,12 @@ const COPY: Record<string, Record<string, string>> = {
     both: 'Long + Short',
     longOnly: 'Long only',
     shortOnly: 'Short only',
-    cryptoStart: 'Start Crypto Simulation',
-    cryptoTick: 'Run Crypto Tick',
+    cryptoStart: 'Start Online Paper Trading',
+    cryptoTick: 'Run One Paper Tick',
     cryptoStop: 'Stop and Liquidate',
     reconcile: 'Reconcile',
     closeAll: 'Testnet Close All',
-    cryptoHealth: 'Crypto safety',
+    cryptoHealth: 'Simulation safety',
     testnetAccount: 'Testnet Account',
     testnetPositions: 'Testnet Positions',
     testnetOrders: 'Testnet Orders',
@@ -208,6 +218,12 @@ const reasonText: Record<string, string> = {
   '反向信号确认，平仓准备反手': '反向信号确认，平仓准备反手',
   '同标的信号弱化且持仓浮亏，减仓保护': '同标的信号弱化且持仓浮亏，减仓保护',
   '用户风险上限收缩，超额持仓自动平仓': '用户风险上限收缩，超额持仓自动平仓',
+  'MSFT 股票线上模拟路线当前只允许做多，做空未接入主账本': 'MSFT 股票线上模拟路线当前只允许做多，做空未接入主账本',
+  '股票事件/开收盘/VIX 风险过高，跳过本轮信号': '股票事件/开收盘/VIX 风险过高，跳过本轮信号',
+  'Stock V1.3 股票线上模拟交易按真实行情达标做多开仓，不发送券商订单': 'Stock V1.3 股票线上模拟交易按真实行情达标做多开仓，不发送券商订单',
+  '线上模拟路线实时信号未达门槛': '线上模拟路线实时信号未达门槛',
+  '信号未达线上模拟交易标准': '信号未达线上模拟交易标准',
+  'ETF 通过路线只写线上模拟账本，不发送交易所订单': 'ETF 通过路线只写线上模拟账本，不发送交易所订单',
 };
 
 function money(value?: number) {
@@ -231,9 +247,12 @@ function translate(value?: string) {
 export default function MultiMarketTradingPage({ locale, canUseExchangeExecution = false }: Props) {
   const copy = COPY[locale] || COPY.zh;
   const [cryptoDashboard, setCryptoDashboard] = useState<any | null>(null);
+  const [stockDashboard, setStockDashboard] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
+  const [stockLoading, setStockLoading] = useState(false);
   const [message, setMessage] = useState('');
   const userEditedCryptoConfig = useRef(false);
+  const userEditedStockConfig = useRef(false);
   const [cryptoConfig, setCryptoConfig] = useState({
     capital_usd: 100_000,
     fixed_trade_usd: 1_000,
@@ -249,6 +268,24 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     order_execution: 'paper',
     testnet_close_all_on_stop: true,
   });
+  const [stockConfig, setStockConfig] = useState({
+    capital_usd: 50_000,
+    fixed_trade_usd: 1_000,
+    adaptive_sizing: true,
+    max_position_pct: 0.04,
+    max_open_positions: 1,
+    max_symbol_positions: 1,
+    stop_loss_pct: 0.018,
+    take_profit_pct: 0.036,
+    min_signal_score: 0.62,
+    max_holding_minutes: 120,
+    side_policy: 'long_only',
+    order_execution: 'paper',
+    asset_scope: 'stock',
+    allow_short: false,
+    allow_reverse: false,
+    testnet_close_all_on_stop: false,
+  });
   const [binanceKeys, setBinanceKeys] = useState({ apiKey: '', apiSecret: '' });
   const hasUserTestnetKeys = Boolean(binanceKeys.apiKey.trim() && binanceKeys.apiSecret.trim());
   const canRequestExchangeExecution = canUseExchangeExecution || hasUserTestnetKeys;
@@ -258,6 +295,14 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     if (stored) return stored;
     const id = `crypto_user_${Math.random().toString(36).slice(2, 10)}`;
     if (typeof window !== 'undefined') window.localStorage.setItem('hfcd_crypto_testnet_user_id', id);
+    return id;
+  }, []);
+
+  const stockUserId = useMemo(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('hfcd_stock_paper_user_id') : '';
+    if (stored) return stored;
+    const id = `stock_user_${Math.random().toString(36).slice(2, 10)}`;
+    if (typeof window !== 'undefined') window.localStorage.setItem('hfcd_stock_paper_user_id', id);
     return id;
   }, []);
 
@@ -288,7 +333,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
   }, [binanceKeys.apiKey, binanceKeys.apiSecret, canUseExchangeExecution, hasUserTestnetKeys]);
 
   const loadCryptoDashboard = useCallback(async (headersOverride?: Record<string, string>) => {
-    const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}`, {
+    const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(cryptoUserId)}&asset_scope=non_stock`, {
       cache: 'no-store',
       headers: headersOverride ?? exchangeHeaders,
     });
@@ -314,6 +359,36 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       }));
     }
   }, [cryptoUserId, exchangeHeaders]);
+
+  const loadStockDashboard = useCallback(async () => {
+    const res = await fetch(`/api/crypto-testnet/dashboard?user_id=${encodeURIComponent(stockUserId)}&asset_scope=stock`, {
+      cache: 'no-store',
+    });
+    const data = await res.json();
+    setStockDashboard(data);
+    const remoteConfig = data?.summary?.config;
+    if (remoteConfig && typeof remoteConfig === 'object' && !userEditedStockConfig.current) {
+      setStockConfig((prev) => ({
+        ...prev,
+        capital_usd: Number(remoteConfig.capital_usd || data?.summary?.initial_cash_usd || prev.capital_usd),
+        fixed_trade_usd: Number(remoteConfig.fixed_trade_usd || prev.fixed_trade_usd),
+        adaptive_sizing: remoteConfig.adaptive_sizing !== false,
+        max_position_pct: Number(remoteConfig.max_position_pct || prev.max_position_pct),
+        max_open_positions: 1,
+        max_symbol_positions: 1,
+        stop_loss_pct: Number(remoteConfig.stop_loss_pct || prev.stop_loss_pct),
+        take_profit_pct: Number(remoteConfig.take_profit_pct || prev.take_profit_pct),
+        min_signal_score: Number(remoteConfig.min_signal_score || prev.min_signal_score),
+        max_holding_minutes: Number(remoteConfig.max_holding_minutes || prev.max_holding_minutes),
+        side_policy: 'long_only',
+        order_execution: 'paper',
+        asset_scope: 'stock',
+        allow_short: false,
+        allow_reverse: false,
+        testnet_close_all_on_stop: false,
+      }));
+    }
+  }, [stockUserId]);
 
   const saveBinanceKeys = useCallback(async () => {
     if (typeof window === 'undefined') return;
@@ -369,6 +444,7 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
       }
       const safeBody = {
         ...body,
+        asset_scope: body.asset_scope || 'non_stock',
         order_execution: canRequestExchangeExecution ? body.order_execution : 'paper',
         testnet_close_all_on_stop: canRequestExchangeExecution ? body.testnet_close_all_on_stop : false,
       };
@@ -378,24 +454,55 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         body: JSON.stringify({ user_id: cryptoUserId, ...safeBody }),
       });
       await parseActionResponse(res);
-      setMessage('加密交易操作已完成。');
+      setMessage('线上模拟交易操作已完成。');
       userEditedCryptoConfig.current = false;
       await loadCryptoDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '加密交易操作失败。');
+      setMessage(error instanceof Error ? error.message : '线上模拟交易操作失败。');
     } finally {
       setLoading(false);
     }
   }, [canRequestExchangeExecution, copy.testnetLockedHint, cryptoUserId, exchangeHeaders, loadCryptoDashboard, parseActionResponse]);
 
+  const postStockAction = useCallback(async (path: string, body: Record<string, unknown> = {}) => {
+    setStockLoading(true);
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          user_id: stockUserId,
+          ...body,
+          asset_scope: 'stock',
+          side_policy: 'long_only',
+          order_execution: 'paper',
+          allow_short: false,
+          allow_reverse: false,
+          max_open_positions: 1,
+          max_symbol_positions: 1,
+          testnet_close_all_on_stop: false,
+        }),
+      });
+      await parseActionResponse(res);
+      setMessage('股票线上模拟交易操作已完成。');
+      userEditedStockConfig.current = false;
+      await loadStockDashboard();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '股票线上模拟交易操作失败。');
+    } finally {
+      setStockLoading(false);
+    }
+  }, [loadStockDashboard, parseActionResponse, stockUserId]);
+
   useEffect(() => {
-    loadCryptoDashboard().catch(() => setMessage('读取加密 Testnet 镜像失败。'));
-  }, [loadCryptoDashboard]);
+    loadCryptoDashboard().catch(() => setMessage('读取线上模拟交易账本失败。'));
+    loadStockDashboard().catch(() => setMessage('读取股票线上模拟交易账本失败。'));
+  }, [loadCryptoDashboard, loadStockDashboard]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
       if (cryptoDashboard?.summary?.mode === 'running') {
-        await postCryptoAction('/api/crypto-testnet/tick', cryptoConfig);
+        await postCryptoAction('/api/crypto-testnet/tick', { ...cryptoConfig, asset_scope: 'non_stock' });
       } else {
         await loadCryptoDashboard().catch(() => undefined);
       }
@@ -403,12 +510,31 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
     return () => window.clearInterval(timer);
   }, [cryptoConfig, cryptoDashboard?.summary?.mode, loadCryptoDashboard, postCryptoAction]);
 
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      if (stockDashboard?.summary?.mode === 'running') {
+        await postStockAction('/api/crypto-testnet/tick', stockConfig);
+      } else {
+        await loadStockDashboard().catch(() => undefined);
+      }
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [loadStockDashboard, postStockAction, stockConfig, stockDashboard?.summary?.mode]);
+
   const cryptoSummary = cryptoDashboard?.summary;
   const cryptoSignals = cryptoDashboard?.signals || [];
   const cryptoTrades = cryptoDashboard?.recent_trades || [];
   const cryptoPositions = cryptoDashboard?.positions || [];
   const cryptoSensors = cryptoDashboard?.sensors || [];
   const selectedRoutes = cryptoDashboard?.market_health?.selected_routes || [];
+  const stockSummary = stockDashboard?.summary;
+  const stockSignals = stockDashboard?.signals || [];
+  const stockTrades = stockDashboard?.recent_trades || [];
+  const stockPositions = stockDashboard?.positions || [];
+  const stockSensors = stockDashboard?.sensors || [];
+  const stockRoutes = stockDashboard?.market_health?.selected_routes || [];
+  const stockSignal = stockSignals.find((row: any) => row.symbol === 'MSFT') || stockSignals[0] || null;
+  const stockScheduler = stockDashboard?.ledger || {};
   const testnet = cryptoDashboard?.testnet || {};
   const testnetPositions = Array.isArray(testnet.positions) ? testnet.positions : [];
   const testnetOrders = Array.isArray(testnet.open_orders) ? testnet.open_orders : [];
@@ -461,30 +587,6 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         <p className="mt-2 max-w-5xl text-sm leading-6 text-cyan-50/62">{copy.subtitle}</p>
       </section>
 
-      <section className="mt-5 rounded-[28px] border border-cyan-200/12 bg-white/[0.03] p-5">
-        <h2 className="text-xl font-black text-white">{copy.model}</h2>
-        <p className="mt-2 text-sm leading-6 text-cyan-50/62">{copy.modelText}</p>
-        <p className="mt-2 text-xs text-amber-200/80">说明：这是研究用模拟账户，不构成投资建议。真实自动交易还需要券商/交易所授权、账户风控、合规审批和人工监控。</p>
-        <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/10 p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm font-black text-amber-100">{copy.goldEntry}</p>
-              <p className="mt-1 text-xs leading-5 text-amber-50/65">{copy.goldEntryHint}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                window.history.pushState({}, '', '?view=gold-trading');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
-              className="rounded-2xl bg-amber-300 px-5 py-3 text-sm font-black text-amber-950 transition hover:bg-amber-200"
-            >
-              {copy.goldEntry}
-            </button>
-          </div>
-        </div>
-      </section>
-
       <section className="mt-5 rounded-[28px] border border-emerald-200/15 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.16),transparent_30rem),rgba(255,255,255,0.03)] p-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -525,12 +627,12 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           ))}
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-5">
+        <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {selectedRoutes.map((route: any) => (
             <div key={`route-${route.symbol}`} className="rounded-2xl border border-emerald-200/10 bg-black/18 p-3">
               <p className="text-sm font-black text-white">{route.symbol}</p>
               <p className="mt-1 text-[11px] leading-4 text-emerald-50/55">
-                {route.cadence} · {route.side_policy === 'both' ? '多空' : route.side_policy === 'long_only' ? '只做多' : route.side_policy} · {route.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
+                {route.cadence} · {route.side_policy === 'both' ? '多空' : route.side_policy === 'long_only' ? '只做多' : route.side_policy} · {route.asset_class === 'single_stock' ? '股票线上模拟' : route.execution_venue === 'paper_only' ? '线上模拟' : 'testnet/线上模拟'}
               </p>
               {route.validated_side_policy === 'long_only' && route.side_policy === 'both' ? (
                 <p className="mt-1 text-[11px] leading-4 text-amber-100/70">多头盲测通过；空头仅前向验证</p>
@@ -601,8 +703,8 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
           </label>
           ) : null}
           <div className="flex flex-wrap gap-3">
-            <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', cryptoConfig)} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
-            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick', cryptoConfig)} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
+            <button disabled={loading || cryptoSummary?.mode === 'running'} onClick={() => postCryptoAction('/api/crypto-testnet/start', { ...cryptoConfig, asset_scope: 'non_stock' })} className="rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-emerald-950 disabled:opacity-45">{copy.cryptoStart}</button>
+            <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/tick', { ...cryptoConfig, asset_scope: 'non_stock' })} className="rounded-2xl border border-emerald-200/15 bg-emerald-300/12 px-5 py-3 text-sm font-black text-emerald-100">{copy.cryptoTick}</button>
             <button disabled={loading} onClick={() => postCryptoAction('/api/crypto-testnet/stop', { liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.cryptoStop}</button>
             {canRequestExchangeExecution ? (
               <>
@@ -741,13 +843,13 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
 
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <div className="rounded-[24px] border border-emerald-200/10 bg-black/20 p-4">
-            <h3 className="text-lg font-black text-white">V3.1 通过路线信号</h3>
+            <h3 className="text-lg font-black text-white">线上模拟路线信号</h3>
             <div className="mt-3 space-y-3">
               {cryptoSignals.map((row: any) => (
                 <div key={`${row.symbol}-${row.captured_at}`} className="rounded-2xl border border-emerald-200/10 bg-white/[0.03] p-4">
                   <p className="text-sm font-black text-white">{row.symbol} · {row.route} · {row.cadence}</p>
                   <p className="mt-2 text-xs text-emerald-50/70">
-                    {translate(row.action)} · 价格 {numberText(row.price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 执行 {row.execution_venue === 'paper_only' ? 'paper' : 'testnet/paper'}
+                    {translate(row.action)} · 价格 {numberText(row.price, row.symbol === 'BTCUSDT' ? 2 : row.symbol?.endsWith('USDT') ? 3 : 2)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 执行 {row.asset_class === 'single_stock' ? '股票线上模拟' : row.execution_venue === 'paper_only' ? '线上模拟' : 'testnet/线上模拟'}
                   </p>
                   <p className="mt-1 text-xs text-emerald-50/45">
                     资金费率 {pct(row.funding_rate)} · 深度失衡 {numberText(row.depth_imbalance, 4)} · 点差 {numberText(row.spread_bps, 2)} bps · {row.reject_reason || '信号达标时按配置执行'}
@@ -787,6 +889,125 @@ export default function MultiMarketTradingPage({ locale, canUseExchangeExecution
         <div className="mt-5 grid gap-5 xl:grid-cols-2">
           <MiniTradeTable title="当前前向持仓" rows={cryptoPositions} type="positions" />
           <MiniTradeTable title="前向账本记录" rows={cryptoTrades} type="history" />
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-[28px] border border-sky-200/15 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_32rem),rgba(255,255,255,0.03)] p-5">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-200/70">Stock V1.3 · MSFT 1h</p>
+            <h2 className="mt-1 text-2xl font-black text-white">{copy.stockPanel}</h2>
+            <p className="mt-2 max-w-5xl text-sm leading-6 text-sky-50/65">{copy.stockHint}</p>
+          </div>
+          <div className={`rounded-2xl border px-4 py-3 text-sm font-bold ${stockDashboard?.market_health?.ok ? 'border-sky-200/20 bg-sky-300/10 text-sky-100' : 'border-amber-300/30 bg-amber-300/10 text-amber-100'}`}>
+            {copy.stockScheduler}：{stockScheduler.scheduler_enabled ? `已启用 · ${stockScheduler.scheduler_cadence || '每 5 分钟'}` : '启动后自动记录'} · {stockSummary?.mode || 'stopped'}
+            <p className="mt-1 text-[11px] text-sky-50/55">最近自动记录：{stockScheduler.scheduler_last_tick_at || '-'}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {stockRoutes.map((route: any) => (
+            <div key={`stock-route-${route.symbol}`} className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
+              <p className="text-sm font-black text-white">{route.symbol}</p>
+              <p className="mt-1 text-xs leading-5 text-sky-50/60">{route.cadence} · 只做多 · 股票线上模拟</p>
+              <p className="mt-1 text-xs text-sky-200/80">盲测 PF {numberText(route.blind_test?.test_profit_factor || route.blind_test?.profit_factor, 2)} · 测试 {money(route.blind_test?.test_net_pnl_usd)}</p>
+            </div>
+          ))}
+          <div className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
+            <p className="text-xs font-bold text-sky-50/45">当前信号</p>
+            <p className="mt-2 text-lg font-black text-white">{stockSignal ? translate(stockSignal.action) : '-'}</p>
+            <p className="mt-1 text-xs text-sky-50/55">{stockSignal ? `价格 ${numberText(stockSignal.price, 2)} · 稳定分 ${numberText(stockSignal.score, 3)}` : '等待行情'}</p>
+          </div>
+          <div className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
+            <p className="text-xs font-bold text-sky-50/45">已实现收益</p>
+            <p className="mt-2 text-lg font-black text-white">{money(stockSummary?.realized_pnl_usd)}</p>
+            <p className="mt-1 text-xs text-sky-50/55">未实现 {money(stockSummary?.unrealized_pnl_usd)}</p>
+          </div>
+          <div className="rounded-2xl border border-sky-200/10 bg-black/20 p-4">
+            <p className="text-xs font-bold text-sky-50/45">持仓 / 胜率</p>
+            <p className="mt-2 text-lg font-black text-white">{stockSummary?.open_positions || 0}/{stockSummary?.max_open_positions || 1}</p>
+            <p className="mt-1 text-xs text-sky-50/55">胜率 {pct(stockSummary?.win_rate)}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {[
+            ['capital_usd', copy.capital],
+            ['fixed_trade_usd', '单笔最高金额'],
+            ['max_position_pct', copy.maxPositionPct],
+            ['min_signal_score', '最低稳定分'],
+            ['max_holding_minutes', '最长持有分钟'],
+          ].map(([key, label]) => (
+            <label key={`stock-${key}`} className="text-xs font-bold text-sky-50/55">
+              {label}
+              <input
+                className="mt-2 w-full rounded-2xl border border-sky-200/10 bg-black/35 px-4 py-3 text-sm font-bold text-white outline-none"
+                type="number"
+                step={key.includes('pct') || key.includes('score') ? '0.001' : '1'}
+                value={(stockConfig as any)[key]}
+                onChange={(event) => {
+                  userEditedStockConfig.current = true;
+                  setStockConfig((prev) => ({ ...prev, [key]: Number(event.target.value) }));
+                }}
+              />
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button disabled={stockLoading || stockSummary?.mode === 'running'} onClick={() => postStockAction('/api/crypto-testnet/start', stockConfig)} className="rounded-2xl bg-sky-300 px-5 py-3 text-sm font-black text-sky-950 disabled:opacity-45">{copy.stockStart}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/tick', stockConfig)} className="rounded-2xl border border-sky-200/15 bg-sky-300/12 px-5 py-3 text-sm font-black text-sky-100">{copy.stockTick}</button>
+          <button disabled={stockLoading} onClick={() => postStockAction('/api/crypto-testnet/stop', { ...stockConfig, liquidate: true })} className="rounded-2xl border border-red-300/30 bg-red-400/18 px-5 py-3 text-sm font-black text-red-100">{copy.stockStop}</button>
+        </div>
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <div className="rounded-[24px] border border-sky-200/10 bg-black/20 p-4">
+            <h3 className="text-lg font-black text-white">{copy.stockSignals}</h3>
+            <div className="mt-3 space-y-3">
+              {stockSignals.map((row: any) => (
+                <div key={`stock-signal-${row.symbol}-${row.captured_at}`} className="rounded-2xl border border-sky-200/10 bg-white/[0.03] p-4">
+                  <p className="text-sm font-black text-white">{row.symbol} · {row.route} · {row.cadence}</p>
+                  <p className="mt-2 text-xs text-sky-50/70">
+                    {translate(row.action)} · 价格 {numberText(row.price, 2)} · 稳定分 {numberText(row.score, 3)} · 置信度 {pct(row.confidence)} · 股票线上模拟
+                  </p>
+                  <p className="mt-1 text-xs text-sky-50/45">
+                    板块 {pct(row.sector_ret_1)} · 大盘 {pct(row.market_ret_1)} · VIX {pct(row.vix_ret_1)} · {row.reject_reason || '信号达标时按股票账本执行'}
+                  </p>
+                </div>
+              ))}
+              {!stockSignals.length ? <p className="rounded-2xl border border-sky-200/10 bg-black/20 p-4 text-xs text-sky-50/50">暂无股票信号。</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-[24px] border border-sky-200/10 bg-black/20 p-4">
+            <h3 className="text-lg font-black text-white">股票传感器</h3>
+            <div className="mt-3 overflow-auto">
+              <table className="min-w-[620px] w-full text-left text-xs">
+                <thead className="text-sky-50/45">
+                  <tr>{['标的', '路线', '板块', '大盘', 'VIX', '事件风险', '点差'].map((head) => <th key={head} className="border-b border-sky-200/10 px-3 py-3 font-black">{head}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {stockSensors.map((row: any) => (
+                    <tr key={`stock-sensor-${row.symbol}`} className="border-b border-sky-200/8 text-sky-50/80">
+                      <td className="px-3 py-3 font-black">{row.symbol}</td>
+                      <td className="px-3 py-3">{row.route}</td>
+                      <td className="px-3 py-3">{pct(row.sector_ret_1)}</td>
+                      <td className="px-3 py-3">{pct(row.market_ret_1)}</td>
+                      <td className="px-3 py-3">{pct(row.vix_ret_1)}</td>
+                      <td className="px-3 py-3">{numberText(row.stock_event_risk, 3)}</td>
+                      <td className="px-3 py-3">{numberText(row.spread_bps, 2)} bps</td>
+                    </tr>
+                  ))}
+                  {!stockSensors.length ? <tr><td className="px-3 py-6 text-sky-50/50" colSpan={7}>暂无股票传感器数据。</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <MiniTradeTable title={copy.stockPositions} rows={stockPositions} type="positions" />
+          <MiniTradeTable title={copy.stockHistory} rows={stockTrades} type="history" />
         </div>
       </section>
 
