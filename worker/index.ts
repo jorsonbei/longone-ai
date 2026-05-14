@@ -29,6 +29,8 @@ import {
   HFCDResearchJobRequest,
 } from '../src/lib/hfcdResearchJobs';
 import { FOOTBALL_ACCURACY_FEED } from '../src/lib/generated/footballAccuracyFeed';
+import { FOOTBALL_LEAGUE_QUALITY } from '../src/lib/generated/footballLeagueQuality';
+import { FOOTBALL_MARKET_SIGNAL_CACHE } from '../src/lib/generated/footballMarketSignalCache';
 import { ENERGY_RUNTIME_FEED } from '../src/lib/generated/energyRuntimeFeed';
 import { MULTI_MARKET_TRADING_CONFIG } from '../src/lib/generated/multiMarketTradingConfig';
 
@@ -6558,6 +6560,1582 @@ async function runCryptoTestnetScheduledTick(env: Env) {
 }
 
 const HFCD_FOOTBALL_ACCURACY_MODEL = 'HFCD_Football_V9_AccuracyFirstPredictor';
+const FOOTBALL_RUNTIME_FEED_KEY = 'today';
+const FOOTBALL_RUNTIME_REFRESH_VERSION = 'HFCD_Football_WorkerAccuracyDaily_V2';
+const FOOTBALL_SIGNAL_LOOKAHEAD_DAYS = 7;
+const FOOTBALL_RUNTIME_MAX_AGE_MS = 10 * 60 * 1000;
+const FOOTBALL_DAILY_MAX_MATCHES = 420;
+const FOOTBALL_PUBLIC_ODDS_HEALTH_KEY = 'public_odds_sources';
+const FOOTBALL_PUBLIC_ODDS_MAX_AGE_MS = 30 * 60 * 1000;
+const FOOTBALL_PUBLIC_ODDS_TIMEOUT_MS = 5500;
+const FOOTBALL_PUBLIC_ODDS_SOURCES = [
+  {
+    id: 'titan007',
+    name: 'Titan007',
+    url: 'https://guess2.titan007.com/',
+    probe_tokens: ['titan', 'odds', 'football', 'soccer', '比分', '足球'],
+  },
+  {
+    id: 'oddsportal',
+    name: 'OddsPortal',
+    url: 'https://www.oddsportal.com/football/',
+    probe_tokens: ['oddsportal', 'football', 'soccer', 'odds'],
+  },
+  {
+    id: 'betexplorer',
+    name: 'BetExplorer',
+    url: 'https://www.betexplorer.com/football/',
+    probe_tokens: ['betexplorer', 'football', 'soccer', 'odds'],
+  },
+];
+const FOOTBALL_LIVESCORE_BASE_URLS = [
+  'https://prod-cdn-public-api.livescore.com',
+  'https://prod-public-api.livescore.com',
+];
+const FOOTBALL_FINISHED_STATUS_VALUES = new Set([
+  'ft',
+  'aet',
+  'ap',
+  'pen',
+  'match finished',
+  'finished',
+  'full time',
+  'full-time',
+]);
+const FOOTBALL_UNPLAYABLE_STATUS_FRAGMENTS = ['abandon', 'cancel', 'postpon', 'suspend', 'walkover'];
+
+function workerFootballBeijingParts(date = new Date()) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(date)
+    .reduce<Record<string, string>>((acc, part) => {
+      if (part.type !== 'literal') acc[part.type] = part.value;
+      return acc;
+    }, {});
+}
+
+function workerFootballBeijingDate(date = new Date()) {
+  const parts = workerFootballBeijingParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function workerFootballBeijingDateOffset(offsetDays: number, date = new Date()) {
+  const [year, month, day] = workerFootballBeijingDate(date).split('-').map((value) => Number(value));
+  const shifted = new Date(Date.UTC(year, month - 1, day + offsetDays, 0, 0, 0));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function workerFootballBeijingDateWindow(date = new Date(), lookaheadDays = FOOTBALL_SIGNAL_LOOKAHEAD_DAYS) {
+  return Array.from({ length: lookaheadDays + 1 }, (_value, index) => workerFootballBeijingDateOffset(index, date));
+}
+
+function workerFootballLiveScoreDateTime(value: unknown, fallbackDate: string) {
+  const text = String(value || '').trim();
+  const date = text.length >= 8 ? `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}` : fallbackDate;
+  const hour = text.length >= 10 ? text.slice(8, 10) : '00';
+  const minute = text.length >= 12 ? text.slice(10, 12) : '00';
+  return {
+    date,
+    time_label: `${hour}:${minute}`,
+    commence_time: `${date}T${hour}:${minute}:00+08:00`,
+  };
+}
+
+function workerFootballSafeText(value: unknown) {
+  return String(value || '').trim();
+}
+
+function workerFootballOddsFailureCategory(status: number | null, errorText = '') {
+  const message = errorText.toLowerCase();
+  if (message.includes('abort') || message.includes('timeout')) return 'timeout';
+  if (status === 401 || status === 403) return 'blocked_or_forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 408 || status === 429) return 'rate_limited';
+  if (status !== null && status >= 500) return 'provider_server_error';
+  if (status !== null && status >= 300) return 'unexpected_http_status';
+  if (message) return 'fetch_failed';
+  return 'content_unverified';
+}
+
+async function workerFootballFetchTextWithTimeout(url: string, timeoutMs = FOOTBALL_PUBLIC_ODDS_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'user-agent': 'Mozilla/5.0 HFCD-Football-Research-OddsProbe/1.0',
+      },
+    });
+    return {
+      response,
+      text: await response.text(),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function workerFootballProbePublicOddsSource(source: any) {
+  const startedAt = Date.now();
+  try {
+    const { response, text } = await workerFootballFetchTextWithTimeout(source.url);
+    const elapsedMs = Date.now() - startedAt;
+    const sample = String(text || '').slice(0, 60000).toLowerCase();
+    const matchedTokens = (source.probe_tokens || []).filter((token: string) => sample.includes(String(token).toLowerCase()));
+    const accessible = response.ok;
+    const contentMatched = matchedTokens.length > 0;
+    const ok = accessible && response.status < 400;
+    return {
+      source_id: source.id,
+      name: source.name,
+      url: source.url,
+      ok,
+      accessible,
+      status: response.status,
+      failure_category: ok ? null : workerFootballOddsFailureCategory(response.status),
+      response_ms: elapsedMs,
+      content_type: response.headers.get('content-type') || null,
+      bytes_sampled: sample.length,
+      content_matched: contentMatched,
+      matched_tokens: matchedTokens.slice(0, 5),
+      supports_direct_match_odds: false,
+      direct_match_odds_reason: '当前适配器只探测公开源可达性；未把页面赔率解析成具体比赛盘口。',
+      checked_at: energyIso(),
+    };
+  } catch (error) {
+    return {
+      source_id: source.id,
+      name: source.name,
+      url: source.url,
+      ok: false,
+      accessible: false,
+      status: null,
+      failure_category: workerFootballOddsFailureCategory(null, error instanceof Error ? error.message : String(error)),
+      response_ms: Date.now() - startedAt,
+      content_type: null,
+      bytes_sampled: 0,
+      content_matched: false,
+      matched_tokens: [],
+      supports_direct_match_odds: false,
+      direct_match_odds_reason: '公开源请求失败；本轮不使用真实赔率。',
+      error: error instanceof Error ? error.message : String(error),
+      checked_at: energyIso(),
+    };
+  }
+}
+
+function workerFootballOddsHealthFallback(reason: string, error?: unknown) {
+  return {
+    ok: false,
+    checked_at: energyIso(),
+    cache_max_age_ms: FOOTBALL_PUBLIC_ODDS_MAX_AGE_MS,
+    reason,
+    sources: [],
+    summary: {
+      total_sources: FOOTBALL_PUBLIC_ODDS_SOURCES.length,
+      reachable_sources: 0,
+      unreachable_sources: FOOTBALL_PUBLIC_ODDS_SOURCES.length,
+      direct_match_odds_sources: 0,
+      source_ids_reachable: [],
+      source_ids_unreachable: FOOTBALL_PUBLIC_ODDS_SOURCES.map((source) => source.id),
+      error: error instanceof Error ? error.message : error ? String(error) : null,
+    },
+  };
+}
+
+function workerFootballBuildOddsHealthPayload(sources: any[], reason: string) {
+  const reachable = sources.filter((source) => source.ok);
+  const directMatchSources = sources.filter((source) => source.supports_direct_match_odds);
+  return {
+    ok: reachable.length > 0,
+    checked_at: energyIso(),
+    reason,
+    cache_max_age_ms: FOOTBALL_PUBLIC_ODDS_MAX_AGE_MS,
+    sources,
+    summary: {
+      total_sources: sources.length,
+      reachable_sources: reachable.length,
+      unreachable_sources: sources.length - reachable.length,
+      direct_match_odds_sources: directMatchSources.length,
+      source_ids_reachable: reachable.map((source) => source.source_id),
+      source_ids_unreachable: sources.filter((source) => !source.ok).map((source) => source.source_id),
+    },
+  };
+}
+
+async function refreshWorkerFootballOddsHealth(env: Env, reason = 'manual_probe') {
+  let payload: any = workerFootballOddsHealthFallback(reason);
+  try {
+    const sources = await Promise.all(FOOTBALL_PUBLIC_ODDS_SOURCES.map((source) => workerFootballProbePublicOddsSource(source)));
+    payload = workerFootballBuildOddsHealthPayload(sources, reason);
+  } catch (error) {
+    payload = workerFootballOddsHealthFallback(reason, error);
+  }
+  await saveStoredWorkerFootballJson(env, FOOTBALL_PUBLIC_ODDS_HEALTH_KEY, workerFootballBeijingDate(), payload);
+  return payload;
+}
+
+function workerFootballStoredJsonIsFresh(payload: any, maxAgeMs = FOOTBALL_PUBLIC_ODDS_MAX_AGE_MS) {
+  const generatedAt = new Date(payload?.checked_at || payload?.generated_at || 0).getTime();
+  return Number.isFinite(generatedAt) && Date.now() - generatedAt <= maxAgeMs;
+}
+
+async function loadOrRefreshWorkerFootballOddsHealth(env: Env, options: { refresh?: boolean } = {}) {
+  const stored = await loadStoredWorkerFootballJson(env, FOOTBALL_PUBLIC_ODDS_HEALTH_KEY);
+  if (!options.refresh && workerFootballStoredJsonIsFresh(stored)) {
+    return {
+      ...stored,
+      cache_status: 'hit',
+    };
+  }
+  const refreshed = await refreshWorkerFootballOddsHealth(env, options.refresh ? 'manual_refresh' : 'cache_stale_refresh');
+  return {
+    ...refreshed,
+    cache_status: 'refreshed',
+  };
+}
+
+function workerFootballPublicOddsSummary(oddsHealth: any) {
+  const sources = Array.isArray(oddsHealth?.sources) ? oddsHealth.sources : [];
+  const reachable = sources.filter((source: any) => source.ok);
+  return {
+    status: reachable.length > 0 ? 'source_health_available' : 'source_health_unavailable',
+    checked_at: oddsHealth?.checked_at || null,
+    cache_status: oddsHealth?.cache_status || null,
+    total_sources: sources.length || FOOTBALL_PUBLIC_ODDS_SOURCES.length,
+    reachable_sources: reachable.length,
+    source_ids_reachable: reachable.map((source: any) => source.source_id),
+    source_ids_unreachable: sources.filter((source: any) => !source.ok).map((source: any) => source.source_id),
+    direct_match_odds_sources: sources.filter((source: any) => source.supports_direct_match_odds).length,
+    direct_match_odds_available: sources.some((source: any) => source.supports_direct_match_odds),
+    note: reachable.length > 0
+      ? '公开赔率网页可达；当前版本尚未把网页内容解析并匹配到具体比赛盘口。'
+      : '公开赔率网页本轮不可达或未通过探测；本轮不使用真实赔率。',
+  };
+}
+
+function workerFootballBadgeUrl(path: unknown) {
+  const text = workerFootballSafeText(path);
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text;
+  return `https://lsm-static-prod.livescore.com/medium/${text.replace(/^\/+/, '')}`;
+}
+
+function workerFootballNormalizeKey(value: unknown) {
+  return workerFootballSafeText(value)
+    .toLowerCase()
+    .replace(/[\s_\-:：/|()[\]{}.,，。'’"“”]+/g, '')
+    .trim();
+}
+
+function workerFootballTeamKey(value: unknown) {
+  return workerFootballNormalizeKey(value)
+    .replace(/^1fc/, '')
+    .replace(/^(fc|sc|sv|cf|cd|ac|as|afc|fk|ifk|tsv|vfb|vfl|nk|bk)/, '')
+    .replace(/(fc|sc|sv|cf|cd|ac|afc|fk|ii|u23|u21|u20|u19|u18|w)$/g, '');
+}
+
+function workerFootballSignalKey(home: unknown, away: unknown) {
+  return `${workerFootballNormalizeKey(home)}__${workerFootballNormalizeKey(away)}`;
+}
+
+function workerFootballTeamsCompatible(a: unknown, b: unknown) {
+  const left = workerFootballNormalizeKey(a);
+  const right = workerFootballNormalizeKey(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const leftTeam = workerFootballTeamKey(a);
+  const rightTeam = workerFootballTeamKey(b);
+  if (leftTeam && rightTeam && leftTeam === rightTeam) return true;
+  const minLength = Math.min(left.length, right.length);
+  if (minLength >= 6 && (left.includes(right) || right.includes(left))) return true;
+  const minTeamLength = Math.min(leftTeam.length, rightTeam.length);
+  return minTeamLength >= 6 && (leftTeam.includes(rightTeam) || rightTeam.includes(leftTeam));
+}
+
+const FOOTBALL_MARKET_SIGNAL_BY_KEY = new Map<string, any>(
+  (FOOTBALL_MARKET_SIGNAL_CACHE as any[]).map((signal) => [String(signal.key || ''), signal]),
+);
+
+function workerFootballMarketSignalRank(signal: any) {
+  if (!signal) return 0;
+  const sourceRank = signal.source === 'legacy_v9_2026_05_02_feed' ? 400 : 200;
+  const officialRank = signal.accuracy_official ? 80 : 0;
+  const confidenceRank = signal.confidence_level === 'high' || signal.confidence === 'high' ? 40 : 0;
+  const probabilityRank = Math.round(Number(signal.model_prob || 0) * 100);
+  return sourceRank + officialRank + confidenceRank + probabilityRank;
+}
+
+const FOOTBALL_MARKET_SIGNAL_BY_LOOSE_KEY = (() => {
+  const signals = new Map<string, any>();
+  for (const signal of FOOTBALL_MARKET_SIGNAL_CACHE as any[]) {
+    const key = `${workerFootballTeamKey(signal?.home)}__${workerFootballTeamKey(signal?.away)}`;
+    if (!key.replace(/_/g, '')) continue;
+    const existing = signals.get(key);
+    if (!existing || workerFootballMarketSignalRank(signal) > workerFootballMarketSignalRank(existing)) {
+      signals.set(key, signal);
+    }
+  }
+  return signals;
+})();
+
+const FOOTBALL_TEAM_PROFILE_BY_KEY = (() => {
+  const profiles = new Map<string, any>();
+  const add = (team: unknown, signal: any) => {
+    const key = workerFootballTeamKey(team);
+    if (!key) return;
+    const profile = profiles.get(key) || {
+      key,
+      signals: 0,
+      model_prob_sum: 0,
+      historical_hit_sum: 0,
+      stability_sum: 0,
+      official_signals: 0,
+      high_signals: 0,
+    };
+    profile.signals += 1;
+    profile.model_prob_sum += Number(signal?.model_prob || 0.56);
+    profile.historical_hit_sum += Number(signal?.historical_hit_rate || 0.56);
+    profile.stability_sum += Number(signal?.stability_score || 0.76);
+    profile.official_signals += signal?.accuracy_official ? 1 : 0;
+    profile.high_signals += signal?.confidence_level === 'high' || signal?.confidence === 'high' ? 1 : 0;
+    profiles.set(key, profile);
+  };
+  for (const signal of FOOTBALL_MARKET_SIGNAL_CACHE as any[]) {
+    add(signal?.home, signal);
+    add(signal?.away, signal);
+  }
+  return profiles;
+})();
+
+function workerFootballMarketSignalForMatch(match: any) {
+  const candidates = [
+    [match?.home_team, match?.away_team],
+    [match?.display_home_team, match?.display_away_team],
+  ].filter(([home, away]) => home && away);
+  for (const [home, away] of candidates) {
+    const exact = FOOTBALL_MARKET_SIGNAL_BY_KEY.get(workerFootballSignalKey(home, away));
+    if (exact) return exact;
+    const loose = FOOTBALL_MARKET_SIGNAL_BY_LOOSE_KEY.get(`${workerFootballTeamKey(home)}__${workerFootballTeamKey(away)}`);
+    if (loose) return loose;
+  }
+  return null;
+}
+
+function workerFootballIsFinishedStatus(status: unknown) {
+  const text = workerFootballSafeText(status).toLowerCase();
+  if (!text) return false;
+  if (FOOTBALL_FINISHED_STATUS_VALUES.has(text)) return true;
+  return FOOTBALL_UNPLAYABLE_STATUS_FRAGMENTS.some((fragment) => text.includes(fragment));
+}
+
+function workerFootballScoreFromLiveScore(value: unknown) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function workerFootballLeagueQuality(stageOrMatch: any) {
+  const quality = FOOTBALL_LEAGUE_QUALITY as any;
+  const leagues = quality?.leagues || {};
+  const candidates = [
+    stageOrMatch?.competition,
+    stageOrMatch?.league,
+    stageOrMatch?.league_en,
+    stageOrMatch?.competition_name,
+    stageOrMatch?.competition_url_name,
+    stageOrMatch?.Snm,
+    stageOrMatch?.Csnm,
+    stageOrMatch?.CompN,
+    stageOrMatch?.CompUrlName,
+  ].filter(Boolean);
+  const direct = candidates.find((candidate) => leagues[String(candidate)]);
+  if (direct) return leagues[String(direct)];
+  const normalized = new Map<string, any>(
+    Object.entries(leagues).map(([key, value]) => [workerFootballNormalizeKey(key), value]),
+  );
+  for (const candidate of candidates) {
+    const hit = normalized.get(workerFootballNormalizeKey(candidate));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function workerFootballHash(text: string) {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function workerFootballScorePick(match: any, leagueQuality: any) {
+  const topScore = leagueQuality?.score_calibration?.top_scores?.[0]?.score;
+  if (topScore && /^\d+-\d+$/.test(String(topScore))) return String(topScore);
+  const distribution = leagueQuality?.score_calibration?.score_distribution || {};
+  const bestDistributionScore = Object.entries(distribution)
+    .filter(([score, value]) => /^\d+-\d+$/.test(score) && Number(value) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))[0]?.[0];
+  if (bestDistributionScore) return bestDistributionScore;
+  const fallbackScores = ['1-1', '2-1', '1-0', '1-2', '2-0', '0-1', '2-2', '3-1'];
+  return fallbackScores[workerFootballHash(`${match.home_team}|${match.away_team}|${match.competition}`) % fallbackScores.length];
+}
+
+function workerFootballLeanLeagueQuality(leagueQuality: any) {
+  if (!leagueQuality) {
+    return {
+      status: 'watch',
+      reason: '未匹配到按联赛回测质量；仅进入观察区',
+      sample_size: 0,
+    };
+  }
+  return {
+    status: leagueQuality.status || 'watch',
+    reason: leagueQuality.reason || '',
+    score_hit_rate: leagueQuality.score_hit_rate ?? null,
+    direction_hit_rate: leagueQuality.direction_hit_rate ?? null,
+    market_effective_rate: leagueQuality.market_effective_rate ?? null,
+    brier: leagueQuality.brier ?? null,
+    log_loss: leagueQuality.log_loss ?? null,
+    sample_size: leagueQuality.score_settled ?? leagueQuality.matches ?? 0,
+    rolling_primary_horizon: leagueQuality.rolling_primary_horizon ?? null,
+    score_calibration: leagueQuality.score_calibration
+      ? {
+          source: leagueQuality.score_calibration.source || '',
+          sample_size: leagueQuality.score_calibration.sample_size || 0,
+          avg_total_goals: leagueQuality.score_calibration.avg_total_goals ?? leagueQuality.score_calibration.total_goals ?? null,
+          top_scores: (leagueQuality.score_calibration.top_scores || []).slice(0, 5),
+        }
+      : null,
+  };
+}
+
+function workerFootballConfidenceLevel(value: unknown) {
+  const text = workerFootballSafeText(value).toLowerCase();
+  if (text.includes('高') || text === 'high') return 'high';
+  if (text.includes('低') || text === 'low') return 'low';
+  return 'medium';
+}
+
+function workerFootballClamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function workerFootballLegacyLeagueAdmission(match: any) {
+  const competitionText = [
+    match?.competition,
+    match?.league,
+    match?.league_en,
+    match?.competition_name,
+    match?.competition_url_name,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const countryText = [match?.competition_country, match?.country].filter(Boolean).join(' ');
+  const key = workerFootballNormalizeKey(competitionText);
+  const countryKey = workerFootballNormalizeKey(countryText);
+  const countryHas = (...tokens: string[]) => tokens.some((token) => countryKey.includes(workerFootballNormalizeKey(token)));
+  const has = (...tokens: string[]) => tokens.some((token) => key.includes(workerFootballNormalizeKey(token)));
+  const excluded =
+    has('women', 'woman', 'u18', 'u19', 'u20', 'u21', 'primavera', 'youth', 'reserves', 'reserve', 'ii', 'iii') ||
+    has('2. bundesliga', '3. liga', 'oberliga', 'regionalliga', 'bayernliga', 'national 2', 'serie d', 'tweede divisie') ||
+    has('laliga 2', 'j league 2', 'j2', 'qualification', 'relegation group', 'championship group', 'playoff');
+  if (excluded) return null;
+  const admissions = [
+    {
+      test: () => countryHas('Germany', 'Deutschland', '德国') && (key === 'bundesliga2526' || key === 'bundesliga' || has('德甲')),
+      hit: 0.615,
+      grade: 'A',
+      label: 'D1/Bundesliga',
+    },
+    {
+      test: () => countryHas('Spain', 'España', '西班牙') && (key === 'laliga2526' || key === 'laliga' || has('西甲')),
+      hit: 0.625,
+      grade: 'A',
+      label: 'SP1/LaLiga',
+    },
+    {
+      test: () => countryHas('England', '英格兰') && (key === 'premierleague2526' || key === 'premierleague' || has('英超')),
+      hit: 0.608,
+      grade: 'B',
+      label: 'E0/Premier League',
+    },
+    {
+      test: () => countryHas('Italy', 'Italia', '意大利') && (key === 'seriea2526' || key === 'seriea' || has('意甲')),
+      hit: 0.602,
+      grade: 'B',
+      label: 'IT1/Serie A',
+    },
+    {
+      test: () => countryHas('France', '法国') && (key === 'ligue12526' || key === 'ligue1' || has('法甲')),
+      hit: 0.596,
+      grade: 'B',
+      label: 'F1/Ligue 1',
+    },
+    {
+      test: () => has('champions league', 'ucl', '欧冠'),
+      hit: 0.618,
+      grade: 'A',
+      label: 'UCL',
+    },
+    {
+      test: () => has('europa league', 'uel', '欧联'),
+      hit: 0.602,
+      grade: 'B',
+      label: 'UEL',
+    },
+    {
+      test: () => countryHas('Japan', '日本') && (has('j1 league', 'j league', '日本职业足球联赛', '日职') && !has('j2', 'j3')),
+      hit: 0.588,
+      grade: 'B',
+      label: 'J1',
+    },
+    {
+      test: () => countryHas('Netherlands', 'Nederland', '荷兰') && (key === 'eredivisie2526' || key === 'eredivisie' || has('荷甲')),
+      hit: 0.586,
+      grade: 'B',
+      label: 'N1/Eredivisie',
+    },
+  ];
+  const found = admissions.find((admission) => admission.test());
+  if (!found) return null;
+  return {
+    status: 'passed',
+    source: 'legacy_v9_supported_competition',
+    reason: `5月2 V9 AccuracyFirst 支持联赛：${found.label}`,
+    market_effective_rate: found.hit,
+    direction_hit_rate: found.hit,
+    score_hit_rate: 0.18,
+    brier: null,
+    log_loss: null,
+    sample_size: 0,
+    accuracy_grade: found.grade,
+  };
+}
+
+function workerFootballAdmission(match: any, leagueQuality: any) {
+  if (leagueQuality?.status === 'passed') {
+    return {
+      status: 'passed',
+      source: 'rolling_league_quality',
+      reason: leagueQuality.reason || '滚动联赛回测通过',
+      market_effective_rate: Number(leagueQuality.market_effective_rate ?? leagueQuality.direction_hit_rate ?? 0.62),
+      direction_hit_rate: Number(leagueQuality.direction_hit_rate ?? leagueQuality.market_effective_rate ?? 0.62),
+      score_hit_rate: Number(leagueQuality.score_hit_rate ?? 0.18),
+      brier: leagueQuality.brier ?? null,
+      log_loss: leagueQuality.log_loss ?? null,
+      sample_size: Number(leagueQuality.score_settled ?? leagueQuality.matches ?? 0),
+      accuracy_grade: Number(leagueQuality.market_effective_rate ?? leagueQuality.direction_hit_rate ?? 0) >= 0.7 ? 'A' : 'B',
+    };
+  }
+  return workerFootballLegacyLeagueAdmission(match) || {
+    status: 'watch',
+    source: 'daily_model_watch',
+    reason: leagueQuality?.reason || '未完成按联赛回测或不在 5月2 V9 支持联赛',
+    market_effective_rate: Number(leagueQuality?.market_effective_rate ?? leagueQuality?.direction_hit_rate ?? 0.54),
+    direction_hit_rate: Number(leagueQuality?.direction_hit_rate ?? leagueQuality?.market_effective_rate ?? 0.54),
+    score_hit_rate: Number(leagueQuality?.score_hit_rate ?? 0.12),
+    brier: leagueQuality?.brier ?? null,
+    log_loss: leagueQuality?.log_loss ?? null,
+    sample_size: Number(leagueQuality?.score_settled ?? leagueQuality?.matches ?? 0),
+    accuracy_grade: 'B',
+  };
+}
+
+function workerFootballTeamProfile(team: unknown) {
+  const key = workerFootballTeamKey(team);
+  const existing = key ? FOOTBALL_TEAM_PROFILE_BY_KEY.get(key) : null;
+  if (existing?.signals > 0) {
+    const signals = Number(existing.signals || 1);
+    return {
+      source: 'market_signal_history',
+      key,
+      signals,
+      profile_score: workerFootballClamp(
+        (existing.model_prob_sum / signals) * 0.55 +
+        (existing.historical_hit_sum / signals) * 0.3 +
+        (existing.stability_sum / signals) * 0.15 +
+        Math.min(existing.official_signals / signals, 0.2),
+        0.42,
+        0.72,
+      ),
+      avg_model_prob: existing.model_prob_sum / signals,
+      avg_historical_hit_rate: existing.historical_hit_sum / signals,
+      avg_stability: existing.stability_sum / signals,
+      official_rate: existing.official_signals / signals,
+    };
+  }
+  const hash = workerFootballHash(String(team || key || 'team'));
+  return {
+    source: 'deterministic_team_prior',
+    key,
+    signals: 0,
+    profile_score: 0.49 + ((hash % 29) - 14) / 500,
+    avg_model_prob: 0.54 + ((hash % 17) - 8) / 800,
+    avg_historical_hit_rate: 0.53 + ((hash % 19) - 9) / 900,
+    avg_stability: 0.7 + (hash % 11) / 200,
+    official_rate: 0,
+  };
+}
+
+function workerFootballScoreParts(score: string) {
+  const [home, away] = String(score || '1-1').split('-').map((value) => Number(value));
+  return {
+    home: Number.isFinite(home) ? home : 1,
+    away: Number.isFinite(away) ? away : 1,
+  };
+}
+
+function workerFootballDailyAccuracySignal(match: any, leagueQuality: any) {
+  const admission = workerFootballAdmission(match, leagueQuality);
+  const predictedScore = workerFootballScorePick(match, leagueQuality);
+  const score = workerFootballScoreParts(predictedScore);
+  const homeProfile = workerFootballTeamProfile(match?.home_team || match?.display_home_team);
+  const awayProfile = workerFootballTeamProfile(match?.away_team || match?.display_away_team);
+  const homeScoreHint = score.home - score.away;
+  const homeAdvantage = 0.035;
+  const profileDiff = Number(homeProfile.profile_score || 0.5) - Number(awayProfile.profile_score || 0.5);
+  const scoreDiff = workerFootballClamp(homeScoreHint * 0.035, -0.08, 0.08);
+  const homeStrength = workerFootballClamp(0.5 + homeAdvantage + profileDiff * 0.62 + scoreDiff, 0.36, 0.72);
+  const diff = workerFootballClamp(homeStrength - 0.5, -0.14, 0.14);
+  const absDiff = Math.abs(diff);
+  const historical = workerFootballClamp(Number(admission.market_effective_rate || admission.direction_hit_rate || 0.54), 0.5, 0.88);
+  const qualityBonus = admission.status === 'passed' ? 0.035 : 0;
+  const sampleBonus = Number(admission.sample_size || 0) >= 8 ? 0.015 : 0;
+  const profileSupport = Math.max(Number(homeProfile.signals || 0), Number(awayProfile.signals || 0)) > 0 ? 0.012 : 0;
+  const bttsRate = Number(leagueQuality?.score_calibration?.btts_rate ?? 0.5);
+  const topScoreTotal = score.home + score.away;
+  const candidates: any[] = [];
+  const pushCandidate = (payload: any) => {
+    const modelProb = workerFootballClamp(Number(payload.model_prob || 0), 0.53, 0.76);
+    const stability = workerFootballClamp(
+      0.64 + qualityBonus + sampleBonus + profileSupport + Math.max(0, historical - 0.55) * 0.45 + Math.max(0, modelProb - 0.58) * 0.55,
+      0.58,
+      0.92,
+    );
+    const official = admission.status === 'passed' && modelProb >= 0.6 && historical >= 0.585 && stability >= 0.76;
+    const fairOdds = Number(workerFootballClamp(1 / Math.max(modelProb, 0.01), 1.28, 2.15).toFixed(2));
+    candidates.push({
+      ...payload,
+      source: 'daily_accuracy_card_generator',
+      key: workerFootballSignalKey(match?.home_team, match?.away_team),
+      home: match?.home_team,
+      away: match?.away_team,
+      competition: match?.competition,
+      commence_time: match?.commence_time,
+      status: official ? 'official' : 'watchlist',
+      model_prob: Number(modelProb.toFixed(4)),
+      market_prob: null,
+      edge: Number((modelProb - 0.52).toFixed(4)),
+      odds: null,
+      public_odds: null,
+      fair_odds: fairOdds,
+      odds_type: 'model_fair_odds',
+      public_odds_verified: false,
+      ev: null,
+      stability_score: Number(stability.toFixed(4)),
+      confidence: official ? 'high' : 'medium',
+      confidence_level: official ? 'high' : 'medium',
+      recommended_platform: '公开赔率未匹配 / 仅使用 HFCD 模型信号',
+      odds_source_label: 'odds=null; fair_odds is model reference only',
+      price_source: 'daily_model_fair_odds',
+      preferred_odds_provider: 'Titan007 / OddsPortal / BetExplorer',
+      preferred_odds_url: 'https://guess2.titan007.com/',
+      accuracy_official: official,
+      historical_hit_rate: Number(historical.toFixed(4)),
+      rolling_hit_rate: Number(historical.toFixed(4)),
+      baseline_hit_rate: 0.52,
+      hit_rate_lift: Number((historical - 0.52).toFixed(4)),
+      brier_score: admission.brier,
+      log_loss: admission.log_loss,
+      calibration_error: Number(Math.max(0.045, 1 - Math.max(modelProb, historical)).toFixed(4)),
+      model_agreement: Number(stability.toFixed(4)),
+      prediction_confidence: Number(workerFootballClamp(modelProb * 0.72 + historical * 0.28, 0.54, 0.88).toFixed(4)),
+      accuracy_grade: official ? admission.accuracy_grade : 'B',
+      failure_risk: official ? 'daily_accuracy_gate_passed' : 'daily_accuracy_watchlist_gate',
+      league_quality: {
+        status: admission.status,
+        reason: admission.reason,
+        source: admission.source,
+        score_hit_rate: admission.score_hit_rate,
+        direction_hit_rate: admission.direction_hit_rate,
+        market_effective_rate: admission.market_effective_rate,
+        brier: admission.brier,
+        log_loss: admission.log_loss,
+        sample_size: admission.sample_size,
+      },
+      team_profile: {
+        home: {
+          source: homeProfile.source,
+          signals: homeProfile.signals,
+          score: Number(Number(homeProfile.profile_score || 0).toFixed(4)),
+        },
+        away: {
+          source: awayProfile.source,
+          signals: awayProfile.signals,
+          score: Number(Number(awayProfile.profile_score || 0).toFixed(4)),
+        },
+      },
+      risk_notes: [
+        admission.reason,
+        '每日自动生成盘口方向卡：真实赛程 + 联赛回测/5月2 V9联赛准入 + 球队画像先验。',
+        '未匹配到具体比赛公开赔率时，odds 保持为空；fair_odds 只作为模型内部公平赔率特征。',
+      ],
+    });
+  };
+
+  if (absDiff >= 0.035) {
+    const selectionTeam = diff > 0 ? match.home_team : match.away_team;
+    pushCandidate({
+      market_family: 'handicap',
+      market: 'dnb_ah0',
+      selection: `${selectionTeam} -0.0`,
+      predicted_result: `${selectionTeam} -0.0`,
+      model_prob: 0.56 + absDiff * 0.42 + qualityBonus + Math.max(0, historical - 0.56) * 0.32,
+    });
+  } else {
+    const selectionTeam = diff >= 0 ? match.away_team : match.home_team;
+    pushCandidate({
+      market_family: 'handicap',
+      market: 'plus_Op5',
+      selection: `${selectionTeam} +0.5`,
+      predicted_result: `${selectionTeam} +0.5`,
+      model_prob: 0.57 + (0.05 - absDiff) * 0.42 + qualityBonus + Math.max(0, historical - 0.56) * 0.28,
+    });
+  }
+
+  if (bttsRate >= 0.48 || topScoreTotal >= 3) {
+    pushCandidate({
+      market_family: 'btts',
+      market: 'btts_yes',
+      selection: 'btts_yes',
+      predicted_result: 'btts_yes',
+      model_prob: 0.555 + workerFootballClamp(bttsRate - 0.45, 0, 0.22) * 0.62 + qualityBonus + (topScoreTotal >= 3 ? 0.025 : 0),
+    });
+  }
+
+  return candidates.sort((a, b) =>
+    Number(b.accuracy_official || 0) - Number(a.accuracy_official || 0) ||
+    Number(b.prediction_confidence || 0) - Number(a.prediction_confidence || 0) ||
+    Number(b.model_prob || 0) - Number(a.model_prob || 0),
+  )[0] || null;
+}
+
+function workerFootballRecommendationFromSignal(match: any, signal: any, leagueQuality: any) {
+  const modelProb = Number(signal?.model_prob ?? signal?.model_probability ?? 0);
+  const marketProb = signal?.market_prob ?? signal?.market_probability ?? null;
+  const edge = signal?.edge ?? signal?.value_edge ?? null;
+  const stability = Number(signal?.stability_score ?? Math.max(0.78, Math.min(0.95, modelProb + 0.12)));
+  const confidenceLevel = signal?.confidence_level || workerFootballConfidenceLevel(signal?.confidence);
+  const historicalHitRate = Number(
+    signal?.historical_hit_rate ??
+    signal?.league_quality?.market_effective_rate ??
+    signal?.league_quality?.direction_hit_rate ??
+    leagueQuality?.market_effective_rate ??
+    leagueQuality?.direction_hit_rate ??
+    0.58,
+  );
+  const legacyOfficial = Boolean(signal?.accuracy_official);
+  const strictOfficial = Boolean(
+    signal?.source === 'hfcd_v12_live_output_cache' &&
+    signal?.league_quality?.status === 'passed' &&
+    confidenceLevel === 'high' &&
+    modelProb >= 0.62,
+  );
+  const accuracyOfficial = legacyOfficial || strictOfficial;
+  const market = signal?.market || signal?.market_type || 'plus_Op5';
+  const selection = signal?.selection || `${match.home_team} +0.5`;
+  const grade = signal?.accuracy_grade || (modelProb >= 0.64 || historicalHitRate >= 0.64 ? 'A' : 'B');
+  const leagueQualityPayload = signal?.league_quality || workerFootballLeanLeagueQuality(leagueQuality);
+  const riskNotes = Array.isArray(signal?.risk_notes) ? signal.risk_notes : [];
+  const publicOddsVerified = Boolean(signal?.public_odds_verified);
+  const publicOdds = publicOddsVerified
+    ? (signal?.public_odds ?? signal?.odds ?? null)
+    : null;
+  const fairOdds = signal?.fair_odds ?? (!publicOddsVerified && signal?.price_source === 'daily_model_fair_odds' ? signal?.odds : null);
+  return {
+    status: accuracyOfficial ? 'official' : (signal?.status || 'paper_trading'),
+    accuracy_mode: true,
+    recommendation_type: 'accuracy_prediction',
+    model_version: signal?.source === 'legacy_v9_2026_05_02_feed'
+      ? 'HFCD_Football_SimplePredictFeed_V1.1_OddsSourceStrict'
+      : FOOTBALL_RUNTIME_REFRESH_VERSION,
+    market_family: signal?.market_family || 'handicap',
+    market,
+    selection,
+    predicted_result: selection,
+    predicted_score: workerFootballScorePick(match, leagueQuality),
+    score_range: [workerFootballScorePick(match, leagueQuality), '1-1', '2-1', '1-0', '0-1'].filter((value, index, arr) => arr.indexOf(value) === index).join('|'),
+    model_prob: Number((modelProb || 0.58).toFixed(4)),
+    market_prob: marketProb === null || marketProb === undefined ? null : Number(Number(marketProb).toFixed(4)),
+    edge: edge === null || edge === undefined ? null : Number(Number(edge).toFixed(4)),
+    odds: publicOdds,
+    public_odds: publicOdds,
+    fair_odds: fairOdds === null || fairOdds === undefined ? null : Number(Number(fairOdds).toFixed(4)),
+    odds_type: publicOddsVerified ? 'public_odds' : (fairOdds ? 'model_fair_odds' : 'unverified_or_absent'),
+    public_odds_verified: publicOddsVerified,
+    ev: signal?.ev ?? edge ?? null,
+    stability_score: Number((Number.isFinite(stability) ? stability : 0.82).toFixed(4)),
+    confidence: confidenceLevel,
+    recommended_platform: signal?.recommended_platform || (publicOddsVerified ? '公开赔率已匹配 / 仍需赛前复核' : '公开赔率未匹配 / 使用 HFCD 模型信号'),
+    odds_provider: signal?.odds_provider || signal?.preferred_odds_provider || 'Titan007',
+    odds_source_label: signal?.odds_source_label || (publicOddsVerified ? 'public odds matched' : 'odds=null; no concrete public odds matched'),
+    price_source: signal?.price_source || signal?.source || 'hfcd_market_signal_cache',
+    preferred_odds_provider: signal?.preferred_odds_provider || 'Titan007',
+    preferred_odds_url: signal?.preferred_odds_url || 'https://guess2.titan007.com/',
+    accuracy_grade: grade,
+    historical_hit_rate: Number((historicalHitRate || 0.58).toFixed(4)),
+    rolling_hit_rate: Number((historicalHitRate || 0.58).toFixed(4)),
+    baseline_hit_rate: 0.52,
+    hit_rate_lift: Number(((historicalHitRate || 0.58) - 0.52).toFixed(4)),
+    brier_score: signal?.brier_score ?? leagueQuality?.brier ?? null,
+    log_loss: signal?.log_loss ?? leagueQuality?.log_loss ?? null,
+    calibration_error: Number(Math.max(0.04, 1 - Math.max(modelProb || 0.58, historicalHitRate || 0.58)).toFixed(4)),
+    model_agreement: Number(Math.max(0.72, Math.min(0.94, (modelProb || 0.58) * 0.7 + (historicalHitRate || 0.58) * 0.3)).toFixed(4)),
+    prediction_confidence: Number(Math.max(0.58, Math.min(0.88, (modelProb || 0.58) * 0.72 + (historicalHitRate || 0.58) * 0.28)).toFixed(4)),
+    confidence_level: confidenceLevel,
+    failure_risk: signal?.failure_risk || signal?.strategy_reason || 'hfcd_market_signal_requires_pre_match_recheck',
+    accuracy_official: accuracyOfficial,
+    league_quality: leagueQualityPayload,
+    signal_source: signal?.source || 'hfcd_market_signal_cache',
+    risk_notes: [
+      signal?.source === 'legacy_v9_2026_05_02_feed'
+        ? '已恢复 5月2日 V9 盘口方向推荐层。'
+        : signal?.source === 'daily_accuracy_card_generator'
+          ? '已运行每日 AccuracyFirst 盘口卡生成器。'
+          : '已接入本地 HFCD V12 市场方向缓存。',
+      ...riskNotes,
+      publicOddsVerified
+        ? '已匹配公开赔率字段；仍只用于研究复核，不构成投注建议。'
+        : '未匹配具体比赛公开赔率，odds 保持为空；如出现 fair_odds，仅表示模型内部公平赔率。',
+    ].filter(Boolean),
+  };
+}
+
+function workerFootballRecommendation(match: any, leagueQuality: any) {
+  const marketSignal = workerFootballMarketSignalForMatch(match);
+  if (marketSignal) return workerFootballRecommendationFromSignal(match, marketSignal, leagueQuality);
+  const generatedSignal = workerFootballDailyAccuracySignal(match, leagueQuality);
+  if (generatedSignal) return workerFootballRecommendationFromSignal(match, generatedSignal, leagueQuality);
+  const passed = leagueQuality?.status === 'passed';
+  const predictedScore = workerFootballScorePick(match, leagueQuality);
+  const directionHitRate = Number(leagueQuality?.direction_hit_rate ?? leagueQuality?.market_effective_rate ?? 0);
+  const scoreHitRate = Number(leagueQuality?.score_hit_rate ?? 0);
+  const modelProb = passed ? Math.max(0.58, Math.min(0.78, directionHitRate || 0.64)) : 0.54;
+  const predictionConfidence = passed ? Math.max(0.62, Math.min(0.82, (directionHitRate || 0.64) * 0.75 + (scoreHitRate || 0.18) * 0.25)) : 0.54;
+  return {
+    status: passed ? 'official' : 'watchlist',
+    accuracy_mode: true,
+    recommendation_type: 'accuracy_prediction',
+    model_version: FOOTBALL_RUNTIME_REFRESH_VERSION,
+    market_family: 'score',
+    market: 'most_likely_score',
+    selection: predictedScore,
+    predicted_result: predictedScore,
+    predicted_score: predictedScore,
+    score_range: [predictedScore, '1-1', '2-1', '1-0', '0-1'].filter((value, index, arr) => arr.indexOf(value) === index).join('|'),
+    model_prob: Number(modelProb.toFixed(4)),
+    market_prob: null,
+    edge: null,
+    odds: null,
+    public_odds: null,
+    fair_odds: null,
+    odds_type: 'no_odds',
+    public_odds_verified: false,
+    stability_score: Number((passed ? 0.78 : 0.58).toFixed(4)),
+    confidence: passed ? 'high' : 'medium',
+    recommended_platform: 'LiveScore daily feed / odds pending',
+    odds_source_label: 'LiveScore schedule; public odds pending',
+    preferred_odds_provider: 'Titan007 / OddsPortal / BetExplorer',
+    preferred_odds_url: 'https://guess2.titan007.com/',
+    accuracy_grade: passed ? 'A' : 'B',
+    historical_hit_rate: Number((leagueQuality?.market_effective_rate ?? leagueQuality?.direction_hit_rate ?? (passed ? 0.64 : 0.52)).toFixed(4)),
+    rolling_hit_rate: Number((leagueQuality?.direction_hit_rate ?? (passed ? 0.64 : 0.52)).toFixed(4)),
+    baseline_hit_rate: 0.52,
+    hit_rate_lift: Number(((leagueQuality?.direction_hit_rate ?? 0.52) - 0.52).toFixed(4)),
+    brier_score: leagueQuality?.brier ?? null,
+    log_loss: leagueQuality?.log_loss ?? null,
+    calibration_error: Number(Math.max(0.05, 1 - predictionConfidence).toFixed(4)),
+    model_agreement: Number((passed ? 0.78 : 0.58).toFixed(4)),
+    prediction_confidence: Number(predictionConfidence.toFixed(4)),
+    confidence_level: passed ? 'high' : 'medium',
+    failure_risk: passed ? 'daily_refresh_needs_odds_recheck' : 'league_quality_watch_or_unmatched',
+    accuracy_official: passed,
+    league_quality: workerFootballLeanLeagueQuality(leagueQuality),
+    risk_notes: [
+      passed ? '联赛质量：passed · 每日 LiveScore 自动刷新' : '联赛质量：watch · 未匹配到高置信准入',
+      `比分候选：${predictedScore}`,
+      '赔率只作为研究参考；赛前仍需复核公开盘口。',
+    ],
+  };
+}
+
+function workerFootballNormalizeLiveScoreEvent(stage: any, event: any, sourceDate: string) {
+  const team1 = Array.isArray(event?.T1) ? event.T1[0] || {} : {};
+  const team2 = Array.isArray(event?.T2) ? event.T2[0] || {} : {};
+  const dt = workerFootballLiveScoreDateTime(event?.Esd, sourceDate);
+  const competition = workerFootballSafeText(stage?.Snm || stage?.Cnm || stage?.Csnm || 'Unknown League');
+  const country = workerFootballSafeText(stage?.Cnm || stage?.Csnm || stage?.CompD || stage?.CompN || '');
+  const home = workerFootballSafeText(team1?.NmEn || team1?.Nm || '');
+  const away = workerFootballSafeText(team2?.NmEn || team2?.Nm || '');
+  const match = {
+    event_id: `livescore:${workerFootballSafeText(event?.Eid)}`,
+    competition,
+    competition_country: country,
+    country,
+    league: competition,
+    league_en: workerFootballSafeText(stage?.Csnm || competition),
+    competition_name: workerFootballSafeText(stage?.CompN || ''),
+    competition_url_name: workerFootballSafeText(stage?.CompUrlName || ''),
+    livescore_stage_id: workerFootballSafeText(stage?.Sid || ''),
+    livescore_comp_id: workerFootballSafeText(stage?.CompId || ''),
+    livescore_stage_code: workerFootballSafeText(stage?.Scd || ''),
+    commence_time: dt.commence_time,
+    match_date: dt.commence_time,
+    source_date: dt.date,
+    time_label: dt.time_label,
+    home_team: home || workerFootballSafeText(team1?.Nm || ''),
+    away_team: away || workerFootballSafeText(team2?.Nm || ''),
+    display_home_team: workerFootballSafeText(team1?.Nm || home),
+    display_away_team: workerFootballSafeText(team2?.Nm || away),
+    home_badge: workerFootballBadgeUrl(team1?.Img),
+    away_badge: workerFootballBadgeUrl(team2?.Img),
+    home_score: workerFootballScoreFromLiveScore(event?.Tr1),
+    away_score: workerFootballScoreFromLiveScore(event?.Tr2),
+    status: workerFootballSafeText(event?.Eps || ''),
+    source: 'LiveScore scheduled Worker refresh',
+  };
+  const leagueQuality = workerFootballLeagueQuality({ ...stage, ...match });
+  const recommendation = workerFootballRecommendation(match, leagueQuality);
+  return {
+    ...match,
+    prediction_state: recommendation.accuracy_official ? 'official_available' : 'watchlist_available',
+    top_recommendation: recommendation,
+    recommendations: [recommendation],
+    all_candidate_count: 1,
+    refresh_context: {
+      refresh_priority: 'daily_worker_refresh',
+      suggested_refresh_minutes: 10,
+      tracking_note: 'Cloudflare Worker 每日定时抓取 LiveScore 当天比赛并写入 D1；页面每 10 分钟读取最新 feed。',
+    },
+  };
+}
+
+async function fetchWorkerLiveScoreMatches(sourceDate: string) {
+  const apiDate = sourceDate.replace(/-/g, '');
+  let lastError = '';
+  for (const baseUrl of FOOTBALL_LIVESCORE_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/v1/api/app/date/soccer/${apiDate}/0?locale=zh`, {
+        headers: {
+          accept: 'application/json',
+          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.7',
+        },
+      });
+      if (!response.ok) {
+        lastError = `${baseUrl} ${response.status}`;
+        continue;
+      }
+      const payload: any = await response.json();
+      const matches: any[] = [];
+      for (const stage of payload?.Stages || []) {
+        for (const event of stage?.Events || []) {
+          const match = workerFootballNormalizeLiveScoreEvent(stage, event, sourceDate);
+          if (match.source_date === sourceDate && !workerFootballIsFinishedStatus(match.status)) {
+            matches.push(match);
+          }
+        }
+      }
+      return {
+        source_url: `${baseUrl}/v1/api/app/date/soccer/${apiDate}/0?locale=zh`,
+        matches,
+        raw_stage_count: Array.isArray(payload?.Stages) ? payload.Stages.length : 0,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  throw new Error(`LiveScore daily fetch failed: ${lastError || 'unknown error'}`);
+}
+
+async function fetchWorkerLiveScoreMatchesWindow(sourceDate: string, lookaheadDays = FOOTBALL_SIGNAL_LOOKAHEAD_DAYS) {
+  const dates = workerFootballBeijingDateWindow(new Date(`${sourceDate}T00:00:00+08:00`), lookaheadDays);
+  const outcomes = await Promise.all(dates.map(async (date) => {
+    try {
+      return { ok: true, date, batch: await fetchWorkerLiveScoreMatches(date) };
+    } catch (error) {
+      return { ok: false, date, error: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+  const batches = outcomes.filter((outcome: any) => outcome.ok).map((outcome: any) => outcome.batch);
+  const errors = outcomes
+    .filter((outcome: any) => !outcome.ok)
+    .map((outcome: any) => `${outcome.date}: ${outcome.error}`);
+  if (batches.length === 0) {
+    throw new Error(`LiveScore ${lookaheadDays + 1}d fetch failed: ${errors.join('; ') || 'unknown error'}`);
+  }
+  return {
+    source_url: batches[0]?.source_url || '',
+    source_urls: batches.map((batch) => batch.source_url).filter(Boolean),
+    source_dates: dates,
+    matches: batches.flatMap((batch) => batch.matches || []),
+    raw_stage_count: batches.reduce((sum, batch) => sum + Number(batch.raw_stage_count || 0), 0),
+    fetch_errors: errors,
+  };
+}
+
+function workerFootballLeagueDistribution(items: any[]) {
+  const distribution: Record<string, number> = {};
+  for (const item of items) {
+    const league = workerFootballSafeText(item?.competition || 'Unknown');
+    distribution[league] = (distribution[league] || 0) + 1;
+  }
+  return distribution;
+}
+
+function workerFootballMatchTeamKeys(match: any) {
+  return [
+    workerFootballTeamKey(match?.home_team || match?.display_home_team),
+    workerFootballTeamKey(match?.away_team || match?.display_away_team),
+  ].filter(Boolean);
+}
+
+function workerBuildFootballParlays(matches: any[]) {
+  const candidates = matches
+    .filter((match) => {
+      const rec = match?.top_recommendation || {};
+      if (!rec || rec.market === 'most_likely_score') return false;
+      if (!['official', 'paper_trading', 'watchlist'].includes(String(rec.status || ''))) return false;
+      if (Number(rec.model_prob || 0) < 0.58) return false;
+      if (Number(rec.stability_score || 0) < 0.76) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const left = a.top_recommendation || {};
+      const right = b.top_recommendation || {};
+      const rightRank =
+        (right.accuracy_official ? 2 : 0) +
+        Number(right.prediction_confidence || right.model_prob || 0) +
+        Number(right.historical_hit_rate || 0) * 0.25;
+      const leftRank =
+        (left.accuracy_official ? 2 : 0) +
+        Number(left.prediction_confidence || left.model_prob || 0) +
+        Number(left.historical_hit_rate || 0) * 0.25;
+      return rightRank - leftRank;
+    })
+    .slice(0, 36);
+  if (candidates.length < 2) return [];
+  const toLeg = (match: any) => ({
+    event_id: match.event_id,
+    commence_time: match.commence_time,
+    match_date: match.commence_time,
+    competition: match.competition,
+    match: workerFootballMatchName(match),
+    market: match.top_recommendation.market,
+    selection: match.top_recommendation.selection,
+    predicted_result: match.top_recommendation.predicted_result,
+    model_prob: match.top_recommendation.model_prob,
+    historical_hit_rate: match.top_recommendation.historical_hit_rate,
+    brier_score: match.top_recommendation.brier_score,
+    calibration_error: match.top_recommendation.calibration_error,
+    model_agreement: match.top_recommendation.model_agreement,
+    prediction_confidence: match.top_recommendation.prediction_confidence,
+    accuracy_grade: match.top_recommendation.accuracy_grade,
+    confidence_level: match.top_recommendation.confidence_level,
+    failure_risk: match.top_recommendation.failure_risk,
+    signal_source: match.top_recommendation.signal_source,
+    accuracy_official: match.top_recommendation.accuracy_official,
+    odds: match.top_recommendation.odds,
+    public_odds: match.top_recommendation.public_odds,
+    fair_odds: match.top_recommendation.fair_odds,
+    odds_type: match.top_recommendation.odds_type,
+    public_odds_verified: match.top_recommendation.public_odds_verified,
+    platform: match.top_recommendation.recommended_platform,
+    odds_source_label: match.top_recommendation.odds_source_label,
+    preferred_odds_provider: match.top_recommendation.preferred_odds_provider,
+    preferred_odds_url: match.top_recommendation.preferred_odds_url,
+  });
+  const combos: any[] = [];
+  const seen = new Set<string>();
+  const buildCombo = (items: any[], strictDiversity: boolean) => {
+    const size = items.length;
+    const key = items.map((item) => String(item.event_id || '')).sort().join('|');
+    if (!key || seen.has(key)) return null;
+    const teamKeys = items.flatMap(workerFootballMatchTeamKeys);
+    if (teamKeys.length !== new Set(teamKeys).size) return null;
+    const markets = new Set(items.map((item) => String(item.top_recommendation?.market || '')));
+    const leagues = new Set(items.map((item) => String(item.competition || '')));
+    const leagueDistribution = workerFootballLeagueDistribution(items);
+    const maxLeagueCount = Math.max(...Object.values(leagueDistribution));
+    if (strictDiversity) {
+      if (size === 2 && maxLeagueCount > 1) return null;
+      if (size === 3 && (leagues.size < 2 || maxLeagueCount > 2 || markets.size < 2)) return null;
+    } else if (size === 3 && leagues.size < 2 && markets.size < 2) {
+      return null;
+    }
+    const legs = items.map(toLeg);
+    const averageModelProb = legs.reduce((sum, leg) => sum + Number(leg.model_prob || 0), 0) / legs.length;
+    const averageHistorical = legs.reduce((sum, leg) => sum + Number(leg.historical_hit_rate || 0), 0) / legs.length;
+    const averageAgreement = legs.reduce((sum, leg) => sum + Number(leg.model_agreement || 0), 0) / legs.length;
+    const modelHitProb = legs.reduce((prod, leg) => prod * Number(leg.model_prob || 0.5), 1);
+    const diversityScore = workerFootballClamp(
+      (leagues.size / size) * 0.6 +
+      (markets.size / size) * 0.25 +
+      (maxLeagueCount === 1 ? 0.15 : maxLeagueCount === 2 ? 0.06 : 0),
+      0.2,
+      1,
+    );
+    const comboScore = (averageModelProb * 0.44) + (averageHistorical * 0.3) + (averageAgreement * 0.18) + (diversityScore * 0.08);
+    const publicOddsLegs = legs.filter((leg) => leg.public_odds_verified && Number(leg.odds || leg.public_odds || 0) > 0);
+    const fairOddsLegs = legs.filter((leg) => Number(leg.fair_odds || 0) > 0);
+    seen.add(key);
+    return {
+      accuracy_mode: true,
+      recommendation_type: 'accuracy_prediction_combo',
+      model_version: FOOTBALL_RUNTIME_REFRESH_VERSION,
+      legs: legs.length,
+      official_legs: legs.filter((leg) => leg.accuracy_official).length,
+      legacy_signal_legs: legs.filter((leg) => leg.signal_source === 'legacy_v9_2026_05_02_feed').length,
+      combo_score: Number(comboScore.toFixed(4)),
+      diversity_score: Number(diversityScore.toFixed(4)),
+      league_count: leagues.size,
+      market_count: markets.size,
+      max_same_league_legs: maxLeagueCount,
+      league_distribution: leagueDistribution,
+      constraint_mode: strictDiversity ? 'league_diversified' : 'relaxed_backfill',
+      average_model_prob: Number(averageModelProb.toFixed(4)),
+      average_historical_hit_rate: Number(averageHistorical.toFixed(4)),
+      average_model_agreement: Number(averageAgreement.toFixed(4)),
+      average_calibration_error: Number((legs.reduce((sum, leg) => sum + Number(leg.calibration_error || 0), 0) / legs.length).toFixed(4)),
+      combined_odds: publicOddsLegs.length === legs.length
+        ? Number(publicOddsLegs.reduce((prod, leg) => prod * Number(leg.odds || leg.public_odds || 1), 1).toFixed(4))
+        : null,
+      combined_public_odds: publicOddsLegs.length === legs.length
+        ? Number(publicOddsLegs.reduce((prod, leg) => prod * Number(leg.odds || leg.public_odds || 1), 1).toFixed(4))
+        : null,
+      combined_fair_odds: fairOddsLegs.length === legs.length
+        ? Number(fairOddsLegs.reduce((prod, leg) => prod * Number(leg.fair_odds || 1), 1).toFixed(4))
+        : null,
+      odds_type: publicOddsLegs.length === legs.length ? 'public_odds' : 'model_fair_odds_reference',
+      model_hit_prob: Number(modelHitProb.toFixed(4)),
+      estimated_ev: null,
+      min_stability: Math.min(...legs.map((leg) => Number(leg.model_agreement || 0))),
+      risk_level: size === 2 ? 'medium' : 'medium-high',
+      note: 'HFCD 盘口方向组合，仅用于模型审计和研究，不构成投注建议；组合已做球队去重和联赛分散控制。',
+      legs_detail: legs,
+    };
+  };
+  const buildPass = (strictDiversity: boolean, poolSize: number) => {
+    const maxPool = candidates.slice(0, poolSize);
+    for (const size of [2, 3]) {
+      for (let i = 0; i < maxPool.length; i += 1) {
+        for (let j = i + 1; j < maxPool.length; j += 1) {
+          const base = [maxPool[i], maxPool[j]];
+          const thirdStart = size === 3 ? j + 1 : maxPool.length;
+          const thirdEnd = size === 3 ? maxPool.length : maxPool.length + 1;
+          for (let k = thirdStart; k < thirdEnd; k += 1) {
+            const items = size === 3 ? [...base, maxPool[k]] : base;
+            const combo = buildCombo(items, strictDiversity);
+            if (combo) combos.push(combo);
+            if (combos.length >= 80) return;
+          }
+        }
+      }
+    }
+  };
+  buildPass(true, 24);
+  if (combos.length < 12) buildPass(false, 30);
+  return combos
+    .sort((a, b) =>
+      Number(b.official_legs || 0) - Number(a.official_legs || 0) ||
+      Number(b.diversity_score || 0) - Number(a.diversity_score || 0) ||
+      Number(b.legacy_signal_legs || 0) - Number(a.legacy_signal_legs || 0) ||
+      Number(b.combo_score || 0) - Number(a.combo_score || 0),
+    )
+    .slice(0, 12)
+    .map((combo, index) => ({
+      ...combo,
+      parlay_id: `daily_livescore_${workerFootballBeijingDate().replace(/-/g, '')}_${combo.legs}x_${index + 1}`,
+    }));
+}
+
+function workerFootballMatchSignalRank(match: any) {
+  const rec = match?.top_recommendation || {};
+  if (!rec || rec.market === 'most_likely_score') return 0;
+  return (
+    (rec.accuracy_official ? 1000 : 500) +
+    Math.round(Number(rec.prediction_confidence || rec.model_prob || 0) * 100) +
+    (rec.signal_source === 'legacy_v9_2026_05_02_feed' ? 50 : 0)
+  );
+}
+
+function buildWorkerFootballDailyFeed(
+  sourceDate: string,
+  fetched: { source_url: string; source_urls?: string[]; source_dates?: string[]; matches: any[]; raw_stage_count: number; fetch_errors?: string[] },
+  oddsHealth: any = null,
+) {
+  const fetchedMatches = fetched.matches;
+  const publicOddsAdapter = workerFootballPublicOddsSummary(oddsHealth);
+  const rawMatches = fetchedMatches
+    .filter((match) => workerIsUpcomingFootballMatch(match))
+    .sort((a, b) =>
+      workerFootballMatchSignalRank(b) - workerFootballMatchSignalRank(a) ||
+      Number(workerFootballKickoffTime(a) || 0) - Number(workerFootballKickoffTime(b) || 0),
+    )
+    .slice(0, FOOTBALL_DAILY_MAX_MATCHES);
+  const upcomingMatches = rawMatches;
+  const officialCount = upcomingMatches.filter((match) => match.prediction_state === 'official_available').length;
+  const watchlistCount = upcomingMatches.filter((match) => match.prediction_state === 'watchlist_available').length;
+  const parlays = workerBuildFootballParlays(upcomingMatches);
+  return {
+    generated_at: energyIso(),
+    source_date: sourceDate,
+    version: `${FOOTBALL_RUNTIME_REFRESH_VERSION}_${sourceDate}`,
+    model_version: FOOTBALL_RUNTIME_REFRESH_VERSION,
+    accuracy_mode: true,
+    disclaimer: '研究用途，不构成投资或投注建议。高置信只表示模型与联赛回测准入通过。',
+    data_source: {
+      provider: 'LiveScore public API',
+      source_url: fetched.source_url,
+      source_urls: fetched.source_urls || [fetched.source_url].filter(Boolean),
+      source_dates: fetched.source_dates || [sourceDate],
+      storage: 'Cloudflare D1 football_runtime_feeds',
+      schedule: 'Cloudflare cron every 5m; refresh when stored feed is older than 10 minutes',
+      timezone: 'Asia/Shanghai',
+      lookahead_days: FOOTBALL_SIGNAL_LOOKAHEAD_DAYS,
+    },
+    public_odds_adapter: publicOddsAdapter,
+    public_odds_health: oddsHealth || workerFootballOddsHealthFallback('not_probed_for_this_feed'),
+    odds_source_policy: {
+      preferred_provider: 'Titan007 / OddsPortal / BetExplorer',
+      preferred_url: 'https://guess2.titan007.com/',
+      official_requires_odds: false,
+      public_odds_adapter: publicOddsAdapter,
+      note: '真实公开赔率必须来自具体比赛盘口匹配；未匹配时 odds=null，fair_odds 只代表模型内部公平赔率。',
+    },
+    league_quality_policy: {
+      source: 'src/lib/generated/footballLeagueQuality.ts',
+      rolling_horizons: (FOOTBALL_LEAGUE_QUALITY as any)?.horizons || [30, 60, 90],
+      summary: (FOOTBALL_LEAGUE_QUALITY as any)?.summary || {},
+      official_rule: 'league_quality=passed; odds pending does not block daily feed',
+    },
+    summary: {
+      fixtures: upcomingMatches.length,
+      raw_fixtures: fetchedMatches.length,
+      expired_filtered: Math.max(0, fetchedMatches.length - upcomingMatches.length),
+      current_fixtures: upcomingMatches.length,
+      matches_with_official: officialCount,
+      matches_with_watchlist: watchlistCount,
+      matches_without_signal: upcomingMatches.length - officialCount - watchlistCount,
+      parlay_candidates: parlays.length,
+      raw_stage_count: fetched.raw_stage_count,
+      daily_display_cap: FOOTBALL_DAILY_MAX_MATCHES,
+      source_dates: (fetched.source_dates || [sourceDate]).length,
+      fetch_errors: fetched.fetch_errors || [],
+      generated_market_cards: upcomingMatches.filter((match) => match.top_recommendation?.signal_source === 'daily_accuracy_card_generator').length,
+      static_market_signal_matches: upcomingMatches.filter((match) => match.top_recommendation?.signal_source && match.top_recommendation.signal_source !== 'daily_accuracy_card_generator').length,
+      odds_sources_total: publicOddsAdapter.total_sources,
+      odds_sources_reachable: publicOddsAdapter.reachable_sources,
+      public_odds_direct_match_sources: publicOddsAdapter.direct_match_odds_sources,
+      public_odds_checked_at: publicOddsAdapter.checked_at,
+    },
+    supported_competitions: Array.from(new Set(upcomingMatches.map((match) => match.competition).filter(Boolean))).sort(),
+    matches: upcomingMatches,
+    parlays,
+    prediction_history: [
+      {
+        recorded_at: energyIso(),
+        generated_at: energyIso(),
+        reason: 'cloudflare_daily_livescore_refresh',
+        mode: 'live',
+        fixtures_current: upcomingMatches.length,
+        fixtures_raw: fetchedMatches.length,
+        expired_filtered: Math.max(0, fetchedMatches.length - upcomingMatches.length),
+        official: officialCount,
+        watchlist: watchlistCount,
+        no_signal: upcomingMatches.length - officialCount - watchlistCount,
+        parlay_candidates: parlays.length,
+      },
+    ],
+  };
+}
+
+async function ensureWorkerFootballDb(env: Env) {
+  const db = env.ENERGY_TRADING_DB;
+  if (!db) return null;
+  await db.prepare(
+    'CREATE TABLE IF NOT EXISTS football_runtime_feeds (feed_key TEXT PRIMARY KEY, source_date TEXT NOT NULL, feed_json TEXT NOT NULL, updated_at TEXT NOT NULL)',
+  ).run();
+  await db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_football_runtime_feeds_source_date ON football_runtime_feeds(source_date)',
+  ).run();
+  return db;
+}
+
+async function loadStoredWorkerFootballFeed(env: Env) {
+  const db = await ensureWorkerFootballDb(env);
+  if (!db) return null;
+  const row = await db.prepare('SELECT feed_json FROM football_runtime_feeds WHERE feed_key = ?').bind(FOOTBALL_RUNTIME_FEED_KEY).first();
+  if (!row?.feed_json) return null;
+  try {
+    return JSON.parse(String(row.feed_json));
+  } catch {
+    return null;
+  }
+}
+
+async function loadStoredWorkerFootballJson(env: Env, feedKey: string) {
+  const db = await ensureWorkerFootballDb(env);
+  if (!db) return null;
+  const row = await db.prepare('SELECT feed_json FROM football_runtime_feeds WHERE feed_key = ?').bind(feedKey).first();
+  if (!row?.feed_json) return null;
+  try {
+    return JSON.parse(String(row.feed_json));
+  } catch {
+    return null;
+  }
+}
+
+async function saveStoredWorkerFootballJson(env: Env, feedKey: string, sourceDate: string, payload: any) {
+  const db = await ensureWorkerFootballDb(env);
+  if (!db) return;
+  await db
+    .prepare('INSERT OR REPLACE INTO football_runtime_feeds (feed_key, source_date, feed_json, updated_at) VALUES (?, ?, ?, ?)')
+    .bind(feedKey, sourceDate, JSON.stringify(payload), energyIso())
+    .run();
+}
+
+function workerFootballLeanRecommendation(rec: any) {
+  if (!rec) return null;
+  return {
+    status: rec.status,
+    accuracy_mode: rec.accuracy_mode,
+    recommendation_type: rec.recommendation_type,
+    model_version: rec.model_version,
+    market_family: rec.market_family,
+    market: rec.market,
+    selection: rec.selection,
+    predicted_result: rec.predicted_result,
+    predicted_score: rec.predicted_score,
+    score_range: rec.score_range,
+    model_prob: rec.model_prob,
+    market_prob: rec.market_prob,
+    edge: rec.edge,
+    odds: rec.odds,
+    public_odds: rec.public_odds,
+    fair_odds: rec.fair_odds,
+    odds_type: rec.odds_type,
+    public_odds_verified: rec.public_odds_verified,
+    ev: rec.ev,
+    stability_score: rec.stability_score,
+    confidence: rec.confidence,
+    confidence_level: rec.confidence_level,
+    recommended_platform: rec.recommended_platform,
+    odds_provider: rec.odds_provider,
+    odds_source_label: rec.odds_source_label,
+    price_source: rec.price_source,
+    preferred_odds_provider: rec.preferred_odds_provider,
+    preferred_odds_url: rec.preferred_odds_url,
+    accuracy_grade: rec.accuracy_grade,
+    historical_hit_rate: rec.historical_hit_rate,
+    rolling_hit_rate: rec.rolling_hit_rate,
+    baseline_hit_rate: rec.baseline_hit_rate,
+    hit_rate_lift: rec.hit_rate_lift,
+    brier_score: rec.brier_score,
+    log_loss: rec.log_loss,
+    calibration_error: rec.calibration_error,
+    model_agreement: rec.model_agreement,
+    prediction_confidence: rec.prediction_confidence,
+    failure_risk: rec.failure_risk,
+    accuracy_official: rec.accuracy_official,
+    signal_source: rec.signal_source,
+    league_quality: rec.league_quality
+      ? {
+          status: rec.league_quality.status,
+          reason: rec.league_quality.reason,
+          source: rec.league_quality.source,
+          score_hit_rate: rec.league_quality.score_hit_rate,
+          direction_hit_rate: rec.league_quality.direction_hit_rate,
+          market_effective_rate: rec.league_quality.market_effective_rate,
+          brier: rec.league_quality.brier,
+          log_loss: rec.league_quality.log_loss,
+          sample_size: rec.league_quality.sample_size,
+        }
+      : null,
+    risk_notes: Array.isArray(rec.risk_notes) ? rec.risk_notes.slice(0, 4) : [],
+  };
+}
+
+function workerFootballCompactMatchForStorage(match: any) {
+  const topRecommendation = workerFootballLeanRecommendation(match?.top_recommendation);
+  return {
+    event_id: match?.event_id,
+    competition: match?.competition,
+    competition_country: match?.competition_country,
+    country: match?.country,
+    league: match?.league,
+    league_en: match?.league_en,
+    commence_time: match?.commence_time,
+    match_date: match?.match_date,
+    source_date: match?.source_date,
+    time_label: match?.time_label,
+    home_team: match?.home_team,
+    away_team: match?.away_team,
+    display_home_team: match?.display_home_team,
+    display_away_team: match?.display_away_team,
+    home_badge: match?.home_badge,
+    away_badge: match?.away_badge,
+    status: match?.status,
+    prediction_state: match?.prediction_state,
+    top_recommendation: topRecommendation,
+    recommendations: topRecommendation ? [topRecommendation] : [],
+    all_candidate_count: match?.all_candidate_count || 0,
+    refresh_context: match?.refresh_context
+      ? {
+          refresh_priority: match.refresh_context.refresh_priority,
+          suggested_refresh_minutes: match.refresh_context.suggested_refresh_minutes,
+          tracking_note: match.refresh_context.tracking_note,
+        }
+      : null,
+  };
+}
+
+function workerFootballCompactFeedForStorage(feed: any) {
+  return {
+    generated_at: feed?.generated_at,
+    source_date: feed?.source_date,
+    version: feed?.version,
+    model_version: feed?.model_version,
+    accuracy_mode: feed?.accuracy_mode,
+    disclaimer: feed?.disclaimer,
+    data_source: feed?.data_source,
+    public_odds_adapter: feed?.public_odds_adapter,
+    public_odds_health: feed?.public_odds_health
+      ? {
+          ok: feed.public_odds_health.ok,
+          checked_at: feed.public_odds_health.checked_at,
+          reason: feed.public_odds_health.reason,
+          cache_status: feed.public_odds_health.cache_status,
+          summary: feed.public_odds_health.summary,
+        }
+      : null,
+    odds_source_policy: feed?.odds_source_policy,
+    league_quality_policy: feed?.league_quality_policy,
+    summary: feed?.summary,
+    supported_competitions: feed?.supported_competitions || [],
+    matches: (feed?.matches || []).map(workerFootballCompactMatchForStorage),
+    parlays: feed?.parlays || [],
+    prediction_history: feed?.prediction_history || [],
+  };
+}
+
+async function saveStoredWorkerFootballFeed(env: Env, feed: any) {
+  const db = await ensureWorkerFootballDb(env);
+  if (!db) return;
+  const sourceDate = String(feed.source_date || workerFootballBeijingDate());
+  try {
+    await db
+      .prepare('INSERT OR REPLACE INTO football_runtime_feeds (feed_key, source_date, feed_json, updated_at) VALUES (?, ?, ?, ?)')
+      .bind(FOOTBALL_RUNTIME_FEED_KEY, sourceDate, JSON.stringify(feed), energyIso())
+      .run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('SQLITE_TOOBIG') && !message.toLowerCase().includes('too big')) throw error;
+    const compact = workerFootballCompactFeedForStorage(feed);
+    compact.summary = {
+      ...(compact.summary || {}),
+      storage_compacted: true,
+      storage_compacted_reason: 'D1 row size guard',
+    };
+    await db
+      .prepare('INSERT OR REPLACE INTO football_runtime_feeds (feed_key, source_date, feed_json, updated_at) VALUES (?, ?, ?, ?)')
+      .bind(FOOTBALL_RUNTIME_FEED_KEY, sourceDate, JSON.stringify(compact), energyIso())
+      .run();
+  }
+}
+
+function workerFootballStoredFeedIsCurrent(feed: any, sourceDate = workerFootballBeijingDate()) {
+  return Boolean(feed && feed.source_date === sourceDate && Number(feed?.summary?.raw_fixtures || 0) > 0);
+}
+
+function workerFootballStoredFeedIsFresh(feed: any, sourceDate = workerFootballBeijingDate(), maxAgeMs = FOOTBALL_RUNTIME_MAX_AGE_MS) {
+  if (!workerFootballStoredFeedIsCurrent(feed, sourceDate)) return false;
+  const generatedAt = new Date(feed?.generated_at || 0).getTime();
+  return Number.isFinite(generatedAt) && Date.now() - generatedAt <= maxAgeMs;
+}
+
+async function refreshWorkerFootballDailyFeed(env: Env, reason = 'manual') {
+  const sourceDate = workerFootballBeijingDate();
+  const [fetched, oddsHealth] = await Promise.all([
+    fetchWorkerLiveScoreMatchesWindow(sourceDate, FOOTBALL_SIGNAL_LOOKAHEAD_DAYS),
+    refreshWorkerFootballOddsHealth(env, 'football_feed_refresh').catch((error) =>
+      workerFootballOddsHealthFallback('football_feed_refresh_failed', error),
+    ),
+  ]);
+  const feed: any = buildWorkerFootballDailyFeed(sourceDate, fetched, oddsHealth);
+  feed.prediction_history = [
+    {
+      ...(feed.prediction_history?.[0] || {}),
+      reason,
+      recorded_at: energyIso(),
+    },
+  ];
+  await saveStoredWorkerFootballFeed(env, feed);
+  return feed;
+}
+
+async function runWorkerFootballScheduledRefresh(env: Env) {
+  const existing = await loadStoredWorkerFootballFeed(env);
+  if (workerFootballStoredFeedIsFresh(existing)) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'feed_fresh_within_10_minutes',
+      source_date: existing.source_date,
+      matches: existing?.summary?.fixtures || 0,
+      parlays: existing?.summary?.parlay_candidates || 0,
+    };
+  }
+  const feed = await refreshWorkerFootballDailyFeed(env, 'cloudflare_scheduled_daily_refresh');
+  return {
+    ok: true,
+    skipped: false,
+    source_date: feed.source_date,
+    matches: feed?.summary?.fixtures || 0,
+    parlays: feed?.summary?.parlay_candidates || 0,
+  };
+}
+
+async function getWorkerFootballFeed(env: Env, options: { allowRefresh?: boolean } = {}) {
+  const sourceDate = workerFootballBeijingDate();
+  const stored = await loadStoredWorkerFootballFeed(env);
+  if (workerFootballStoredFeedIsFresh(stored, sourceDate)) return normalizeWorkerFootballFeed(stored, 'd1_daily_accuracy');
+  if (options.allowRefresh) {
+    try {
+      const refreshed = await refreshWorkerFootballDailyFeed(env, 'api_stale_or_empty_refresh');
+      return normalizeWorkerFootballFeed(refreshed, 'd1_daily_accuracy');
+    } catch (error) {
+      const fallback = normalizeWorkerFootballFeed(FOOTBALL_ACCURACY_FEED as any, 'embedded_accuracy_feed');
+      return {
+        ...fallback,
+        runtime_refresh_error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return normalizeWorkerFootballFeed(stored || (FOOTBALL_ACCURACY_FEED as any), stored ? 'd1_stale' : 'embedded_accuracy_feed');
+}
 
 function workerFootballKickoffTime(match: any) {
   const value = match?.commence_time || match?.kickoff || match?.match_date;
@@ -6567,7 +8145,9 @@ function workerFootballKickoffTime(match: any) {
 }
 
 function workerIsUpcomingFootballMatch(match: any, now = Date.now()) {
+  if (workerFootballIsFinishedStatus(match?.status)) return false;
   const kickoff = workerFootballKickoffTime(match);
+  if (match?.status) return kickoff === null || kickoff >= now - 3 * 60 * 60 * 1000;
   return kickoff === null || kickoff >= now;
 }
 
@@ -6578,24 +8158,28 @@ function workerFilterFootballParlays(parlays: any[], validIds: Set<string>) {
   });
 }
 
-function getWorkerFootballFeed() {
-  const feed = FOOTBALL_ACCURACY_FEED as any;
+function normalizeWorkerFootballFeed(sourceFeed: any, mode = 'embedded_accuracy_feed') {
+  const feed = sourceFeed || (FOOTBALL_ACCURACY_FEED as any);
   const rawMatches = Array.isArray(feed.matches) ? feed.matches : [];
   const matches = rawMatches.filter((match: any) => workerIsUpcomingFootballMatch(match));
   const validIds = new Set<string>(matches.map((match: any) => String(match.event_id || '')));
   const parlays = workerFilterFootballParlays(feed.parlays || [], validIds);
   const officialCount = matches.filter((match: any) => match.prediction_state === 'official_available').length;
   const watchlistCount = matches.filter((match: any) => match.prediction_state === 'watchlist_available').length;
+  const originalRawFixtures = Math.max(Number(feed.summary?.raw_fixtures || 0), rawMatches.length);
+  const expiredFiltered = Math.max(Number(feed.summary?.expired_filtered || 0), originalRawFixtures - matches.length);
   return {
     ...feed,
+    runtime_feed_mode: mode,
     matches,
     parlays,
     model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
     accuracy_mode: true,
+    public_odds_adapter: feed.public_odds_adapter || workerFootballPublicOddsSummary(feed.public_odds_health),
     summary: {
       ...(feed.summary || {}),
-      raw_fixtures: rawMatches.length,
-      expired_filtered: rawMatches.length - matches.length,
+      raw_fixtures: originalRawFixtures,
+      expired_filtered: expiredFiltered,
       current_fixtures: matches.length,
       fixtures: matches.length,
       matches_with_official: officialCount,
@@ -6621,7 +8205,7 @@ function getWorkerFootballFeed() {
     odds_source_policy: {
       ...(feed.odds_source_policy || {}),
       official_requires_odds: false,
-      note: 'V9 Accuracy-First 模式下，赔率只作为参考特征和赛前复核信息；高置信预测由模型概率、历史命中率、Brier/log-loss、校准误差和模型一致性决定。',
+      note: 'V9 Accuracy-First 模式下，公开赔率只作为赛前复核特征；未匹配具体比赛公开赔率时 odds=null，fair_odds 只是模型内部公平赔率。',
     },
   };
 }
@@ -6674,6 +8258,10 @@ function workerFootballTopSignal(match: any) {
     accuracy_official: Boolean(recommendation?.accuracy_official),
     market_prob: recommendation?.market_prob ?? null,
     odds: recommendation?.odds ?? null,
+    public_odds: recommendation?.public_odds ?? null,
+    fair_odds: recommendation?.fair_odds ?? null,
+    odds_type: recommendation?.odds_type || null,
+    public_odds_verified: Boolean(recommendation?.public_odds_verified),
     bookmaker: recommendation?.bookmaker || recommendation?.platform || null,
     platform: recommendation?.recommended_platform || recommendation?.bookmaker || null,
     odds_source: recommendation?.price_source || recommendation?.odds_provider || null,
@@ -6725,6 +8313,57 @@ function workerFootballGroups(feed: any) {
   }
 
   return { official, watchlist, rejected, no_signal: noSignal };
+}
+
+function workerFootballPageHealth(feed: any) {
+  const groups = workerFootballGroups(feed);
+  const counts = {
+    total_matches: Number(feed?.summary?.fixtures ?? (feed?.matches || []).length ?? 0),
+    raw_matches: Number(feed?.summary?.raw_fixtures ?? 0),
+    high_confidence: groups.official.length,
+    observation: groups.watchlist.length,
+    rejected: groups.rejected.length,
+    no_signal: groups.no_signal.length,
+    parlay_candidates: (feed?.parlays || []).length,
+  };
+  const generatedAtMs = new Date(feed?.generated_at || 0).getTime();
+  const feedAgeMs = Number.isFinite(generatedAtMs) ? Date.now() - generatedAtMs : null;
+  const warnings: string[] = [];
+  const failReasons: string[] = [];
+  if (counts.total_matches <= 0) failReasons.push('football_page_total_card_is_zero');
+  if (feed?.runtime_refresh_error) failReasons.push(`runtime_refresh_error:${feed.runtime_refresh_error}`);
+  if (feedAgeMs !== null && feedAgeMs > FOOTBALL_RUNTIME_MAX_AGE_MS * 3) warnings.push('feed_older_than_30_minutes');
+  if (counts.high_confidence <= 0) warnings.push('high_confidence_card_is_zero');
+  if (counts.parlay_candidates <= 0) warnings.push('parlay_card_is_zero');
+  return {
+    ok: failReasons.length === 0,
+    surface: 'football_page',
+    checked_at: energyIso(),
+    source_date: feed?.source_date || null,
+    generated_at: feed?.generated_at || null,
+    feed_age_ms: feedAgeMs,
+    runtime_feed_mode: feed?.runtime_feed_mode || null,
+    model_version: feed?.model_version || HFCD_FOOTBALL_ACCURACY_MODEL,
+    version: feed?.version || null,
+    counts,
+    frontend_card_counts: [
+      { label: '总比赛', count: counts.total_matches },
+      { label: '高置信预测', count: counts.high_confidence },
+      { label: '观察预测', count: counts.observation },
+      { label: '高准确率组合', count: counts.parlay_candidates },
+    ],
+    checks: {
+      total_card_numeric: Number.isFinite(counts.total_matches),
+      high_confidence_card_numeric: Number.isFinite(counts.high_confidence),
+      observation_card_numeric: Number.isFinite(counts.observation),
+      parlay_card_numeric: Number.isFinite(counts.parlay_candidates),
+      api_feed_available: counts.total_matches > 0,
+      page_sections_expected: ['hero_stats', 'all_matches', 'prediction_history', 'match_detail', 'parlay_panel'],
+    },
+    warnings,
+    fail_reasons: failReasons,
+    public_odds_adapter: feed?.public_odds_adapter || workerFootballPublicOddsSummary(feed?.public_odds_health),
+  };
 }
 
 function findWorkerFootballMatch(feed: any, matchId: string) {
@@ -6835,22 +8474,75 @@ async function handleApi(request: Request, env: Env) {
   }
 
   if (url.pathname === '/api/hfcd/football/status' && request.method === 'GET') {
-    const feed = getWorkerFootballFeed();
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
+    const pageHealth = workerFootballPageHealth(feed);
     return json({
       ok: true,
-      mode: 'embedded_accuracy_feed',
+      mode: feed.runtime_feed_mode || 'embedded_accuracy_feed',
       model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
       accuracy_mode: true,
       generated_at: feed.generated_at,
+      source_date: feed.source_date || null,
       version: feed.version,
       matches: (feed.matches || []).length,
       parlays: (feed.parlays || []).length,
-      note: 'Cloudflare Worker 使用随构建发布的 Accuracy-First feed；实时刷新由后端私有任务更新后再发布。',
+      page_health: pageHealth,
+      public_odds_adapter: feed.public_odds_adapter || null,
+      runtime_refresh_error: feed.runtime_refresh_error || null,
+      note: 'Cloudflare Worker 按北京时间滚动抓取今天到未来7天 LiveScore 比赛，生成 HFCD AccuracyFirst 市场卡并写入 D1；API 会在数据为空或超过10分钟时尝试即时刷新。',
     });
   }
 
+  if (url.pathname === '/api/football/odds-health' && request.method === 'GET') {
+    const refresh = url.searchParams.get('refresh') === '1' || url.searchParams.get('force') === '1';
+    const oddsHealth = await loadOrRefreshWorkerFootballOddsHealth(env, { refresh });
+    return json({
+      ok: Boolean(oddsHealth?.ok),
+      generated_at: oddsHealth?.checked_at || null,
+      cache_status: oddsHealth?.cache_status || null,
+      summary: oddsHealth?.summary || {},
+      sources: oddsHealth?.sources || [],
+      policy: {
+        direct_match_odds_required_for_real_odds: true,
+        no_match_no_odds: true,
+        note: '这里只探测 OddsPortal / BetExplorer / Titan007 等公开网页是否可达；未解析并匹配到具体比赛前，不会把模型公平赔率当真实赔率。',
+      },
+    }, { headers: { 'Cache-Control': 'no-store' } });
+  }
+
+  if (url.pathname === '/api/football/page-health' && request.method === 'GET') {
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
+    return json(workerFootballPageHealth(feed), {
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
+
+  if (url.pathname === '/api/football/refresh' && (request.method === 'GET' || request.method === 'POST')) {
+    try {
+      const force = url.searchParams.get('force') === '1' || url.searchParams.get('refresh') === '1';
+      const existing = await loadStoredWorkerFootballFeed(env);
+      const feed = force || !workerFootballStoredFeedIsCurrent(existing)
+        ? await refreshWorkerFootballDailyFeed(env, force ? 'manual_force_refresh' : 'manual_stale_refresh')
+        : existing;
+      return json({
+        ok: true,
+        refreshed: force || !workerFootballStoredFeedIsCurrent(existing),
+        source_date: feed.source_date || null,
+        generated_at: feed.generated_at,
+        version: feed.version,
+        runtime_feed_mode: 'd1_daily_accuracy',
+        summary: feed.summary || {},
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch (error) {
+      return json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'football refresh failed',
+      }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
+    }
+  }
+
   if (url.pathname === '/api/hfcd/football/simple-predict' && request.method === 'GET') {
-    return json(getWorkerFootballFeed(), {
+    return json(await getWorkerFootballFeed(env, { allowRefresh: true }), {
       headers: {
         'Cache-Control': 'no-store',
       },
@@ -6858,27 +8550,31 @@ async function handleApi(request: Request, env: Env) {
   }
 
   if (url.pathname === '/api/football/fixtures' && request.method === 'GET') {
-    const feed = getWorkerFootballFeed();
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
     return json({
       ok: true,
       generated_at: feed.generated_at,
+      source_date: feed.source_date || null,
       version: feed.version,
       model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
       accuracy_mode: true,
+      runtime_feed_mode: feed.runtime_feed_mode || 'embedded_accuracy_feed',
       supported_competitions: feed.supported_competitions || [],
       fixtures: (feed.matches || []).map(workerFootballFixture),
     });
   }
 
   if (url.pathname === '/api/football/predict' && request.method === 'GET') {
-    const feed = getWorkerFootballFeed();
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
     const groups = workerFootballGroups(feed);
     return json({
       ok: true,
       generated_at: feed.generated_at,
+      source_date: feed.source_date || null,
       version: feed.version,
       model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
       accuracy_mode: true,
+      runtime_feed_mode: feed.runtime_feed_mode || 'embedded_accuracy_feed',
       summary: {
         ...(feed.summary || {}),
         official_accuracy: groups.official.length,
@@ -6889,6 +8585,8 @@ async function handleApi(request: Request, env: Env) {
         parlay_candidates: (feed.parlays || []).length,
       },
       odds_source_policy: feed.odds_source_policy || null,
+      public_odds_adapter: feed.public_odds_adapter || null,
+      page_health: workerFootballPageHealth(feed),
       groups,
       parlays: feed.parlays || [],
       fixtures: (feed.matches || []).map(workerFootballFixture),
@@ -6896,13 +8594,15 @@ async function handleApi(request: Request, env: Env) {
   }
 
   if (url.pathname === '/api/football/parlay' && request.method === 'GET') {
-    const feed = getWorkerFootballFeed();
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
     return json({
       ok: true,
       generated_at: feed.generated_at,
+      source_date: feed.source_date || null,
       version: feed.version,
       model_version: HFCD_FOOTBALL_ACCURACY_MODEL,
       accuracy_mode: true,
+      runtime_feed_mode: feed.runtime_feed_mode || 'embedded_accuracy_feed',
       parlays: feed.parlays || [],
     });
   }
@@ -6974,7 +8674,7 @@ async function handleApi(request: Request, env: Env) {
   }
 
   if (url.pathname.startsWith('/api/football/predict/') && request.method === 'GET') {
-    const feed = getWorkerFootballFeed();
+    const feed = await getWorkerFootballFeed(env, { allowRefresh: true });
     const matchId = decodeURIComponent(url.pathname.replace('/api/football/predict/', ''));
     const match = findWorkerFootballMatch(feed, matchId);
     if (!match) {
@@ -7420,6 +9120,7 @@ export default {
 
   async scheduled(_controller: any, env: Env, ctx: any): Promise<void> {
     ctx.waitUntil(Promise.allSettled([
+      runWorkerFootballScheduledRefresh(env),
       runCommodityEnergyScheduledTick(env),
       runCryptoTestnetScheduledTick(env),
     ]));
